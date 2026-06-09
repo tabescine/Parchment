@@ -103,6 +103,25 @@ function Schema.ValidateSystem(system)
         end
     end
 
+    -- Accomplishment targets: a target may be a number or a table that scales by
+    -- an attribute; any attribute it names must exist.
+    local at = system.accomplish_targets
+    if type(at) == "table" then
+        for _, which in ipairs({ "skills", "weapons", "saves" }) do
+            local spec = at[which]
+            if type(spec) == "table" then
+                if spec.attribute and not attrIds[spec.attribute] then
+                    Report(issues, "accomplish_targets", "unknown attribute '" .. tostring(spec.attribute) .. "' in " .. which)
+                end
+                for _, id in ipairs(spec.attribute_max or {}) do
+                    if not attrIds[id] then
+                        Report(issues, "accomplish_targets", "unknown attribute '" .. tostring(id) .. "' in " .. which .. ".attribute_max")
+                    end
+                end
+            end
+        end
+    end
+
     -- Global perk id set: prerequisites and exclusions may reference perks in
     -- other spheres (the ruleset interconnects them), so validate against all.
     local allPerkIds = {}

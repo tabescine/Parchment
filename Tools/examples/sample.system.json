@@ -15,6 +15,12 @@
 
   "point_buy": { "total": 15, "base": 1, "min": 1, "max": 8 },
 
+  "accomplish_targets": {
+    "skills": { "base": 3, "attribute": "wits" },
+    "weapons": { "base": 5, "attribute_max": ["might", "wits"] },
+    "saves": { "base": 2 }
+  },
+
   "derived_stats": {
     "hit_die_attribute": "might",
     "hp_attribute": "might",

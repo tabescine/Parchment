@@ -121,13 +121,58 @@ end
 -- are soft guidance only. A system may override the defaults by declaring an
 -- `accomplish_targets = { skills, weapons, saves }` table; otherwise sensible
 -- generic constants are used (no assumptions about which attributes exist).
+-- Defaults when a system declares no accomplish_targets.
+local TARGET_DEFAULTS = { skills = 3, weapons = 5, saves = 2 }
+
+-- Resolves one target spec to a number. A spec may be a plain number, or a table
+-- { base, attribute } (base + that attribute's modifier, min 0) or
+-- { base, attribute_max = {ids} } (base + the highest of those modifiers, min 0).
+local function ResolveTarget(spec, dflt, modById)
+    if type(spec) == "number" then return spec end
+    if type(spec) ~= "table" then return dflt end
+    local n = spec.base or dflt
+    if spec.attribute then
+        n = n + math.max(0, modById[spec.attribute] or 0)
+    elseif spec.attribute_max then
+        local hi = 0
+        for _, id in ipairs(spec.attribute_max) do hi = math.max(hi, modById[id] or 0) end
+        n = n + math.max(0, hi)
+    end
+    return n
+end
+
 function CE.AccomplishTargets(sheet)
     local t = ns.GetSystem().accomplish_targets or {}
+    local mod = {}
+    for _, a in ipairs(sheet.attributes or {}) do mod[a.id] = a.modifier end
     return {
-        skills = t.skills or 3,
-        weapons = t.weapons or 5,
-        saves = t.saves or 2,
+        skills = ResolveTarget(t.skills, TARGET_DEFAULTS.skills, mod),
+        weapons = ResolveTarget(t.weapons, TARGET_DEFAULTS.weapons, mod),
+        saves = ResolveTarget(t.saves, TARGET_DEFAULTS.saves, mod),
     }
+end
+
+-- A human-readable description of how a target is computed (for tooltips), e.g.
+-- "3 + Intellect modifier" or "5 + highest of Power/Agility modifier".
+function CE.AccomplishTargetDesc(which)
+    local system = ns.GetSystem()
+    local spec = (system.accomplish_targets or {})[which]
+    local dflt = TARGET_DEFAULTS[which] or 0
+    local function attrName(id)
+        for _, a in ipairs(system.attributes or {}) do if a.id == id then return a.name end end
+        return id
+    end
+    if type(spec) == "number" then return tostring(spec) end
+    if type(spec) ~= "table" then return tostring(dflt) end
+    local base = spec.base or dflt
+    if spec.attribute then
+        return base .. " + " .. attrName(spec.attribute) .. " modifier (min 0)"
+    elseif spec.attribute_max and #spec.attribute_max > 0 then
+        local names = {}
+        for _, id in ipairs(spec.attribute_max) do names[#names + 1] = attrName(id) end
+        return base .. " + highest of " .. table.concat(names, "/") .. " modifier (min 0)"
+    end
+    return tostring(base)
 end
 
 -- Raises the character's level by one, adding hpGain to max/current HP and

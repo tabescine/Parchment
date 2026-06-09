@@ -61,8 +61,10 @@ import format and let you try the UI. They are not a playable game.
 - `sample.system.json` - the demo system: 3 attributes (Might/Wits/Spirit), a
   modifier table, point-buy, hit-dice bands, six skills, three weapons, a couple
   of racial/origin traits, one short perk tree (with a passive `effects` perk and
-  a `choice` perk), and a `derived_stats` block declaring which attributes drive
-  the hit die, mana, and movement (Might/Spirit/Wits respectively).
+  a `choice` perk), a `derived_stats` block declaring which attributes drive the
+  hit die, mana, and movement (Might/Spirit/Wits respectively), and an
+  `accomplish_targets` block whose targets scale by attribute (e.g. skills =
+  `{ base = 3, attribute = "wits" }`).
 - `sample.system.toml` - the same system in TOML (hand-editable, commented).
 - `sample.character.json` / `sample.character.toml` - a level-3 demo character
   (Wren Ashdown) built for that system, in both formats.
