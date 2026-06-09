@@ -43,6 +43,14 @@ function IT.GetState()
     return State()
 end
 
+-- Replaces the whole turn order (used by players receiving the DM's sync).
+function IT.SetState(incoming)
+    local state = State()
+    state.combatants = incoming.combatants or {}
+    state.current = incoming.current or 0
+    state.round = incoming.round or 0
+end
+
 -- Rolls a d20 and adds a modifier.
 function IT.RollD20(modifier)
     return math.random(1, 20) + (modifier or 0)

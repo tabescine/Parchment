@@ -349,9 +349,12 @@ local function RefreshVitals(self)
     self.tempMax:SetText("")
 end
 
--- Recomputes the sheet for the active character and redraws everything.
+-- Recomputes the sheet and redraws. Shows the active character normally, or a
+-- received character (read-only) when self.viewChar is set.
 local function Refresh(self)
-    local char, key = ns.GetActiveCharacter()
+    local viewing = self.viewChar ~= nil
+    local char, key
+    if viewing then char, key = self.viewChar, nil else char, key = ns.GetActiveCharacter() end
     self.charKey = key
     if not char then
         self.title:SetText("Parchment - no character")
@@ -362,8 +365,17 @@ local function Refresh(self)
         return
     end
     self.sheet = ns.CharacterSheet.Compute(char, ns.GetSystem())
-    self.title:SetText(self.sheet.name or "Character")
+    self.title:SetText((self.sheet.name or "Character")
+        .. (viewing and self.viewFrom and ("  |cff8ec6ff(from " .. self.viewFrom .. ")|r") or ""))
     self.subtitle:SetText(self.sheet.quote and ('"' .. self.sheet.quote .. '"') or "")
+
+    -- Read-only when viewing someone else's sheet: disable resource edits and
+    -- hide the Edit button.
+    self.hpBox:SetEnabled(not viewing)
+    self.manaBox:SetEnabled(not viewing)
+    self.tempBox:SetEnabled(not viewing)
+    if self.editBtn then self.editBtn:SetShown(not viewing) end
+
     RefreshVitals(self)
     RenderBody(self)
 end
@@ -473,11 +485,11 @@ local function BuildFrame()
     wireResource(f.tempBox, "temp_hp")
 
     -- Footer: Edit (opens the editor) and Save to Disk.
-    local editBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    editBtn:SetSize(60, 22)
-    editBtn:SetText("Edit")
-    editBtn:SetPoint("BOTTOMLEFT", PAD, 10)
-    editBtn:SetScript("OnClick", function() ns.OpenModule("edit") end)
+    f.editBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    f.editBtn:SetSize(60, 22)
+    f.editBtn:SetText("Edit")
+    f.editBtn:SetPoint("BOTTOMLEFT", PAD, 10)
+    f.editBtn:SetScript("OnClick", function() ns.OpenModule("edit") end)
 
     local saveBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     saveBtn:SetSize(96, 22)
@@ -533,14 +545,25 @@ local function GetFrame()
     return CharacterSheetUI.frame
 end
 
--- Opens (and refreshes) the sheet.
+-- Opens (and refreshes) the sheet showing the active character (clears any
+-- received-character view).
 function CharacterSheetUI.Open()
     local f = GetFrame()
+    f.viewChar, f.viewFrom = nil, nil
     Refresh(f)
     f:Show()
 end
 
--- Toggles visibility; refreshes when opening.
+-- Opens the sheet showing a received character, read-only.
+function CharacterSheetUI.ShowCharacter(char, from)
+    local f = GetFrame()
+    f.viewChar, f.viewFrom = char, from
+    Refresh(f)
+    f:Show()
+    f:Raise()
+end
+
+-- Toggles visibility; refreshes (own character) when opening.
 function CharacterSheetUI.Toggle()
     local f = GetFrame()
     if f:IsShown() then f:Hide() else CharacterSheetUI.Open() end

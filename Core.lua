@@ -25,7 +25,7 @@ local C_GOLD = "|cffc8a868"
 -- AceDB layout for addon settings (the data tables live in their own SVs).
 local DB_DEFAULTS = {
     global = { activeCharacter = nil },
-    profile = { minimap = { hide = false } },
+    profile = { minimap = { hide = false }, dm = false },
 }
 
 -- Slash subcommand -> module id (nil routing falls through to help).
@@ -40,7 +40,8 @@ local MODULE_COMMANDS = {
 }
 
 local LibStub = LibStub
-local Parchment = LibStub("AceAddon-3.0"):NewAddon(ADDON, "AceConsole-3.0", "AceEvent-3.0")
+local Parchment = LibStub("AceAddon-3.0"):NewAddon(ADDON, "AceConsole-3.0", "AceEvent-3.0",
+    "AceComm-3.0", "AceSerializer-3.0")
 ns.Addon = Parchment
 
 -- Module registry: id -> opener function, filled by RegisterModule as each
@@ -58,6 +59,9 @@ end
 local function Print(msg)
     DEFAULT_CHAT_FRAME:AddMessage(PREFIX .. msg)
 end
+
+-- Exposed so other modules can print prefixed chat lines.
+ns.Print = Print
 
 -- Returns a deep copy of a value (used when seeding SavedVariables from the
 -- bundled defaults so later edits don't mutate the shared default tables).
@@ -184,6 +188,9 @@ local function PrintHelp()
     Print("  " .. C_GOLD .. "/pmt edit|r    - open the character editor")
     Print("  " .. C_GOLD .. "/pmt import|r  - open the import/export dialog")
     Print("  " .. C_GOLD .. "/pmt config|r  - open settings")
+    Print("  " .. C_GOLD .. "/pmt dm|r      - toggle DM mode (broadcast vs receive sync)")
+    Print("  " .. C_GOLD .. "/pmt share|r   - DM: send your system to the group")
+    Print("  " .. C_GOLD .. "/pmt view <name>|r - view another player's character sheet")
     Print("  " .. C_GOLD .. "/pmt save|r    - write all data to disk (reloads the UI)")
     Print("  " .. C_GOLD .. "/pmt who|r     - list known characters")
     Print("  " .. C_GOLD .. "/pmt validate|r- check the loaded system and characters")
@@ -226,14 +233,31 @@ end
 
 -- Dispatches a slash command line to the matching action.
 local function HandleSlash(input)
-    local cmd = strtrim(input or ""):lower():match("^(%S*)")
+    input = strtrim(input or "")
+    local cmd = input:lower():match("^(%S*)")
+    local arg = input:match("^%S*%s+(.*)$")
 
     if cmd == "" or cmd == "help" then
         PrintHelp()
+    elseif cmd == "view" then
+        if arg and arg ~= "" then ns.Sharing.Request(strtrim(arg))
+        else Print(C_YELLOW .. "usage: /pmt view <player name>" .. "|r") end
     elseif cmd == "who" then
         PrintRoster()
     elseif cmd == "validate" then
         RunValidation()
+    elseif cmd == "dm" then
+        ns.Comm.SetDM(not ns.Comm.IsDM())
+        Print((ns.Comm.IsDM() and C_GREEN .. "DM mode ON" or C_YELLOW .. "DM mode OFF")
+            .. "|r - you " .. (ns.Comm.IsDM() and "broadcast" or "receive") .. " system and initiative sync.")
+    elseif cmd == "share" then
+        if not ns.Comm.IsDM() then
+            Print(C_RED .. "only the DM shares the system. Use /pmt dm first." .. "|r")
+        else
+            local ok, err = ns.Comm.Send("SYSTEM", ns.GetSystem())
+            Print(ok and (C_GREEN .. "shared the system with your group." .. "|r")
+                or (C_RED .. (err or "share failed") .. "|r"))
+        end
     elseif cmd == "save" then
         ns.SaveToDisk()
     elseif cmd == "reseed" then
@@ -303,4 +327,21 @@ function Parchment:OnInitialize()
         note = C_YELLOW .. " (seeded defaults)" .. "|r"
     end
     Print(C_GOLD .. "loaded." .. "|r" .. note .. " Type " .. C_GOLD .. "/pmt|r for commands.")
+end
+
+function Parchment:OnEnable()
+    if not ns.Comm then return end
+    ns.Comm.Init()
+
+    -- A shared system from the DM is adopted read-only; mark it so version
+    -- migration never overwrites it (same guard as an imported system).
+    ns.Comm.On("SYSTEM", function(system, sender)
+        if type(system) ~= "table" then return end
+        ParchmentSystemDB = system
+        self.db.global.systemSource = "imported"
+        Print(C_GREEN .. "received system '" .. (system.system_name or "?")
+            .. "' from " .. tostring(sender) .. "." .. "|r")
+        if ns.CharacterSheetUI then ns.CharacterSheetUI.RefreshIfShown() end
+        if ns.PerkTreeUI and ns.PerkTreeUI.frame and ns.PerkTreeUI.frame:IsShown() then ns.PerkTreeUI.Open() end
+    end)
 end
