@@ -1,0 +1,441 @@
+-- Parchment - Character Sheet (UI)
+--
+-- Builds and drives the character sheet window. Owns one reusable frame: a
+-- draggable, Escape-closable panel with a fixed vitals header (editable current
+-- HP/Mana) and a scrolling body that renders the computed sheet - attributes,
+-- derived stats, skills and saves, weapons, traits, the homebrew ability path
+-- and notes.
+--
+-- All layout is data-driven from ns.CharacterSheet.Compute; nothing here knows
+-- the the system system specifically, so a different system definition renders too.
+--
+-- Reads from: ns.GetActiveCharacter, ns.GetSystem, ns.CharacterSheet.Compute.
+-- Registers the "sheet" module opener with Core.
+
+local ADDON, ns = ...
+
+-- Layout metrics and palette.
+local FRAME_W, FRAME_H = 540, 620
+local MIN_W, MIN_H = 420, 360
+local MAX_W, MAX_H = 900, 1000
+local PAD = 16
+local INDENT = 14
+local C_GOLD = { 0.78, 0.66, 0.41 }
+local C_HEAD = { 0.85, 0.72, 0.45 }
+local C_TEXT = { 0.92, 0.90, 0.85 }
+local C_DIM = { 0.62, 0.60, 0.55 }
+local C_STAR = { 1.0, 0.82, 0.0 }
+local C_LINE = { 0.45, 0.38, 0.24, 0.7 }
+local C_STRIPE = { 1.0, 0.95, 0.85, 0.04 }
+
+local CharacterSheetUI = {}
+ns.CharacterSheetUI = CharacterSheetUI
+
+-- Formats a number with an explicit sign (+3, -2, +0).
+local function Signed(n)
+    return (n >= 0 and "+" or "") .. n
+end
+
+-- Trims trailing ".0" off a number formatted for display (13.0 -> 13).
+local function Num(n)
+    if n == math.floor(n) then return tostring(math.floor(n)) end
+    return tostring(n)
+end
+
+-- Soft-blue inline tag naming the trait/perk(s) that modified a stat, so it is
+-- obvious why a total differs from the raw modifier. Returns "" when none.
+local function SourceTag(sources)
+    if not sources or #sources == 0 then return "" end
+    return "  |cff8ec6ff(" .. table.concat(sources, ", ") .. ")|r"
+end
+
+-- Body canvas helpers. Each operates on the content frame and advances a
+-- vertical cursor (self.y). Text regions are pooled and reused across renders.
+
+-- Begins a fresh layout pass: rewind the cursor and both pool cursors.
+local function CanvasReset(content)
+    content.y = -PAD
+    content.used = 0
+    content.texUsed = 0
+    content.rowIndex = 0
+end
+
+-- Returns the next pooled FontString, creating it on demand.
+local function Acquire(content, font)
+    content.used = content.used + 1
+    local fs = content.pool[content.used]
+    if not fs then
+        fs = content:CreateFontString(nil, "ARTWORK", font)
+        content.pool[content.used] = fs
+    end
+    fs:SetFontObject(_G[font])
+    fs:Show()
+    return fs
+end
+
+-- Returns the next pooled background texture, creating it on demand.
+local function AcquireTex(content)
+    content.texUsed = content.texUsed + 1
+    local t = content.texPool[content.texUsed]
+    if not t then
+        t = content:CreateTexture(nil, "BACKGROUND")
+        content.texPool[content.texUsed] = t
+    end
+    t:Show()
+    return t
+end
+
+-- Hides pooled regions left over from a previous, longer render.
+local function CanvasFinish(content)
+    for i = content.used + 1, #content.pool do content.pool[i]:Hide() end
+    for i = content.texUsed + 1, #content.texPool do content.texPool[i]:Hide() end
+    content:SetHeight(-content.y + PAD)
+end
+
+-- Adds a gold section header followed by a thin divider rule. Resets the row
+-- stripe parity so each section starts its banding fresh.
+local function Header(content, text)
+    content.y = content.y - 12
+    local fs = Acquire(content, "GameFontNormal")
+    fs:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, content.y)
+    fs:SetTextColor(C_GOLD[1], C_GOLD[2], C_GOLD[3])
+    fs:SetText(text)
+    content.y = content.y - 18
+
+    local line = AcquireTex(content)
+    line:SetColorTexture(C_LINE[1], C_LINE[2], C_LINE[3], C_LINE[4])
+    line:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, content.y + 3)
+    line:SetPoint("TOPRIGHT", content, "TOPRIGHT", -PAD, content.y + 3)
+    line:SetHeight(1)
+    content.y = content.y - 7
+    content.rowIndex = 0
+end
+
+-- Adds a label/value row with the value right-aligned. Data rows (non-empty
+-- label) alternate a faint background stripe so the eye tracks each label to
+-- its value; continuation rows (empty label) are left unstriped.
+local function Row(content, label, value, indent, valColor)
+    if label and label ~= "" then
+        content.rowIndex = content.rowIndex + 1
+        if content.rowIndex % 2 == 0 then
+            local stripe = AcquireTex(content)
+            stripe:SetColorTexture(C_STRIPE[1], C_STRIPE[2], C_STRIPE[3], C_STRIPE[4])
+            stripe:SetPoint("TOPLEFT", content, "TOPLEFT", 4, content.y + 2)
+            stripe:SetPoint("TOPRIGHT", content, "TOPRIGHT", -4, content.y + 2)
+            stripe:SetHeight(16)
+        end
+    end
+
+    local x = PAD + (indent or 0)
+    local l = Acquire(content, "GameFontHighlightSmall")
+    l:SetPoint("TOPLEFT", content, "TOPLEFT", x, content.y)
+    l:SetTextColor(C_TEXT[1], C_TEXT[2], C_TEXT[3])
+    l:SetText(label)
+
+    local v = Acquire(content, "GameFontHighlightSmall")
+    v:SetPoint("TOPRIGHT", content, "TOPRIGHT", -PAD, content.y)
+    local c = valColor or C_TEXT
+    v:SetTextColor(c[1], c[2], c[3])
+    v:SetText(value or "")
+    content.y = content.y - 16
+end
+
+-- Adds a full-width wrapped paragraph (descriptions, notes). title is bolded
+-- gold inline; body wraps beneath the available width.
+local function Paragraph(content, title, body, color)
+    local width = content:GetWidth() - PAD * 2
+    local fs = Acquire(content, "GameFontHighlightSmall")
+    fs:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, content.y)
+    fs:SetWidth(width)
+    fs:SetJustifyH("LEFT")
+    local c = color or C_DIM
+    fs:SetTextColor(c[1], c[2], c[3])
+    local text = title and ("|cffc8a868" .. title .. "|r  " .. (body or "")) or (body or "")
+    fs:SetText(text)
+    content.y = content.y - fs:GetStringHeight() - 6
+end
+
+-- Renders the computed sheet into the body. Called on open and after edits.
+local function RenderBody(self)
+    local content = self.content
+    CanvasReset(content)
+    local sheet = self.sheet
+
+    -- Derived stats, two readable rows of pairs.
+    Header(content, "OVERVIEW")
+    Row(content, "Level", tostring(sheet.level))
+    Row(content, "Hit Dice", sheet.derived.hit_dice)
+    Row(content, "Armor Class", tostring(sheet.derived.ac), 0, C_GOLD)
+    Row(content, "Initiative", Signed(sheet.derived.initiative))
+    Row(content, "Movement", Num(sheet.derived.movement) .. "m")
+    Row(content, "Actions", tostring(sheet.derived.actions))
+    Row(content, "Save DC", tostring(sheet.derived.save_dc), 0, C_GOLD)
+    Row(content, "Accomplishment Bonus", Signed(sheet.derived.accomplishment))
+    Row(content, "Primary Attribute", sheet.derived.primary_attribute or "-")
+    if sheet.derived.attack_modifier ~= 0 then
+        Row(content, "Global Attack Modifier", Signed(sheet.derived.attack_modifier), 0, C_DIM)
+    end
+
+    -- Attributes.
+    Header(content, "ATTRIBUTES")
+    for _, a in ipairs(sheet.attributes) do
+        local value
+        if a.bonus ~= 0 then
+            value = string.format("%d %s = %d    %s", a.base, Signed(a.bonus), a.final, Signed(a.modifier))
+        else
+            value = string.format("%d    %s", a.final, Signed(a.modifier))
+        end
+        Row(content, a.name, value)
+        if #a.sources > 0 then
+            Row(content, "", table.concat(a.sources, ", "), INDENT, C_DIM)
+        end
+    end
+
+    -- Attacks (as recorded on the sheet).
+    if #sheet.attack_lines > 0 then
+        Header(content, "ATTACKS")
+        for _, al in ipairs(sheet.attack_lines) do
+            Row(content, al.name, (al.die or "") .. " " .. Signed(al.modifier or 0))
+        end
+    end
+
+    -- Skills and saves, grouped under each attribute's saving throw.
+    Header(content, "SKILLS & SAVING THROWS")
+    local saveByAttr = {}
+    for _, s in ipairs(sheet.saves) do saveByAttr[s.id] = s end
+    local skillsByAttr = {}
+    for _, sk in ipairs(sheet.skills) do
+        skillsByAttr[sk.attribute] = skillsByAttr[sk.attribute] or {}
+        table.insert(skillsByAttr[sk.attribute], sk)
+    end
+    for _, a in ipairs(sheet.attributes) do
+        local save = saveByAttr[a.id]
+        local saveLabel = a.name:upper() .. " Saving Throw"
+            .. (save and save.accomplished and "  *" or "")
+            .. (save and SourceTag(save.sources) or "")
+        Row(content, saveLabel, save and Signed(save.total) or "-", 0,
+            save and save.accomplished and C_STAR or C_HEAD)
+        for _, sk in ipairs(skillsByAttr[a.id] or {}) do
+            local name = (sk.accomplished and "* " or "") .. sk.name .. SourceTag(sk.sources)
+            Row(content, name, Signed(sk.total), INDENT, sk.accomplished and C_STAR or C_TEXT)
+        end
+    end
+
+    -- Weapon proficiencies.
+    if #sheet.weapons > 0 then
+        Header(content, "WEAPON SKILLS (accomplished)")
+        for _, w in ipairs(sheet.weapons) do
+            local props = #w.properties > 0 and ("  [" .. table.concat(w.properties, ", ") .. "]") or ""
+            Row(content, w.name .. props, w.damage)
+        end
+    end
+
+    -- Traits.
+    if #sheet.traits > 0 then
+        Header(content, "TRAITS")
+        for _, t in ipairs(sheet.traits) do
+            Paragraph(content, t.name .. ":", t.description, C_DIM)
+        end
+    end
+
+    -- Homebrew ability path.
+    if #sheet.custom_perks > 0 then
+        Header(content, "ABILITY PATH")
+        for _, p in ipairs(sheet.custom_perks) do
+            Paragraph(content, "Lv" .. (p.level or "?") .. " " .. p.name .. ":", p.description, C_DIM)
+        end
+    end
+
+    -- Notes.
+    if sheet.notes and sheet.notes ~= "" then
+        Header(content, "NOTES")
+        Paragraph(content, nil, sheet.notes, C_DIM)
+    end
+
+    CanvasFinish(content)
+end
+
+-- Pushes the current character's resource numbers into the vitals header.
+local function RefreshVitals(self)
+    local d = self.sheet.derived
+    self.hpBox:SetText(tostring(d.hp.current or d.hp.max or 0))
+    self.hpMax:SetText("/ " .. tostring(d.hp.max or "?"))
+    self.manaBox:SetText(tostring(d.mana.current or d.mana.max or 0))
+    self.manaMax:SetText("/ " .. tostring(d.mana.max or "?"))
+end
+
+-- Recomputes the sheet for the active character and redraws everything.
+local function Refresh(self)
+    local char, key = ns.GetActiveCharacter()
+    self.charKey = key
+    if not char then
+        self.title:SetText("Parchment - no character")
+        self.subtitle:SetText("Use /pmt who to see characters, or /pmt import to add one.")
+        self.sheet = nil
+        CanvasReset(self.content)
+        CanvasFinish(self.content)
+        return
+    end
+    self.sheet = ns.CharacterSheet.Compute(char, ns.GetSystem())
+    self.title:SetText(self.sheet.name or "Character")
+    self.subtitle:SetText(self.sheet.quote and ('"' .. self.sheet.quote .. '"') or "")
+    RefreshVitals(self)
+    RenderBody(self)
+end
+
+-- Commits an edited resource value back to the active character.
+local function CommitResource(self, field, box)
+    local char = ns.GetCharacter(self.charKey)
+    if not char then return end
+    local n = tonumber(box:GetText())
+    if n then char[field] = n end
+    box:ClearFocus()
+    Refresh(self)
+end
+
+-- Saves the frame's current size and anchor to the addon profile.
+local function SaveGeometry(f)
+    local db = ns.Addon and ns.Addon.db
+    if not db then return end
+    db.profile.sheet = db.profile.sheet or {}
+    local g = db.profile.sheet
+    g.width, g.height = f:GetWidth(), f:GetHeight()
+    local point, _, relPoint, x, y = f:GetPoint()
+    g.point, g.relPoint, g.x, g.y = point, relPoint, x, y
+end
+
+-- Restores a previously saved size and anchor, if any.
+local function RestoreGeometry(f)
+    local db = ns.Addon and ns.Addon.db
+    local g = db and db.profile.sheet
+    if not (g and g.width) then return end
+    f:SetSize(g.width, g.height)
+    if g.point then
+        f:ClearAllPoints()
+        f:SetPoint(g.point, UIParent, g.relPoint or g.point, g.x or 0, g.y or 0)
+    end
+end
+
+-- Builds the window once. Returns the frame table with helper widget refs.
+local function BuildFrame()
+    local f = CreateFrame("Frame", "ParchmentSheetFrame", UIParent, "BackdropTemplate")
+    f:SetSize(FRAME_W, FRAME_H)
+    f:SetPoint("CENTER")
+    f:SetFrameStrata("HIGH")
+    f:SetClampedToScreen(true)
+    f:SetResizable(true)
+    f:SetResizeBounds(MIN_W, MIN_H, MAX_W, MAX_H)
+    f:SetBackdrop({
+        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+        tile = true, tileSize = 32, edgeSize = 24,
+        insets = { left = 6, right = 6, top = 6, bottom = 6 },
+    })
+
+    -- Drag to move.
+    f:SetMovable(true)
+    f:EnableMouse(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", f.StartMoving)
+    f:SetScript("OnDragStop", function(self) self:StopMovingOrSizing(); SaveGeometry(self) end)
+
+    -- Close button + Escape support.
+    local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+    close:SetPoint("TOPRIGHT", -4, -4)
+    tinsert(UISpecialFrames, "ParchmentSheetFrame")
+
+    -- Title and quote subtitle.
+    f.title = f:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+    f.title:SetPoint("TOPLEFT", PAD, -PAD)
+    f.title:SetTextColor(C_GOLD[1], C_GOLD[2], C_GOLD[3])
+
+    f.subtitle = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    f.subtitle:SetPoint("TOPLEFT", PAD, -PAD - 22)
+    f.subtitle:SetPoint("RIGHT", f, "RIGHT", -PAD, 0)
+    f.subtitle:SetJustifyH("LEFT")
+    f.subtitle:SetTextColor(C_DIM[1], C_DIM[2], C_DIM[3])
+
+    -- Vitals header: editable Current HP/Mana.
+    local function MakeResource(labelText, anchorX)
+        local lbl = f:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+        lbl:SetPoint("TOPLEFT", PAD + anchorX, -PAD - 44)
+        lbl:SetText(labelText)
+        lbl:SetTextColor(C_HEAD[1], C_HEAD[2], C_HEAD[3])
+
+        local box = CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+        box:SetSize(44, 18)
+        box:SetPoint("TOPLEFT", PAD + anchorX, -PAD - 60)
+        box:SetAutoFocus(false)
+        box:SetNumeric(true)
+        box:SetJustifyH("CENTER")
+
+        local maxFS = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        maxFS:SetPoint("LEFT", box, "RIGHT", 6, 0)
+        maxFS:SetTextColor(C_TEXT[1], C_TEXT[2], C_TEXT[3])
+        return box, maxFS
+    end
+
+    f.hpBox, f.hpMax = MakeResource("Hit Points", 0)
+    f.manaBox, f.manaMax = MakeResource("Mana", 150)
+
+    f.hpBox:SetScript("OnEnterPressed", function(box) CommitResource(f, "current_hp", box) end)
+    f.hpBox:SetScript("OnEscapePressed", function(box) box:ClearFocus(); Refresh(f) end)
+    f.manaBox:SetScript("OnEnterPressed", function(box) CommitResource(f, "current_mana", box) end)
+    f.manaBox:SetScript("OnEscapePressed", function(box) box:ClearFocus(); Refresh(f) end)
+
+    -- Scrolling body.
+    local scroll = CreateFrame("ScrollFrame", "ParchmentSheetScroll", f, "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", PAD, -PAD - 86)
+    scroll:SetPoint("BOTTOMRIGHT", -PAD - 22, PAD)
+
+    local content = CreateFrame("Frame", nil, scroll)
+    content:SetSize(FRAME_W - PAD * 2 - 22, 10)
+    content.pool = {}
+    content.texPool = {}
+    scroll:SetScrollChild(content)
+    f.content = content
+
+    -- Keep the body width matched to the viewport and re-wrap on resize.
+    scroll:SetScript("OnSizeChanged", function(self, width)
+        content:SetWidth(width)
+        if f.sheet then RenderBody(f) end
+    end)
+
+    -- Bottom-right resize grip.
+    local grip = CreateFrame("Button", nil, f)
+    grip:SetSize(16, 16)
+    grip:SetPoint("BOTTOMRIGHT", -6, 6)
+    grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+    grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+    grip:SetScript("OnMouseDown", function() f:StartSizing("BOTTOMRIGHT") end)
+    grip:SetScript("OnMouseUp", function() f:StopMovingOrSizing(); SaveGeometry(f) end)
+
+    RestoreGeometry(f)
+    f:Hide()
+    return f
+end
+
+-- Returns the singleton frame, building it on first use.
+local function GetFrame()
+    if not CharacterSheetUI.frame then
+        CharacterSheetUI.frame = BuildFrame()
+    end
+    return CharacterSheetUI.frame
+end
+
+-- Opens (and refreshes) the sheet.
+function CharacterSheetUI.Open()
+    local f = GetFrame()
+    Refresh(f)
+    f:Show()
+end
+
+-- Toggles visibility; refreshes when opening.
+function CharacterSheetUI.Toggle()
+    local f = GetFrame()
+    if f:IsShown() then f:Hide() else CharacterSheetUI.Open() end
+end
+
+-- Register with Core so /pmt sheet opens it.
+ns.RegisterModule("sheet", CharacterSheetUI.Toggle)

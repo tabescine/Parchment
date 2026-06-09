@@ -1,0 +1,21 @@
+## Interface: 120005
+## Title: Parchment
+## Notes: System-agnostic TTRPG toolkit - character sheets, initiative, and perk trees.
+## Author: Parchment
+## Version: 0.1.0
+## SavedVariables: ParchmentSystemDB, ParchmentCharDB, ParchmentDB
+
+# Embedded libraries (load first so LibStub and the Ace3 modules exist).
+embeds.xml
+
+# Data layer: schema validation, then the bundled default system and example character.
+Schema.lua
+Data\SystemDefault.lua
+Data\CharacterDefault.lua
+
+# Core: addon init, SavedVariables wiring, data access API, slash commands.
+Core.lua
+
+# Modules (logic) and their UI. Each registers its opener with Core.
+Modules\CharacterSheet.lua
+UI\CharacterSheetUI.lua
