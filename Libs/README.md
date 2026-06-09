@@ -10,13 +10,11 @@ not edit these by hand; update them from upstream.
   Source: https://github.com/WoWUIDev/Ace3
 - **LibDataBroker-1.1** (`LibDataBroker-1.1/`) - data broker object for the
   minimap/launcher button. Source: https://github.com/tekkub/libdatabroker-1-1
+- **LibDBIcon-1.0** (`LibDBIcon-1.0/`) - the minimap button itself, on top of the
+  LibDataBroker object. Single file pulled from WoWAce
+  (https://repos.wowace.com/wow/libdbicon-1-0/trunk).
 
-## Deferred (polish phase)
+## Not used
 
-These back the minimap button and custom fonts/textures (priority 8). They live
-on WoWAce/CurseForge rather than under a stable GitHub name, so drop them in when
-that work item starts and add them to `embeds.xml`:
-
-- **LibDBIcon-1.0** - minimap button, sits on top of the LibDataBroker object.
-- **LibSharedMedia-3.0** - shared font/texture registry (only if custom media is
-  added).
+- **LibSharedMedia-3.0** - shared font/texture registry. Not needed: Parchment
+  uses standard WoW fonts and textures.

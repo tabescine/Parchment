@@ -192,6 +192,7 @@ local function PrintHelp()
     Print("  " .. C_GOLD .. "/pmt share|r   - DM: send your system to the group")
     Print("  " .. C_GOLD .. "/pmt view <name>|r - view another player's character sheet")
     Print("  " .. C_GOLD .. "/pmt cached|r  - browse cached sheets (|cffc8a868/pmt cached clear|r to wipe)")
+    Print("  " .. C_GOLD .. "/pmt minimap|r - toggle the minimap button")
     Print("  " .. C_GOLD .. "/pmt save|r    - write all data to disk (reloads the UI)")
     Print("  " .. C_GOLD .. "/pmt who|r     - list known characters")
     Print("  " .. C_GOLD .. "/pmt validate|r- check the loaded system and characters")
@@ -261,6 +262,11 @@ local function HandleSlash(input)
             local ok, err = ns.Comm.Send("SYSTEM", ns.GetSystem())
             Print(ok and (C_GREEN .. "shared the system with your group." .. "|r")
                 or (C_RED .. (err or "share failed") .. "|r"))
+        end
+    elseif cmd == "minimap" then
+        if ns.Minimap then
+            local shown = ns.Minimap.Toggle()
+            Print((shown and C_GREEN .. "minimap button shown" or C_YELLOW .. "minimap button hidden") .. "|r")
         end
     elseif cmd == "save" then
         ns.SaveToDisk()
@@ -334,6 +340,7 @@ function Parchment:OnInitialize()
 end
 
 function Parchment:OnEnable()
+    if ns.Minimap then ns.Minimap.Init() end
     if not ns.Comm then return end
     ns.Comm.Init()
 
