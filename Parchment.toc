@@ -13,6 +13,12 @@ Schema.lua
 JSON.lua
 TOML.lua
 Data\SystemDefault.lua
+Data\Spheres\Agility.lua
+Data\Spheres\Vitality.lua
+Data\Spheres\Intellect.lua
+Data\Spheres\Sense.lua
+Data\Spheres\Charisma.lua
+Data\Spheres\Luck.lua
 Data\CharacterDefault.lua
 
 # Core: addon init, SavedVariables wiring, data access API, slash commands.
@@ -28,3 +34,5 @@ Modules\InitiativeTracker.lua
 UI\InitiativeUI.lua
 Modules\ImportExport.lua
 UI\ImportExportUI.lua
+Modules\PerkTree.lua
+UI\PerkTreeUI.lua

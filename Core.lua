@@ -57,23 +57,13 @@ local function Print(msg)
     DEFAULT_CHAT_FRAME:AddMessage(PREFIX .. msg)
 end
 
--- Seeds `global[key]` with a deep copy of `default` when it is missing or
--- empty, so a player who has never edited their data still sees the bundled
--- system and example character. Returns true when seeding happened.
+-- Returns a deep copy of a value (used when seeding SavedVariables from the
+-- bundled defaults so later edits don't mutate the shared default tables).
 local function CopyDeep(value)
     if type(value) ~= "table" then return value end
     local out = {}
     for k, v in pairs(value) do out[k] = CopyDeep(v) end
     return out
-end
-
-local function SeedIfEmpty(globalName, default)
-    local current = _G[globalName]
-    if type(current) ~= "table" or next(current) == nil then
-        _G[globalName] = CopyDeep(default)
-        return true
-    end
-    return false
 end
 
 -- Data API. Modules call these; they never read the SV globals directly.
@@ -177,6 +167,7 @@ local function PrintHelp()
     Print("  " .. C_GOLD .. "/pmt config|r  - open settings")
     Print("  " .. C_GOLD .. "/pmt who|r     - list known characters")
     Print("  " .. C_GOLD .. "/pmt validate|r- check the loaded system and characters")
+    Print("  " .. C_GOLD .. "/pmt reseed|r  - reload the bundled system (replaces the current one)")
 end
 
 -- Prints the known characters and marks the active one.
@@ -223,6 +214,11 @@ local function HandleSlash(input)
         PrintRoster()
     elseif cmd == "validate" then
         RunValidation()
+    elseif cmd == "reseed" then
+        ns.ReseedSystem()
+        local system = ns.GetSystem()
+        Print(C_GREEN .. "reloaded bundled system '" .. (system.system_name or "?")
+            .. "' (" .. #(system.perk_trees or {}) .. " spheres)." .. "|r")
     elseif MODULE_COMMANDS[cmd] then
         ns.OpenModule(MODULE_COMMANDS[cmd])
     else
@@ -233,30 +229,55 @@ end
 
 -- AceAddon lifecycle.
 
+-- Overwrites the system with the bundled default and marks it bundled-sourced
+-- at the current version. Used by first-run seeding, version migration, and
+-- the /pmt reseed command.
+function ns.ReseedSystem()
+    ParchmentSystemDB = CopyDeep(ns.defaultSystem)
+    local g = Parchment.db.global
+    g.systemSource = "bundled"
+    g.bundledVersion = ns.defaultSystem.version or "0"
+end
+
 function Parchment:OnInitialize()
     -- Settings DB (addon options live here; the data tables are their own SVs).
     self.db = LibStub("AceDB-3.0"):New("ParchmentDB", DB_DEFAULTS, true)
-
-    -- Ensure the data globals exist, seeding the bundled defaults on first run.
+    local g = self.db.global
     ParchmentCharDB = ParchmentCharDB or {}
-    local seededSystem = SeedIfEmpty("ParchmentSystemDB", ns.defaultSystem)
+
+    -- Seed or migrate the bundled system. A DM-imported system is never
+    -- overwritten; a bundled one is refreshed whenever the shipped version
+    -- changes, so data updates (e.g. new perk spheres) reach existing installs.
+    local defaultVersion = ns.defaultSystem.version or "0"
+    local seededSystem = false
+    if type(ParchmentSystemDB) ~= "table" or next(ParchmentSystemDB) == nil then
+        ns.ReseedSystem()
+        seededSystem = true
+    elseif g.systemSource ~= "imported" and g.bundledVersion ~= defaultVersion then
+        ns.ReseedSystem()
+        seededSystem = true
+    end
+
+    -- Seed the example character on first run.
     local chars = ns.GetCharacters()
     local seededChar = false
     if next(chars) == nil and ns.defaultCharacter then
         chars[ns.defaultCharacterKey] = CopyDeep(ns.defaultCharacter)
         seededChar = true
     end
-    if not self.db.global.activeCharacter then
-        self.db.global.activeCharacter = next(chars)
+    if not g.activeCharacter then
+        g.activeCharacter = next(chars)
     end
 
     -- Slash commands.
     self:RegisterChatCommand("parchment", HandleSlash)
     self:RegisterChatCommand("pmt", HandleSlash)
 
-    -- One-line load summary; flag seeding so the DM knows defaults were applied.
+    -- One-line load summary.
     local note = ""
-    if seededSystem or seededChar then
+    if seededSystem then
+        note = C_YELLOW .. " (system v" .. defaultVersion .. " loaded)" .. "|r"
+    elseif seededChar then
         note = C_YELLOW .. " (seeded defaults)" .. "|r"
     end
     Print(C_GOLD .. "loaded." .. "|r" .. note .. " Type " .. C_GOLD .. "/pmt|r for commands.")

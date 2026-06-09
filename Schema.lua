@@ -88,7 +88,17 @@ function Schema.ValidateSystem(system)
         end
     end
 
-    -- Perk trees: governing attribute must exist; prereqs/exclusions stay in-tree.
+    -- Global perk id set: prerequisites and exclusions may reference perks in
+    -- other spheres (the ruleset interconnects them), so validate against all.
+    local allPerkIds = {}
+    for _, tree in ipairs(system.perk_trees or {}) do
+        if type(tree) == "table" then
+            for id in pairs(IdSet(tree.perks)) do allPerkIds[id] = true end
+        end
+    end
+
+    -- Perk trees: governing attribute must exist; prereqs/exclusions must
+    -- resolve to some perk (in any tree).
     for i, tree in ipairs(system.perk_trees or {}) do
         local ctx = "perk_tree[" .. i .. "]"
         if type(tree) ~= "table" then
@@ -98,18 +108,25 @@ function Schema.ValidateSystem(system)
                 Report(issues, ctx, "unknown governing_attribute '" ..
                     tostring(tree.governing_attribute) .. "'")
             end
-            local perkIds = IdSet(tree.perks)
             for j, perk in ipairs(tree.perks or {}) do
                 local pctx = ctx .. ".perk[" .. j .. "]"
                 if CheckRequired(perk, PERK_REQUIRED, pctx, issues) then
+                    if perk.req_attribute and not attrIds[perk.req_attribute] then
+                        Report(issues, pctx, "unknown req_attribute '" .. tostring(perk.req_attribute) .. "'")
+                    end
                     for _, req in ipairs(perk.prerequisites or {}) do
-                        if not perkIds[req] then
-                            Report(issues, pctx, "prerequisite '" .. tostring(req) .. "' not found in tree")
+                        if not allPerkIds[req] then
+                            Report(issues, pctx, "prerequisite '" .. tostring(req) .. "' not found in any tree")
+                        end
+                    end
+                    for _, req in ipairs(perk.prerequisites_any or {}) do
+                        if not allPerkIds[req] then
+                            Report(issues, pctx, "prerequisites_any '" .. tostring(req) .. "' not found in any tree")
                         end
                     end
                     for _, exc in ipairs(perk.exclusive_with or {}) do
-                        if not perkIds[exc] then
-                            Report(issues, pctx, "exclusive_with '" .. tostring(exc) .. "' not found in tree")
+                        if not allPerkIds[exc] then
+                            Report(issues, pctx, "exclusive_with '" .. tostring(exc) .. "' not found in any tree")
                         end
                     end
                 end
