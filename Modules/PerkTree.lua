@@ -62,11 +62,26 @@ local function ReqAttr(perk, tree)
     return perk.req_attribute or tree.governing_attribute
 end
 
+-- Returns the homebrew (custom) perk that replaces a sphere perk id, if any.
+-- This lets a DM author an alternative to a sphere perk that still fills its
+-- slot for prerequisites and exclusivity, so the tree can progress past it.
+local function ReplacementFor(char, id)
+    for _, cp in ipairs(char.custom_perks or {}) do
+        if cp.replaces == id then return cp end
+    end
+end
+
+-- True when a perk id counts as taken: either selected directly, or filled by
+-- a homebrew perk that replaces it.
+local function Satisfies(char, id)
+    return CountId(char.perks, id) > 0 or ReplacementFor(char, id) ~= nil
+end
+
 -- True when an "any-of" prerequisite list is satisfied (or absent/empty).
 local function AnyTaken(char, list)
     if not list or #list == 0 then return true end
     for _, id in ipairs(list) do
-        if CountId(char.perks, id) > 0 then return true end
+        if Satisfies(char, id) then return true end
     end
     return false
 end
@@ -95,21 +110,26 @@ function PT.Rank(char, perk)
     return CountId(char.perks, perk.id)
 end
 
+-- Returns the homebrew perk filling a sphere perk's slot (via `replaces`), or nil.
+function PT.ReplacedBy(char, perkId)
+    return ReplacementFor(char, perkId)
+end
+
 -- Returns the perk's status string for a character:
 --   "taken"     - at least one rank invested
 --   "exclusive" - blocked because a mutually-exclusive perk is taken
 --   "locked"    - requirements (attribute, level, prerequisites) not met
 --   "available" - may be taken
 function PT.Status(char, sheet, tree, perk)
-    if PT.Rank(char, perk) > 0 then return "taken" end
+    if PT.Rank(char, perk) > 0 or ReplacementFor(char, perk.id) then return "taken" end
     for _, exId in ipairs(perk.exclusive_with or {}) do
-        if CountId(char.perks, exId) > 0 then return "exclusive" end
+        if Satisfies(char, exId) then return "exclusive" end
     end
     if perk.attribute_req and AttrFinal(sheet, ReqAttr(perk, tree)) < perk.attribute_req then
         return "locked"
     end
     for _, pr in ipairs(perk.prerequisites or {}) do
-        if CountId(char.perks, pr) == 0 then return "locked" end
+        if not Satisfies(char, pr) then return "locked" end
     end
     if not AnyTaken(char, perk.prerequisites_any) then return "locked" end
     local need = LevelForRank(perk, 1)
@@ -123,12 +143,16 @@ end
 function PT.CanAddRank(char, sheet, tree, perk)
     local rank = PT.Rank(char, perk)
     local maxRanks = perk.max_ranks or 1
+    local replacement = ReplacementFor(char, perk.id)
+    if replacement then
+        return false, "Filled by homebrew perk '" .. (replacement.name or "?") .. "'."
+    end
     if rank >= maxRanks then return false, "Already at maximum rank." end
 
     -- Exclusivity only blocks the first rank.
     if rank == 0 then
         for _, exId in ipairs(perk.exclusive_with or {}) do
-            if CountId(char.perks, exId) > 0 then
+            if Satisfies(char, exId) then
                 local ex = FindPerk(tree, exId) or FindPerkAnywhere(exId)
                 return false, "Exclusive with " .. (ex and ex.name or exId) .. "."
             end
@@ -139,7 +163,7 @@ function PT.CanAddRank(char, sheet, tree, perk)
         return false, "Requires " .. AttrNameById(ReqAttr(perk, tree)) .. " " .. perk.attribute_req .. "."
     end
     for _, pr in ipairs(perk.prerequisites or {}) do
-        if CountId(char.perks, pr) == 0 then
+        if not Satisfies(char, pr) then
             local p = FindPerk(tree, pr) or FindPerkAnywhere(pr)
             return false, "Requires " .. (p and p.name or pr) .. "."
         end
@@ -201,6 +225,7 @@ function PT.Deselect(char, tree, perk)
 end
 
 -- Returns invested, available perk points. One point is granted per level.
+-- Both selected sphere perks and DM-granted homebrew perks count as invested.
 function PT.Points(char)
-    return #(char.perks or {}), (char.level or 1)
+    return #(char.perks or {}) + #(char.custom_perks or {}), (char.level or 1)
 end

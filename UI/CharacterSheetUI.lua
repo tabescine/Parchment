@@ -248,6 +248,16 @@ local function RenderBody(self)
         end
     end
 
+    -- Selected sphere perks.
+    if #sheet.sphere_perks > 0 then
+        Header(content, "PERKS")
+        for _, p in ipairs(sheet.sphere_perks) do
+            local title = p.name .. (p.rank > 1 and (" x" .. p.rank) or "")
+                .. (p.sphere and ("  |cff8ec6ff(" .. p.sphere .. ")|r") or "")
+            Paragraph(content, title .. ":", p.description, C_DIM)
+        end
+    end
+
     -- Homebrew ability path.
     if #sheet.custom_perks > 0 then
         Header(content, "ABILITY PATH")

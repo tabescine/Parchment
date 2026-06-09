@@ -145,6 +145,16 @@ local function ListToSet(list)
     return set
 end
 
+-- Finds a perk by id across the system's trees. Returns the perk record and
+-- its sphere name, or nil.
+local function FindPerkInSystem(system, id)
+    for _, tree in ipairs(system.perk_trees or {}) do
+        for _, perk in ipairs(tree.perks or {}) do
+            if perk.id == id then return perk, tree.name end
+        end
+    end
+end
+
 -- Computes the full sheet for a character against a system definition.
 --
 -- Returns a single table (see the field comments inline). Returns nil when
@@ -153,7 +163,31 @@ function CharacterSheet.Compute(char, system)
     if type(char) ~= "table" or type(system) ~= "table" then return nil end
 
     local traits = SelectedTraits(char, system)
-    local fx = AccumulateEffects(traits, char.custom_perks)
+
+    -- Resolve selected standard-sphere perks: a display list (unique, with rank
+    -- and sphere) and a flat per-occurrence list for effect folding.
+    local spherePerks, spherePerkSeen, takenForEffects = {}, {}, {}
+    for _, pid in ipairs(char.perks or {}) do
+        local perk, sphereName = FindPerkInSystem(system, pid)
+        if perk then
+            takenForEffects[#takenForEffects + 1] = perk
+            local entry = spherePerkSeen[pid]
+            if not entry then
+                entry = { name = perk.name, description = perk.description, sphere = sphereName, rank = 0 }
+                spherePerkSeen[pid] = entry
+                spherePerks[#spherePerks + 1] = entry
+            end
+            entry.rank = entry.rank + 1
+        end
+    end
+
+    -- Effects come from traits, homebrew perks, and any selected sphere perks
+    -- that carry machine-readable effects.
+    local effectPerks = {}
+    for _, p in ipairs(char.custom_perks or {}) do effectPerks[#effectPerks + 1] = p end
+    for _, p in ipairs(takenForEffects) do effectPerks[#effectPerks + 1] = p end
+    local fx = AccumulateEffects(traits, effectPerks)
+
     local level = char.level or 1
     local accomplishment = ns.GetAccomplishmentBonus(level)
 
@@ -251,6 +285,7 @@ function CharacterSheet.Compute(char, system)
         weapons = weapons,
         derived = derived,
         traits = traits,
+        sphere_perks = spherePerks,
         custom_perks = char.custom_perks or {},
         attack_lines = char.attack_lines or {},
     }

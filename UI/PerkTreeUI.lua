@@ -71,6 +71,27 @@ local function ShowTooltip(self, node)
     local perk, tree = node.perk, node.tree
     GameTooltip:SetOwner(node, "ANCHOR_RIGHT")
     GameTooltip:AddLine(perk.name, UI.GOLD[1], UI.GOLD[2], UI.GOLD[3])
+
+    -- Homebrew perks are DM-granted; show level instead of requirements.
+    if tree.homebrew then
+        if perk.level then GameTooltip:AddLine("Homebrew - gained at level " .. perk.level, 0.9, 0.9, 0.9) end
+        GameTooltip:AddLine("Taken", STATUS.taken.border[1], STATUS.taken.border[2], STATUS.taken.border[3])
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine(perk.description, 0.82, 0.80, 0.74, true)
+        GameTooltip:Show()
+        return
+    end
+
+    -- A homebrew perk filling this slot: show it as the replacement.
+    if node.replacement then
+        GameTooltip:AddLine("Homebrew replacing " .. perk.name, 0.9, 0.9, 0.9)
+        GameTooltip:AddLine("Taken", STATUS.taken.border[1], STATUS.taken.border[2], STATUS.taken.border[3])
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine(node.replacement.description or "", 0.82, 0.80, 0.74, true)
+        GameTooltip:Show()
+        return
+    end
+
     local reqAttr = perk.req_attribute or tree.governing_attribute
     GameTooltip:AddLine("Requires " .. AttrNameById(reqAttr) .. " " .. (perk.attribute_req or 5), 0.9, 0.9, 0.9)
     if perk.prerequisites and #perk.prerequisites > 0 then
@@ -94,6 +115,10 @@ end
 -- Handles a click on a node: select on left, deselect on right.
 local function OnNodeClick(self, node, button)
     local perk, tree = node.perk, node.tree
+    if tree.homebrew then
+        SetMsg(self, "Homebrew perks are set via import or the character sheet.", false)
+        return
+    end
     local ok, reason
     if button == "RightButton" then
         ok, reason = PT.Deselect(self.char, tree, perk)
@@ -102,7 +127,11 @@ local function OnNodeClick(self, node, button)
         ok, reason = PT.Select(self.char, self.sheet, tree, perk)
         SetMsg(self, ok and ("Selected " .. perk.name .. ".") or reason, not ok)
     end
-    if ok then Refresh(self) end
+    if ok then
+        Refresh(self)
+        -- Reflect the change on the character sheet if it is open.
+        if ns.CharacterSheetUI then ns.CharacterSheetUI.RefreshIfShown() end
+    end
 end
 
 -- Creates one pooled node button (scripts read node.perk / node.tree).
@@ -153,6 +182,25 @@ local function AcquireLine(self)
     return line
 end
 
+-- Builds the spheres shown in the cycler: the system trees, plus a synthetic
+-- read-only "Homebrew" sphere built from the character's custom perks.
+local function BuildTreeList(char)
+    local trees = {}
+    for _, t in ipairs(ns.GetSystem().perk_trees or {}) do trees[#trees + 1] = t end
+    if char and char.custom_perks and #char.custom_perks > 0 then
+        local perks, rows = {}, {}
+        for i, p in ipairs(char.custom_perks) do
+            local id = "homebrew_" .. i
+            perks[#perks + 1] = { id = id, name = p.name, description = p.description,
+                level = p.level, attribute_req = 0, prerequisites = {}, exclusive_with = {} }
+            rows[#rows + 1] = { perks = { id } }
+        end
+        trees[#trees + 1] = { id = "__homebrew", name = "Homebrew", homebrew = true,
+            perks = perks, layout = { rows = rows } }
+    end
+    return trees
+end
+
 -- Positions and colours every node, then draws prerequisite lines.
 local function RenderGraph(self)
     local content = self.content
@@ -161,7 +209,7 @@ local function RenderGraph(self)
     content.usedNodes, content.usedLines = 0, 0
     content.nodeMap = {}
 
-    local tree = ns.GetSystem().perk_trees[self.treeIndex]
+    local tree = self.trees and self.trees[self.treeIndex]
     if not tree then return end
     local rows = (tree.layout and tree.layout.rows) or {}
     local width = content:GetWidth()
@@ -173,9 +221,11 @@ local function RenderGraph(self)
             if perk then
                 local node = AcquireNode(self)
                 node.perk, node.tree = perk, tree
-                node.label:SetText(perk.name)
+                node.replacement = (not tree.homebrew) and PT.ReplacedBy(self.char, perk.id) or nil
+                node.label:SetText(node.replacement and node.replacement.name or perk.name)
 
-                local status = PT.Status(self.char, self.sheet, tree, perk)
+                local status = (tree.homebrew or node.replacement) and "taken"
+                    or PT.Status(self.char, self.sheet, tree, perk)
                 local sc = STATUS[status]
                 node:SetBackdropColor(sc.bg[1], sc.bg[2], sc.bg[3], 0.9)
                 node:SetBackdropBorderColor(sc.border[1], sc.border[2], sc.border[3], 1)
@@ -228,9 +278,9 @@ Refresh = function(self)
     end
     self.sheet = ns.CharacterSheet.Compute(char, ns.GetSystem())
 
-    local trees = ns.GetSystem().perk_trees or {}
-    if self.treeIndex > #trees then self.treeIndex = 1 end
-    local tree = trees[self.treeIndex]
+    self.trees = BuildTreeList(char)
+    if self.treeIndex > #self.trees then self.treeIndex = 1 end
+    local tree = self.trees[self.treeIndex]
     self.sphereLabel:SetText(tree and tree.name or "No spheres")
 
     local invested, available = PT.Points(char)
@@ -240,7 +290,7 @@ end
 
 -- Switches spheres by delta (wraps).
 local function Cycle(self, delta)
-    local trees = ns.GetSystem().perk_trees or {}
+    local trees = self.trees or {}
     if #trees == 0 then return end
     self.treeIndex = (self.treeIndex - 1 + delta) % #trees + 1
     SetMsg(self, "", false)

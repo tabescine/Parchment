@@ -161,6 +161,10 @@ function Schema.ValidateCharacter(char, system)
     -- Sets of valid ids drawn from the system definition.
     local attrIds = IdSet(system.attributes)
     local skillIds = IdSet(system.skills)
+    local perkIds = {}
+    for _, tree in ipairs(system.perk_trees or {}) do
+        for id in pairs(IdSet(tree.perks)) do perkIds[id] = true end
+    end
 
     -- Base attribute keys must be known attributes.
     for key in pairs(char.attributes or {}) do
@@ -189,8 +193,12 @@ function Schema.ValidateCharacter(char, system)
         end
     end
 
-    -- Custom-perk effects must reference real skills/attributes.
+    -- Custom-perk effects must reference real skills/attributes; a `replaces`
+    -- target must be a real sphere perk.
     for i, perk in ipairs(char.custom_perks or {}) do
+        if perk.replaces and not perkIds[perk.replaces] then
+            Report(issues, "custom_perks[" .. i .. "]", "replaces unknown perk '" .. tostring(perk.replaces) .. "'")
+        end
         for j, e in ipairs(perk.effects or {}) do
             local ctx = "custom_perks[" .. i .. "].effects[" .. j .. "]"
             if e.type == "skill" and (e.skill or e.id) and not skillIds[e.skill or e.id] then
