@@ -138,8 +138,10 @@ function CE.Warnings(char, system)
     for _, i in ipairs(issues) do w[#w + 1] = i end
 
     local used, avail = CE.AttributePoints(char, system)
-    if used ~= avail then
-        w[#w + 1] = string.format("Attribute points: %d of %d used (%+d)", used, avail, avail - used)
+    if used > avail then
+        w[#w + 1] = string.format("Too many attribute points: %d of %d allocated (%d over).", used, avail, used - avail)
+    elseif used < avail then
+        w[#w + 1] = string.format("%d of %d attribute points spent (%d unspent).", used, avail, avail - used)
     end
     -- The 1-10 cap applies only at creation; afterwards level points and traits
     -- can push base attributes higher (toward 11/12 perk requirements). Only

@@ -188,7 +188,9 @@ local function BuildFrame()
     end
     textCommit(f.nameBox, "name"); textCommit(f.playerBox, "player"); textCommit(f.quoteBox, "quote")
 
-    local maxAttr = #(system.modifier_table or {}); if maxAttr < 10 then maxAttr = 20 end
+    -- During creation the cap is the point-buy maximum (10); higher values come
+    -- later via level points and are handled in the editor, not the wizard.
+    local maxAttr = (system.point_buy and system.point_buy.max) or 10
     for id, st in pairs(f.steppers) do
         st:OnStep(function(delta)
             if not f.draft then return end
