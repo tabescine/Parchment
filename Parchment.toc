@@ -8,8 +8,10 @@
 # Embedded libraries (load first so LibStub and the Ace3 modules exist).
 embeds.xml
 
-# Data layer: schema validation, then the bundled default system and example character.
+# Data layer: schema validation, JSON/TOML codecs, then the bundled defaults.
 Schema.lua
+JSON.lua
+TOML.lua
 Data\SystemDefault.lua
 Data\CharacterDefault.lua
 
@@ -24,3 +26,5 @@ Modules\CharacterSheet.lua
 UI\CharacterSheetUI.lua
 Modules\InitiativeTracker.lua
 UI\InitiativeUI.lua
+Modules\ImportExport.lua
+UI\ImportExportUI.lua

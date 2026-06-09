@@ -60,7 +60,11 @@ local function CanvasReset(content)
     content.rowIndex = 0
 end
 
--- Returns the next pooled FontString, creating it on demand.
+-- Returns the next pooled FontString, creating it on demand. Pooled regions are
+-- reused across renders and across roles (row label, row value, paragraph), so
+-- every layout property a helper might set is reset here. In particular anchors
+-- must be cleared: SetPoint adds a point rather than replacing, so a stale
+-- opposite anchor would stretch the text full-width and centre it.
 local function Acquire(content, font)
     content.used = content.used + 1
     local fs = content.pool[content.used]
@@ -68,12 +72,17 @@ local function Acquire(content, font)
         fs = content:CreateFontString(nil, "ARTWORK", font)
         content.pool[content.used] = fs
     end
+    fs:ClearAllPoints()
+    fs:SetWidth(0)
+    fs:SetWordWrap(true)
+    fs:SetJustifyH("LEFT")
     fs:SetFontObject(_G[font])
     fs:Show()
     return fs
 end
 
--- Returns the next pooled background texture, creating it on demand.
+-- Returns the next pooled background texture, creating it on demand. Anchors are
+-- cleared for the same reason as Acquire.
 local function AcquireTex(content)
     content.texUsed = content.texUsed + 1
     local t = content.texPool[content.texUsed]
@@ -81,6 +90,7 @@ local function AcquireTex(content)
         t = content:CreateTexture(nil, "BACKGROUND")
         content.texPool[content.texUsed] = t
     end
+    t:ClearAllPoints()
     t:Show()
     return t
 end
@@ -435,6 +445,13 @@ end
 function CharacterSheetUI.Toggle()
     local f = GetFrame()
     if f:IsShown() then f:Hide() else CharacterSheetUI.Open() end
+end
+
+-- Re-renders the sheet if it is currently open (e.g. after an import changed
+-- the active character).
+function CharacterSheetUI.RefreshIfShown()
+    local f = CharacterSheetUI.frame
+    if f and f:IsShown() then Refresh(f) end
 end
 
 -- Register with Core so /pmt sheet opens it.
