@@ -472,11 +472,17 @@ local function BuildFrame()
     wireResource(f.manaBox, "current_mana")
     wireResource(f.tempBox, "temp_hp")
 
-    -- Footer: Save to Disk (persists SavedVariables via a confirmed reload).
+    -- Footer: Edit (opens the editor) and Save to Disk.
+    local editBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    editBtn:SetSize(60, 22)
+    editBtn:SetText("Edit")
+    editBtn:SetPoint("BOTTOMLEFT", PAD, 10)
+    editBtn:SetScript("OnClick", function() ns.OpenModule("edit") end)
+
     local saveBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     saveBtn:SetSize(96, 22)
     saveBtn:SetText("Save to Disk")
-    saveBtn:SetPoint("BOTTOMLEFT", PAD, 10)
+    saveBtn:SetPoint("BOTTOMLEFT", PAD + 64, 10)
     saveBtn:SetScript("OnClick", ns.SaveToDisk)
     saveBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")

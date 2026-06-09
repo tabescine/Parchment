@@ -41,8 +41,10 @@ end
 -- Returns a fresh level-1 character skeleton with neutral attributes.
 function CE.NewBlank()
     return {
+        -- Attributes start at 1 (the point-buy baseline); the player spends the
+        -- 33 points up from there.
         name = "New Character", player = "", race = "", quote = "", level = 1,
-        attributes = { pow = 5, agi = 5, vit = 5, int = 5, sen = 5, cha = 5, luk = 5 },
+        attributes = { pow = 1, agi = 1, vit = 1, int = 1, sen = 1, cha = 1, luk = 1 },
         racial_trait = nil, origin_traits = {},
         primary_attribute = "int", ac_attribute = "agi", init_attribute = "agi",
         accomplished_skills = {}, accomplished_weapons = {}, accomplished_saves = {},

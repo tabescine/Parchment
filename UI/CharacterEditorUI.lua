@@ -19,6 +19,19 @@ local UI = ns.UI
 local CE = ns.CharacterEditor
 local PAD, ROW_H, CTRL_X = 14, 26, 120
 
+-- Confirm dialog for deleting a character (destructive).
+StaticPopupDialogs["PARCHMENT_DELETE_CHAR"] = {
+    text = "Delete character \"%s\"?\n\nThis cannot be undone once you save to disk.",
+    button1 = DELETE or "Delete",
+    button2 = CANCEL,
+    OnAccept = function(_, key)
+        ns.CharacterEditor.Delete(key)
+        if ns.CharacterEditorUI.frame and ns.CharacterEditorUI.frame:IsShown() then ns.CharacterEditorUI.Open() end
+        if ns.CharacterSheetUI then ns.CharacterSheetUI.RefreshIfShown() end
+    end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
 local EditorUI = {}
 ns.CharacterEditorUI = EditorUI
 
@@ -439,9 +452,8 @@ function EditorUI.NewCharacter(self)
 end
 
 function EditorUI.DeleteCharacter(self)
-    local _, key = ns.GetActiveCharacter()
-    if key then CE.Delete(key); Changed(self) end
-    if ns.CharacterSheetUI then ns.CharacterSheetUI.RefreshIfShown() end
+    local char, key = ns.GetActiveCharacter()
+    if key then StaticPopup_Show("PARCHMENT_DELETE_CHAR", char.name or key, nil, key) end
 end
 
 function EditorUI.PickCharacter(self)

@@ -35,6 +35,7 @@ local MODULE_COMMANDS = {
     perks = "perks",
     import = "import",
     edit = "edit",
+    new = "new",
     config = "config",
 }
 
@@ -179,6 +180,7 @@ local function PrintHelp()
     Print("  " .. C_GOLD .. "/pmt sheet|r   - open the character sheet")
     Print("  " .. C_GOLD .. "/pmt init|r    - open the initiative tracker")
     Print("  " .. C_GOLD .. "/pmt perks|r   - open the perk tree viewer")
+    Print("  " .. C_GOLD .. "/pmt new|r     - create a character (guided wizard)")
     Print("  " .. C_GOLD .. "/pmt edit|r    - open the character editor")
     Print("  " .. C_GOLD .. "/pmt import|r  - open the import/export dialog")
     Print("  " .. C_GOLD .. "/pmt config|r  - open settings")
