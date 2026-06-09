@@ -7,7 +7,7 @@
 -- and notes.
 --
 -- All layout is data-driven from ns.CharacterSheet.Compute; nothing here knows
--- the the system system specifically, so a different system definition renders too.
+-- any specific ruleset, so whatever system the user imports renders too.
 --
 -- Reads from: ns.GetActiveCharacter, ns.GetSystem, ns.CharacterSheet.Compute.
 -- Registers the "sheet" module opener with Core.
@@ -353,17 +353,37 @@ end
 -- received character (read-only) when self.viewChar is set.
 local function Refresh(self)
     local viewing = self.viewChar ~= nil
+
+    -- No system loaded: nothing renders meaningfully until one is imported.
+    if not ns.HasSystem() then
+        self.sheet, self.charKey = nil, nil
+        self.title:SetText("Parchment")
+        self.subtitle:SetText("")
+        CanvasReset(self.content)
+        CanvasFinish(self.content)
+        if viewing then
+            ns.UI.Empty(self, "No system loaded.\n\nImport the matching ruleset to view shared sheets.",
+                "Import a system", function() ns.OpenModule("import") end)
+        else
+            ns.UI.NoSystem(self)
+        end
+        return
+    end
+
     local char, key
     if viewing then char, key = self.viewChar, nil else char, key = ns.GetActiveCharacter() end
     self.charKey = key
     if not char then
-        self.title:SetText("Parchment - no character")
-        self.subtitle:SetText("Use /pmt who to see characters, or /pmt import to add one.")
+        self.title:SetText("Parchment")
+        self.subtitle:SetText("")
         self.sheet = nil
         CanvasReset(self.content)
         CanvasFinish(self.content)
+        ns.UI.Empty(self, "No character yet.\n\nCreate one to get started.",
+            "Create a character", function() ns.OpenModule("new") end)
         return
     end
+    ns.UI.HideEmpty(self)
     self.sheet = ns.CharacterSheet.Compute(char, ns.GetSystem())
     self.title:SetText((self.sheet.name or "Character")
         .. (viewing and self.viewFrom and ("  |cff8ec6ff(from " .. self.viewFrom .. ")|r") or ""))

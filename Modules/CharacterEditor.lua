@@ -38,26 +38,36 @@ local function SelectedTraits(char, system)
     return out
 end
 
--- Returns a fresh level-1 character skeleton with neutral attributes.
+-- Returns a fresh level-1 character skeleton, with attributes and default
+-- governing-attribute choices drawn from the loaded system (so it works for any
+-- imported ruleset, not a fixed set of attributes).
 function CE.NewBlank()
+    local system = ns.GetSystem()
+    local base = (system.point_buy and (system.point_buy.base or system.point_buy.min)) or 1
+
+    -- One entry per system attribute, each starting at the point-buy baseline.
+    local attributes = {}
+    for _, attr in ipairs(system.attributes or {}) do attributes[attr.id] = base end
+    -- Default the primary/AC/initiative attributes to the first one; the player
+    -- changes them in the wizard/editor.
+    local first = system.attributes and system.attributes[1] and system.attributes[1].id or nil
+
     return {
-        -- Attributes start at 1 (the point-buy baseline); the player spends the
-        -- 33 points up from there.
         name = "New Character", player = "", race = "", quote = "", level = 1,
-        attributes = { pow = 1, agi = 1, vit = 1, int = 1, sen = 1, cha = 1, luk = 1 },
+        attributes = attributes,
         racial_trait = nil, origin_traits = {},
-        primary_attribute = "int", ac_attribute = "agi", init_attribute = "agi",
+        primary_attribute = first, ac_attribute = first, init_attribute = first,
         accomplished_skills = {}, accomplished_weapons = {}, accomplished_saves = {},
         perks = {}, custom_perks = {}, perk_choices = {},
         -- HP/Mana are left unset until the build is finished (InitResources),
         -- so they derive from the final stats rather than a fixed 0.
-        hit_dice = "1d6", notes = "",
+        hit_dice = nil, notes = "",
     }
 end
 
 -- Sets the level-1 starting HP and Mana from the character's stats: HP is the
--- maximum of the hit die + 5; Mana is the computed maximum (2 x primary spell
--- modifier, or Vitality). Called when a new character is finished.
+-- maximum of the hit die + 5; Mana is the computed maximum from the system's
+-- derived_stats config. Called when a new character is finished.
 function CE.InitResources(char, system)
     char.max_hp, char.max_mana = nil, nil
     local sheet = ns.CharacterSheet.Compute(char, system)
@@ -107,15 +117,16 @@ function CE.AttributePoints(char, system)
     return used, available
 end
 
--- Returns target counts for accomplished skills/weapons/saves given a computed
--- sheet (so it uses the final, post-trait modifiers).
+-- Returns suggested target counts for accomplished skills/weapons/saves. These
+-- are soft guidance only. A system may override the defaults by declaring an
+-- `accomplish_targets = { skills, weapons, saves }` table; otherwise sensible
+-- generic constants are used (no assumptions about which attributes exist).
 function CE.AccomplishTargets(sheet)
-    local mod = {}
-    for _, a in ipairs(sheet.attributes or {}) do mod[a.id] = a.modifier end
+    local t = ns.GetSystem().accomplish_targets or {}
     return {
-        skills = 3 + math.max(0, mod.int or 0),
-        weapons = 5 + math.max(0, math.max(mod.pow or 0, mod.agi or 0)),
-        saves = 2,
+        skills = t.skills or 3,
+        weapons = t.weapons or 5,
+        saves = t.saves or 2,
     }
 end
 

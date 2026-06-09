@@ -41,20 +41,24 @@ local Refresh
 local function Signed(n) return (n >= 0 and "+" or "") .. n end
 
 -- Returns the character's hit die size and final VIT modifier.
-local function HitDieAndVit(char)
+-- The hit die size and the modifier of the system's HP attribute (if any).
+local function HitDieAndHpMod(char)
     local sheet = ns.CharacterSheet.Compute(char, ns.GetSystem())
     local die = tonumber(tostring(sheet.derived.hit_dice):match("d(%d+)")) or 6
-    local vitMod = 0
-    for _, a in ipairs(sheet.attributes) do if a.id == "vit" then vitMod = a.modifier end end
-    return die, vitMod
+    local hpAttr = ns.DerivedConfig().hp_attribute
+    local hpMod = 0
+    if hpAttr then
+        for _, a in ipairs(sheet.attributes) do if a.id == hpAttr then hpMod = a.modifier end end
+    end
+    return die, hpMod
 end
 
--- Average HP contributed per level by Vitality: VIT modifier + the hit die's
+-- Average HP contributed per level: the HP attribute's modifier + the hit die's
 -- average ((die + 1) / 2). Differences between two of these are whole numbers
--- (each die-band step and each +1 modifier is +1), matching the rules.
-local function PerLevelVit(char)
-    local die, vitMod = HitDieAndVit(char)
-    return vitMod + (die + 1) / 2
+-- (each die-band step and each +1 modifier is +1).
+local function PerLevelHp(char)
+    local die, hpMod = HitDieAndHpMod(char)
+    return hpMod + (die + 1) / 2
 end
 
 -- Recomputes and redraws the editor plus the sheet / perk viewer if open.
@@ -327,25 +331,28 @@ local function BuildFrame()
     -- the stepper allows up to the modifier table's range.
     local maxAttr = #(system.modifier_table or {})
     if maxAttr < 10 then maxAttr = 20 end
+    local cfg = ns.DerivedConfig()
+    local hpAttr = cfg.hp_attribute
     for id, st in pairs(f.steppers) do
         st:OnStep(function(delta)
             if not f.char then return end
             f.char.attributes = f.char.attributes or {}
             local newVal = math.max(1, math.min(maxAttr, (f.char.attributes[id] or 1) + delta))
-            -- Vitality changes apply retroactively: each previous level gains
-            -- the change in per-level HP (VIT modifier delta + hit-die average
+            -- Systems that opt into retroactive HP (derived_stats.retroactive_hp)
+            -- re-grant HP when the HP attribute changes: each previous level gains
+            -- the change in per-level HP (HP-modifier delta + hit-die average
             -- delta). The current/new level is rolled separately via Gain HP.
-            if id == "vit" then
+            if cfg.retroactive_hp and hpAttr and id == hpAttr then
                 local level = f.char.level or 1
-                local before = PerLevelVit(f.char)
-                f.char.attributes.vit = newVal
-                local after = PerLevelVit(f.char)
+                local before = PerLevelHp(f.char)
+                f.char.attributes[id] = newVal
+                local after = PerLevelHp(f.char)
                 local retro = (after - before) * (level - 1)
                 if retro ~= 0 then
                     f.char.max_hp = (f.char.max_hp or 0) + retro
                     f.char.current_hp = (f.char.current_hp or 0) + retro
-                    f.note = string.format("Vitality change: %+d HP retroactively (%d level%s).",
-                        retro, level - 1, (level - 1) == 1 and "" or "s")
+                    f.note = string.format("%s change: %+d HP retroactively (%d level%s).",
+                        AttrName(ns.GetSystem(), id), retro, level - 1, (level - 1) == 1 and "" or "s")
                 end
             else
                 f.char.attributes[id] = newVal
@@ -372,11 +379,11 @@ local function BuildFrame()
             { f.char.primary_attribute }, function(ids) f.char.primary_attribute = ids[1] end)
     end)
     f.acBtn:SetScript("OnClick", function()
-        Pick(f, "AC Attribute", "Agility, Sense or Luck", AttrItems(ns.GetSystem(), { agi = true, sen = true, luk = true }), 1,
+        Pick(f, "AC Attribute", "Choose the attribute that governs AC", AttrItems(ns.GetSystem()), 1,
             { f.char.ac_attribute }, function(ids) f.char.ac_attribute = ids[1] end)
     end)
     f.initBtn:SetScript("OnClick", function()
-        Pick(f, "Initiative Attribute", "Agility or Sense", AttrItems(ns.GetSystem(), { agi = true, sen = true }), 1,
+        Pick(f, "Initiative Attribute", "Choose the attribute that governs initiative", AttrItems(ns.GetSystem()), 1,
             { f.char.init_attribute }, function(ids) f.char.init_attribute = ids[1] end)
     end)
     f.skillsBtn:SetScript("OnClick", function()
@@ -409,20 +416,14 @@ local function BuildFrame()
     local function mod(sheet, id) for _, a in ipairs(sheet.attributes) do if a.id == id then return a.modifier end end return 0 end
     countTip(f.skillsBtn, function(tt, sheet)
         local tg = CE.AccomplishTargets(sheet)
-        local intMod = mod(sheet, "int")
-        local add = math.max(0, intMod)
         tt:AddLine("Accomplished Skills", UI.GOLD[1], UI.GOLD[2], UI.GOLD[3])
-        tt:AddLine("3 base, plus your Intellect modifier when positive.", 0.9, 0.9, 0.9, true)
-        tt:AddLine("Intellect modifier " .. Signed(intMod) .. " adds +" .. add .. ".  Target: " .. tg.skills, 0.56, 0.78, 1)
+        tt:AddLine("Skills you start accomplished in.  Suggested target: " .. tg.skills, 0.9, 0.9, 0.9, true)
         tt:AddLine("Chosen: " .. #(f.char.accomplished_skills or {}), 0.78, 0.66, 0.41)
     end)
     countTip(f.weaponsBtn, function(tt, sheet)
         local tg = CE.AccomplishTargets(sheet)
-        local hi = math.max(mod(sheet, "pow"), mod(sheet, "agi"))
-        local add = math.max(0, hi)
         tt:AddLine("Accomplished Weapons", UI.GOLD[1], UI.GOLD[2], UI.GOLD[3])
-        tt:AddLine("5 base, plus the higher of Power/Agility modifier when positive.", 0.9, 0.9, 0.9, true)
-        tt:AddLine("Higher modifier " .. Signed(hi) .. " adds +" .. add .. ".  Target: " .. tg.weapons, 0.56, 0.78, 1)
+        tt:AddLine("Weapons you start accomplished in.  Suggested target: " .. tg.weapons, 0.9, 0.9, 0.9, true)
         tt:AddLine("Chosen: " .. #(f.char.accomplished_weapons or {}), 0.78, 0.66, 0.41)
     end)
     countTip(f.savesBtn, function(tt, sheet)
@@ -435,10 +436,16 @@ local function BuildFrame()
     f.rollBtn:SetScript("OnClick", function() EditorUI.RollHP(f) end)
     f.rollBtn:SetScript("OnEnter", function(self)
         if not f.char then return end
-        local die, vitMod = HitDieAndVit(f.char)
+        local die, hpMod = HitDieAndHpMod(f.char)
+        local hpAttr = ns.DerivedConfig().hp_attribute
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:SetText("Roll Hit Points", 1, 1, 1)
-        GameTooltip:AddLine("Rolls 1d" .. die .. " + VIT modifier (" .. Signed(vitMod) .. "), minimum 1.", 0.85, 0.82, 0.75, true)
+        if hpAttr then
+            GameTooltip:AddLine("Rolls 1d" .. die .. " + " .. AttrName(ns.GetSystem(), hpAttr)
+                .. " modifier (" .. Signed(hpMod) .. "), minimum 1.", 0.85, 0.82, 0.75, true)
+        else
+            GameTooltip:AddLine("Rolls 1d" .. die .. ", minimum 1.", 0.85, 0.82, 0.75, true)
+        end
         GameTooltip:Show()
     end)
     f.rollBtn:SetScript("OnLeave", GameTooltip_Hide)
@@ -456,17 +463,19 @@ local function BuildFrame()
     return f
 end
 
--- Rolls a hit die + VIT modifier (minimum 1) into the HP-gain box and shows the
--- breakdown beneath it. The minimum avoids a negative, which a numeric edit box
--- cannot display.
+-- Rolls a hit die + the HP attribute's modifier (minimum 1) into the HP-gain box
+-- and shows the breakdown beneath it. The minimum avoids a negative, which a
+-- numeric edit box cannot display.
 function EditorUI.RollHP(self)
     if not self.char then return end
-    local die, vitMod = HitDieAndVit(self.char)
+    local die, hpMod = HitDieAndHpMod(self.char)
     local roll = math.random(1, die)
-    local raw = roll + vitMod
+    local raw = roll + hpMod
     local total = math.max(1, raw)
     self.hpBox:SetText(tostring(total))
-    local text = string.format("d%d: %d %s %d = %d", die, roll, vitMod >= 0 and "+" or "-", math.abs(vitMod), raw)
+    local text = (hpMod ~= 0)
+        and string.format("d%d: %d %s %d = %d", die, roll, hpMod >= 0 and "+" or "-", math.abs(hpMod), raw)
+        or string.format("d%d: %d", die, roll)
     if total ~= raw then text = text .. "  (min " .. total .. ")" end
     self.hpBreakdown:SetText(text)
 end
@@ -530,14 +539,22 @@ end
 
 -- Fills every widget from the active character.
 Refresh = function(self)
+    if not ns.HasSystem() then
+        self.char = nil
+        self.titleFS:SetText("Character Editor")
+        ns.UI.NoSystem(self)
+        return
+    end
     local char, key = ns.GetActiveCharacter()
     self.char = char
     local system = ns.GetSystem()
     if not char then
-        self.titleFS:SetText("Character Editor - no character")
-        self.warnText:SetText("No character. Use New to create one.")
+        self.titleFS:SetText("Character Editor")
+        ns.UI.Empty(self, "No character yet.\n\nCreate one to start editing.",
+            "Create a character", function() ns.OpenModule("new") end)
         return
     end
+    ns.UI.HideEmpty(self)
     self.titleFS:SetText("Editing: " .. (char.name or key or "?"))
 
     local sheet = ns.CharacterSheet.Compute(char, system)

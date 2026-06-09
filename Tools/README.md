@@ -24,11 +24,11 @@ Requires Python 3 (TOML input needs Python 3.11+ for the built-in `tomllib`, or
 python parchment_converter.py examples/sample.system.json
 
 # Character (single) -> ParchmentCharDB.lua, keyed by its "_key" field
-python parchment_converter.py examples/tabescine.character.json
-python parchment_converter.py examples/tabescine.character.toml
+python parchment_converter.py examples/sample.character.json
+python parchment_converter.py examples/sample.character.toml
 
 # Override output path / key / variable name
-python parchment_converter.py examples/tabescine.character.json -o ParchmentCharDB.lua -k "Tabescine-Stormrage"
+python parchment_converter.py examples/sample.character.json -o ParchmentCharDB.lua -k "Wren-Stormrage"
 ```
 
 Type is auto-detected (a file with `system_name`/`perk_trees` is a system; one
@@ -53,9 +53,19 @@ with `name`/`attributes` is a character). Force it with `-t system|character`.
 
 ## examples/
 
-- `sample.system.json` - the full "a homebrew system" system definition,
-  generated from the addon's bundled default so it always matches what ships.
-- `tabescine.character.json` - the example character, JSON form.
-- `tabescine.character.toml` - the same character, TOML form (hand-editable,
-  with comments). Demonstrates the homebrew ability-path `effects` that make
-  example skill bonuses compute automatically.
+Parchment ships with **no ruleset** - it is a system-agnostic toolkit, and any
+real ruleset belongs to its own author. These files are a small, original,
+public-domain demo system ("Parchment Sample") that exists only to document the
+import format and let you try the UI. They are not a playable game.
+
+- `sample.system.json` - the demo system: 3 attributes (Might/Wits/Spirit), a
+  modifier table, point-buy, hit-dice bands, six skills, three weapons, a couple
+  of racial/origin traits, one short perk tree (with a passive `effects` perk and
+  a `choice` perk), and a `derived_stats` block declaring which attributes drive
+  the hit die, mana, and movement (Might/Spirit/Wits respectively).
+- `sample.system.toml` - the same system in TOML (hand-editable, commented).
+- `sample.character.json` / `sample.character.toml` - a level-3 demo character
+  (Wren Ashdown) built for that system, in both formats.
+
+To try it: `/pmt import` in game and paste either system file, then paste a
+character file. (Both formats import identically.)

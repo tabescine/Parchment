@@ -218,11 +218,11 @@ local function BuildFrame()
             { f.draft.primary_attribute }, function(ids) f.draft.primary_attribute = ids[1] end)
     end)
     f.acBtn:SetScript("OnClick", function()
-        Pick(f, "AC Attribute", "Agility, Sense or Luck", AttrItems(ns.GetSystem(), { agi = true, sen = true, luk = true }), 1,
+        Pick(f, "AC Attribute", "Choose the attribute that governs AC", AttrItems(ns.GetSystem()), 1,
             { f.draft.ac_attribute }, function(ids) f.draft.ac_attribute = ids[1] end)
     end)
     f.initBtn:SetScript("OnClick", function()
-        Pick(f, "Initiative Attribute", "Agility or Sense", AttrItems(ns.GetSystem(), { agi = true, sen = true }), 1,
+        Pick(f, "Initiative Attribute", "Choose the attribute that governs initiative", AttrItems(ns.GetSystem()), 1,
             { f.draft.init_attribute }, function(ids) f.draft.init_attribute = ids[1] end)
     end)
     f.skillsBtn:SetScript("OnClick", function()
@@ -254,6 +254,8 @@ end
 
 -- Redraws the current step.
 Refresh = function(self)
+    if not ns.HasSystem() then ns.UI.NoSystem(self); return end
+    ns.UI.HideEmpty(self)
     local system = ns.GetSystem()
     local d = self.draft
     self.stepLabel:SetText("Step " .. self.step .. " of " .. #STEPS .. ":  " .. STEPS[self.step])
@@ -290,8 +292,8 @@ Refresh = function(self)
     self.skillsBtn:SetText(string.format("%d / %d", #(d.accomplished_skills or {}), tg.skills))
     self.weaponsBtn:SetText(string.format("%d / %d", #(d.accomplished_weapons or {}), tg.weapons))
     self.savesBtn:SetText(string.format("%d / %d", #(d.accomplished_saves or {}), tg.saves))
-    self.profHint:SetText(string.format("Targets: %d skills (3 + Int mod), %d weapons (5 + higher of Pow/Agi), 2 saves (primary + one).",
-        tg.skills, tg.weapons))
+    self.profHint:SetText(string.format("Suggested targets: %d skills, %d weapons, %d saves (primary is automatic).",
+        tg.skills, tg.weapons, tg.saves))
 
     if self.step == #STEPS then
         local lines = {
@@ -323,6 +325,11 @@ end
 -- Opens the wizard with a fresh draft.
 function WizardUI.Open()
     local f = GetFrame()
+    if not ns.HasSystem() then
+        ns.UI.NoSystem(f)
+        f:Show()
+        return
+    end
     f.draft = CE.NewBlank()
     f.step = 1
     Refresh(f)

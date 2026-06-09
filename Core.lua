@@ -1,16 +1,19 @@
 -- Parchment - Core
 --
--- Addon entry point and data layer. Owns SavedVariables wiring (seeding the
--- bundled default system and example character on first load), the data-access
+-- Addon entry point and data layer. Owns SavedVariables wiring, the data-access
 -- API that every module reads through, a small module registry, and the
 -- /parchment (/pmt) slash commands that open each module.
+--
+-- Parchment is system-agnostic and ships with no ruleset: a fresh install has
+-- no active system until the user imports one (/pmt import) or adopts a
+-- DM-shared one. Windows that need a system show an empty state until then.
 --
 -- This is the only file that knows about the live SavedVariables globals. The
 -- modules never touch ParchmentSystemDB / ParchmentCharDB directly; they call
 -- the ns.Get* helpers here so the data source can change without touching them.
 --
--- Reads from: ns.defaultSystem, ns.defaultCharacter(.Key), ns.Schema.
--- Exposes on ns: the data API (GetSystem, GetCharacter, GetModifier, ...),
+-- Reads from: ns.Schema.
+-- Exposes on ns: the data API (GetSystem, HasSystem, GetCharacter, ...),
 --   the module registry (RegisterModule, OpenModule), and ns.Addon.
 
 local ADDON, ns = ...
@@ -76,7 +79,12 @@ end
 
 -- Returns the active system definition table (ParchmentSystemDB).
 function ns.GetSystem()
-    return ParchmentSystemDB
+    return ParchmentSystemDB or {}
+end
+
+-- True when an actual system is loaded (not the empty first-run state).
+function ns.HasSystem()
+    return type(ParchmentSystemDB) == "table" and next(ParchmentSystemDB) ~= nil
 end
 
 -- Returns the characters table keyed by character key.
@@ -137,6 +145,29 @@ function ns.GetAccomplishmentBonus(level)
     return table_[Clamp(level or 1, 1, #table_)] or 0
 end
 
+-- Resolved derived-stat configuration for the active system. A system may
+-- declare which attributes drive its derived stats via a `derived_stats` block;
+-- any field left unset means that coupling does not apply, so the engine never
+-- assumes a particular attribute exists (keeping it system-agnostic). Numeric
+-- bases default to common conventions but can be overridden too.
+function ns.DerivedConfig()
+    local d = ns.GetSystem().derived_stats or {}
+    return {
+        hit_die_attribute  = d.hit_die_attribute,        -- modifier picks the hit-die band
+        hp_attribute       = d.hp_attribute,             -- modifier added to HP rolls
+        retroactive_hp     = d.retroactive_hp and true or false, -- changing hp_attribute re-grants HP for past levels
+        spell_attributes   = d.spell_attributes or {},   -- primary among these => spellcaster
+        mana_attribute     = d.mana_attribute,           -- mana source for non-casters
+        mana_multiplier    = d.mana_multiplier or 2,
+        movement_attribute = d.movement_attribute,       -- +per_step per positive modifier
+        movement_base      = d.movement_base or 12,
+        movement_per_step  = d.movement_per_step or 0.5,
+        ac_base            = d.ac_base or 10,
+        save_dc_base       = d.save_dc_base or 10,
+        actions_base       = d.actions_base or 2,
+    }
+end
+
 -- Returns the perk tree (sphere) record for an id, or nil.
 function ns.GetPerkTree(id)
     for _, tree in ipairs(ns.GetSystem().perk_trees or {}) do
@@ -190,7 +221,7 @@ local function PrintHelp()
     Print("  " .. C_GOLD .. "/pmt config|r  - open settings")
     Print("  " .. C_GOLD .. "/pmt dm|r      - toggle DM mode (broadcast vs receive sync)")
     Print("  " .. C_GOLD .. "/pmt share|r   - DM: send your system to the group")
-    Print("  " .. C_GOLD .. "/pmt systems|r - choose the active system (bundled + cached)")
+    Print("  " .. C_GOLD .. "/pmt systems|r - choose the active system from your library")
     Print("  " .. C_GOLD .. "/pmt rolls|r   - toggle public (party-visible) initiative rolls")
     Print("  " .. C_GOLD .. "/pmt view <name>|r - view another player's character sheet")
     Print("  " .. C_GOLD .. "/pmt cached|r  - browse cached sheets (|cffc8a868/pmt cached clear|r to wipe)")
@@ -198,7 +229,6 @@ local function PrintHelp()
     Print("  " .. C_GOLD .. "/pmt save|r    - write all data to disk (reloads the UI)")
     Print("  " .. C_GOLD .. "/pmt who|r     - list known characters")
     Print("  " .. C_GOLD .. "/pmt validate|r- check the loaded system and characters")
-    Print("  " .. C_GOLD .. "/pmt reseed|r  - reload the bundled system (replaces the current one)")
 end
 
 -- Prints the known characters and marks the active one.
@@ -215,6 +245,10 @@ end
 
 -- Validates the loaded system and every character, printing a summary.
 local function RunValidation()
+    if not ns.HasSystem() then
+        Print(C_YELLOW .. "no system loaded." .. "|r Import one with " .. C_GOLD .. "/pmt import|r.")
+        return
+    end
     local system = ns.GetSystem()
     local ok, issues = ns.Schema.ValidateSystem(system)
     if ok then
@@ -260,6 +294,8 @@ local function HandleSlash(input)
     elseif cmd == "share" then
         if not ns.Comm.IsDM() then
             Print(C_RED .. "only the DM shares the system. Use /pmt dm first." .. "|r")
+        elseif not ns.HasSystem() then
+            Print(C_RED .. "no system loaded to share. Import one with /pmt import first." .. "|r")
         else
             local ok, err = ns.Comm.Send("SYSTEM", ns.GetSystem())
             Print(ok and (C_GREEN .. "shared the system with your group." .. "|r")
@@ -281,11 +317,6 @@ local function HandleSlash(input)
         end
     elseif cmd == "save" then
         ns.SaveToDisk()
-    elseif cmd == "reseed" then
-        ns.ReseedSystem()
-        local system = ns.GetSystem()
-        Print(C_GREEN .. "reloaded bundled system '" .. (system.system_name or "?")
-            .. "' (" .. #(system.perk_trees or {}) .. " spheres)." .. "|r")
     elseif MODULE_COMMANDS[cmd] then
         ns.OpenModule(MODULE_COMMANDS[cmd])
     else
@@ -296,57 +327,26 @@ end
 
 -- AceAddon lifecycle.
 
--- Overwrites the system with the bundled default and marks it bundled-sourced
--- at the current version. Used by first-run seeding, version migration, and
--- the /pmt reseed command.
-function ns.ReseedSystem()
-    ParchmentSystemDB = CopyDeep(ns.defaultSystem)
-    local g = Parchment.db.global
-    g.systemSource = "bundled"
-    g.bundledVersion = ns.defaultSystem.version or "0"
-end
-
 function Parchment:OnInitialize()
     -- Settings DB (addon options live here; the data tables are their own SVs).
     self.db = LibStub("AceDB-3.0"):New("ParchmentDB", DB_DEFAULTS, true)
     local g = self.db.global
     ParchmentCharDB = ParchmentCharDB or {}
+    -- No ruleset ships with Parchment: the system stays empty until the user
+    -- imports one (/pmt import) or adopts a DM-shared one.
+    ParchmentSystemDB = ParchmentSystemDB or {}
 
-    -- Seed or migrate the bundled system. A DM-imported system is never
-    -- overwritten; a bundled one is refreshed whenever the shipped version
-    -- changes, so data updates (e.g. new perk spheres) reach existing installs.
-    local defaultVersion = ns.defaultSystem.version or "0"
-    local seededSystem = false
-    if type(ParchmentSystemDB) ~= "table" or next(ParchmentSystemDB) == nil then
-        ns.ReseedSystem()
-        seededSystem = true
-    elseif g.systemSource ~= "imported" and g.bundledVersion ~= defaultVersion then
-        ns.ReseedSystem()
-        seededSystem = true
-    end
-
-    -- Seed the example character on first run.
-    local chars = ns.GetCharacters()
-    local seededChar = false
-    if next(chars) == nil and ns.defaultCharacter then
-        chars[ns.defaultCharacterKey] = CopyDeep(ns.defaultCharacter)
-        seededChar = true
-    end
     if not g.activeCharacter then
-        g.activeCharacter = next(chars)
+        g.activeCharacter = next(ns.GetCharacters())
     end
 
     -- Slash commands.
     self:RegisterChatCommand("parchment", HandleSlash)
     self:RegisterChatCommand("pmt", HandleSlash)
 
-    -- One-line load summary.
-    local note = ""
-    if seededSystem then
-        note = C_YELLOW .. " (system v" .. defaultVersion .. " loaded)" .. "|r"
-    elseif seededChar then
-        note = C_YELLOW .. " (seeded defaults)" .. "|r"
-    end
+    -- One-line load summary; nudge first-time users to import a system.
+    local note = ns.HasSystem() and ""
+        or (C_YELLOW .. " No system loaded - import one with /pmt import." .. "|r")
     Print(C_GOLD .. "loaded." .. "|r" .. note .. " Type " .. C_GOLD .. "/pmt|r for commands.")
 end
 

@@ -107,3 +107,51 @@ function UI.CreateWindow(globalName, opts)
     f:Hide()
     return f
 end
+
+-- Shows a centered empty-state message with one action button over a window,
+-- used when there is no system or no character to render. Created once per
+-- frame and reused. Pass buttonText/onClick to offer an action (e.g. import).
+function UI.Empty(frame, message, buttonText, onClick)
+    local e = frame._emptyState
+    if not e then
+        -- A full-body panel so it masks any persistent widgets behind it.
+        e = CreateFrame("Frame", nil, frame)
+        e:SetPoint("TOPLEFT", 8, -44)
+        e:SetPoint("BOTTOMRIGHT", -8, 8)
+        e:EnableMouse(true)
+        local bg = e:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints()
+        bg:SetColorTexture(0.05, 0.05, 0.06, 0.96)
+        e.msg = e:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        e.msg:SetPoint("CENTER", 0, 16)
+        e.msg:SetWidth(300)
+        e.msg:SetJustifyH("CENTER")
+        e.msg:SetTextColor(UI.TEXT[1], UI.TEXT[2], UI.TEXT[3])
+        e.btn = CreateFrame("Button", nil, e, "UIPanelButtonTemplate")
+        e.btn:SetSize(160, 24)
+        e.btn:SetPoint("TOP", e.msg, "BOTTOM", 0, -16)
+        frame._emptyState = e
+    end
+    e.msg:SetText(message or "")
+    if buttonText and onClick then
+        e.btn:SetText(buttonText)
+        e.btn:SetScript("OnClick", onClick)
+        e.btn:Show()
+    else
+        e.btn:Hide()
+    end
+    e:Show()
+    e:Raise()
+    return e
+end
+
+-- Hides a window's empty-state overlay, if any.
+function UI.HideEmpty(frame)
+    if frame._emptyState then frame._emptyState:Hide() end
+end
+
+-- Convenience: the standard "no system loaded" empty state with an Import button.
+function UI.NoSystem(frame)
+    return UI.Empty(frame, "No system loaded.\n\nImport a ruleset to begin.",
+        "Import a system", function() if ns.OpenModule then ns.OpenModule("import") end end)
+end

@@ -88,6 +88,21 @@ function Schema.ValidateSystem(system)
         end
     end
 
+    -- Derived-stat config: any attribute it names must exist.
+    local ds = system.derived_stats
+    if type(ds) == "table" then
+        for _, field in ipairs({ "hit_die_attribute", "hp_attribute", "mana_attribute", "movement_attribute" }) do
+            if ds[field] and not attrIds[ds[field]] then
+                Report(issues, "derived_stats", "unknown attribute '" .. tostring(ds[field]) .. "' in " .. field)
+            end
+        end
+        for _, id in ipairs(ds.spell_attributes or {}) do
+            if not attrIds[id] then
+                Report(issues, "derived_stats", "unknown attribute '" .. tostring(id) .. "' in spell_attributes")
+            end
+        end
+    end
+
     -- Global perk id set: prerequisites and exclusions may reference perks in
     -- other spheres (the ruleset interconnects them), so validate against all.
     local allPerkIds = {}

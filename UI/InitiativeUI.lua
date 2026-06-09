@@ -182,6 +182,10 @@ end
 -- "Me": as DM/solo, adds the active character (rolled). As a player in a group,
 -- submits the rolled initiative to the DM instead.
 local function AddActiveCharacter(self)
+    if not ns.HasSystem() then
+        ns.Print("no system loaded - import one with /pmt import to add your character.")
+        return
+    end
     local char = ns.GetActiveCharacter()
     if not char then return end
     local sheet = ns.CharacterSheet.Compute(char, ns.GetSystem())

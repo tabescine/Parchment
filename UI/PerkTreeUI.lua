@@ -316,15 +316,31 @@ end
 
 -- Recomputes the active character and redraws the current sphere.
 Refresh = function(self)
+    local function blank()
+        for _, n in ipairs(self.content.nodePool) do n:Hide() end
+        for _, l in ipairs(self.content.linePool) do l:Hide() end
+    end
+
+    if not ns.HasSystem() then
+        self.char = nil
+        self.sphereLabel:SetText("")
+        self.points:SetText("")
+        blank()
+        ns.UI.NoSystem(self)
+        return
+    end
+
     local char = ns.GetActiveCharacter()
     self.char = char
     if not char then
-        self.sphereLabel:SetText("No character")
+        self.sphereLabel:SetText("")
         self.points:SetText("")
-        for _, n in ipairs(self.content.nodePool) do n:Hide() end
-        for _, l in ipairs(self.content.linePool) do l:Hide() end
+        blank()
+        ns.UI.Empty(self, "No character yet.\n\nCreate one to choose perks.",
+            "Create a character", function() ns.OpenModule("new") end)
         return
     end
+    ns.UI.HideEmpty(self)
     self.sheet = ns.CharacterSheet.Compute(char, ns.GetSystem())
 
     self.trees = BuildTreeList(char)

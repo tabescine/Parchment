@@ -7,14 +7,19 @@
 -- renders whatever this returns, so the same compute path can be unit-tested
 -- without a running client.
 --
--- Computation rules (from the the system ruleset, verified against the example sheet):
+-- Parchment's computation model. Imported systems supply the data (attributes,
+-- modifier_table, skills, perks, traits) and, via the optional `derived_stats`
+-- block, declare which attributes drive the derived stats. The fixed formulas:
 --   final attribute   = base + fixed trait bonuses (+/-)
 --   modifier          = system modifier_table[final]
 --   skill / save total= attribute modifier + (accomplished and accomplishment)
---   AC                = 10 + AC-attribute modifier + trait AC bonuses
---   mana (max)        = 2 x primary spell modifier (Int/Sen/Cha), else 2 x Vit
---   movement          = 12 + 0.5 per positive Agility modifier + trait bonuses
---   save DC (primary) = 10 + primary modifier + accomplishment bonus
+--   AC                = ac_base + AC-attribute modifier + trait AC bonuses
+--   hit die           = band for the hit_die_attribute's modifier
+--   mana (max)        = mana_multiplier x spell-source modifier
+--   movement          = movement_base + per_step per positive movement modifier
+--   save DC (primary) = save_dc_base + primary modifier + accomplishment bonus
+-- Which attribute fills each role is configured per system (see ns.DerivedConfig);
+-- an unset role contributes 0, so no specific attribute id is ever assumed.
 --
 -- Homebrew per-character perks (custom_perks) and conditional racial effects are
 -- NOT folded into these totals - they are surfaced for the player to apply.
@@ -298,27 +303,37 @@ function CharacterSheet.Compute(char, system)
         end
     end
 
-    -- Derived stats.
+    -- Derived stats. Which attributes drive hit die, mana, movement etc. comes
+    -- from the system's derived_stats config; an unset coupling contributes 0,
+    -- so nothing assumes a particular attribute exists.
+    local cfg = ns.DerivedConfig()
     local primary = char.primary_attribute
-    local spellMod = (primary == "int" or primary == "sen" or primary == "cha")
-        and modifier[primary] or modifier["vit"] or 0
+
+    -- Mana source: the primary attribute if it is one of the system's spell
+    -- attributes, otherwise the configured fallback attribute (else none).
+    local isCaster = false
+    for _, id in ipairs(cfg.spell_attributes) do if id == primary then isCaster = true end end
+    local spellMod = isCaster and (modifier[primary] or 0)
+        or (cfg.mana_attribute and (modifier[cfg.mana_attribute] or 0)) or 0
+
     local acMod = modifier[char.ac_attribute] or 0
-    local agiMod = modifier["agi"] or 0
-    local initMod = modifier[char.init_attribute or "agi"] or 0
+    local initMod = modifier[char.init_attribute] or 0
+    local moveMod = cfg.movement_attribute and (modifier[cfg.movement_attribute] or 0) or 0
+    local hitDieMod = cfg.hit_die_attribute and (modifier[cfg.hit_die_attribute] or 0) or 0
 
     local derived = {
         accomplishment = accomplishment,
         primary_attribute = primary,
-        hit_dice = level .. ns.GetHitDie(modifier["vit"] or 0),
+        hit_dice = level .. ns.GetHitDie(hitDieMod),
         hp = { current = char.current_hp, max = (char.max_hp or 0) + fx.maxHP, temp = char.temp_hp },
-        mana = { current = char.current_mana, max = (char.max_mana or math.max(0, 2 * spellMod)) + fx.maxMana },
-        ac = 10 + acMod + fx.ac,
+        mana = { current = char.current_mana, max = (char.max_mana or math.max(0, cfg.mana_multiplier * spellMod)) + fx.maxMana },
+        ac = cfg.ac_base + acMod + fx.ac,
         ac_attribute = char.ac_attribute,
         initiative = initMod + fx.initiative,
-        init_attribute = char.init_attribute or "agi",
-        movement = 12 + math.max(0, agiMod) * 0.5 + fx.movement,
-        actions = 2 + fx.actions,
-        save_dc = 10 + (modifier[primary] or 0) + accomplishment + fx.saveDC,
+        init_attribute = char.init_attribute,
+        movement = cfg.movement_base + math.max(0, moveMod) * cfg.movement_per_step + fx.movement,
+        actions = cfg.actions_base + fx.actions,
+        save_dc = cfg.save_dc_base + (modifier[primary] or 0) + accomplishment + fx.saveDC,
         attack_modifier = fx.attack,
     }
     -- Level-granted extra actions (and any other level_bonuses.actions).

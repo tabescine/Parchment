@@ -3,13 +3,13 @@
 -- Manages multiple system definitions so a DM-shared system never silently
 -- destroys a player's own. Received systems are cached in a library and the
 -- player is prompted to adopt; switching the active system preserves the
--- outgoing one. A picker (/pmt systems) chooses the active system, including the
--- bundled default.
+-- outgoing one. A picker (/pmt systems) chooses the active system from the
+-- library. Parchment ships no system, so the library starts empty.
 --
--- Reads from: ns.Addon.db.global (systemLibrary, systemSource), ns.ReseedSystem,
---   ns.defaultSystem, ns.Comm, ns.Dialogs, ns.Print, ns.CharacterSheetUI,
---   ns.PerkTreeUI. Owns ParchmentSystemDB swaps.
--- Exposes on ns.Systems: Store, SetActive, UseBundled, OpenPicker.
+-- Reads from: ns.Addon.db.global (systemLibrary, systemSource), ns.Comm,
+--   ns.Dialogs, ns.Print, ns.CharacterSheetUI, ns.PerkTreeUI. Owns
+--   ParchmentSystemDB swaps.
+-- Exposes on ns.Systems: Store, SetActive, OpenPicker.
 
 local ADDON, ns = ...
 
@@ -45,12 +45,13 @@ function Sys.Store(system, from)
     }
 end
 
--- Makes a system the active one, preserving the outgoing (non-bundled) system
--- in the library so nothing is lost.
+-- Makes a system the active one, preserving the outgoing system in the library
+-- (if not already there) so nothing is lost.
 function Sys.SetActive(system, from)
     if type(system) ~= "table" then return end
     local g = ns.Addon.db.global
-    if g.systemSource ~= "bundled" and type(ParchmentSystemDB) == "table" and ParchmentSystemDB.system_name then
+    if type(ParchmentSystemDB) == "table" and ParchmentSystemDB.system_name
+        and not Library()[ParchmentSystemDB.system_name] then
         Sys.Store(ParchmentSystemDB, "yours")
     end
     ParchmentSystemDB = deepcopy(system)
@@ -59,47 +60,30 @@ function Sys.SetActive(system, from)
     RefreshAll()
 end
 
--- Switches to the bundled default, preserving any non-bundled current system.
-function Sys.UseBundled()
-    local g = ns.Addon.db.global
-    if g.systemSource ~= "bundled" and type(ParchmentSystemDB) == "table" and ParchmentSystemDB.system_name then
-        Sys.Store(ParchmentSystemDB, "yours")
-    end
-    ns.ReseedSystem()
-    RefreshAll()
-end
-
--- Opens the system picker (bundled default + cached systems).
+-- Opens the system picker over the cached system library.
 function Sys.OpenPicker()
-    local g = ns.Addon.db.global
     local activeName = type(ParchmentSystemDB) == "table" and ParchmentSystemDB.system_name or nil
-    local bundledName = ns.defaultSystem.system_name
-    local function activeTag(isActive) return isActive and "  |cff66d966[active]|r" or "" end
-
-    local items = {
-        { id = "__bundled", name = bundledName .. " (bundled)" .. activeTag(g.systemSource == "bundled") },
-    }
+    local items = {}
     for name, entry in pairs(Library()) do
         items[#items + 1] = {
             id = name,
             name = name .. (entry.from and ("  |cff888888(from " .. entry.from .. ")|r") or "")
-                .. activeTag(g.systemSource ~= "bundled" and name == activeName),
+                .. (name == activeName and "  |cff66d966[active]|r" or ""),
         }
+    end
+    if #items == 0 then
+        ns.Print("your system library is empty. Import one with /pmt import.")
+        return
     end
 
     ns.Dialogs.Pick({
         title = "Systems", prompt = "Choose the active system", items = items, max = 1, selected = {},
         onConfirm = function(ids)
             local id = ids[1]
-            if id == "__bundled" then
-                Sys.UseBundled()
-                ns.Print("now using the bundled system.")
-            elseif id then
-                local entry = Library()[id]
-                if entry then
-                    Sys.SetActive(entry.system, entry.from)
-                    ns.Print("now using system '" .. id .. "'.")
-                end
+            local entry = id and Library()[id]
+            if entry then
+                Sys.SetActive(entry.system, entry.from)
+                ns.Print("now using system '" .. id .. "'.")
             end
         end,
     })

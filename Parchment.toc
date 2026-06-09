@@ -8,18 +8,11 @@
 # Embedded libraries (load first so LibStub and the Ace3 modules exist).
 embeds.xml
 
-# Data layer: schema validation, JSON/TOML codecs, then the bundled defaults.
+# Data layer: schema validation and the JSON/TOML codecs used by import/export.
+# Parchment ships with no ruleset; systems are imported by the user at runtime.
 Schema.lua
 JSON.lua
 TOML.lua
-Data\SystemDefault.lua
-Data\Spheres\Agility.lua
-Data\Spheres\Vitality.lua
-Data\Spheres\Intellect.lua
-Data\Spheres\Sense.lua
-Data\Spheres\Charisma.lua
-Data\Spheres\Luck.lua
-Data\CharacterDefault.lua
 
 # Core: addon init, SavedVariables wiring, data access API, slash commands.
 Core.lua

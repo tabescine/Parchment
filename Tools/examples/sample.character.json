@@ -1,0 +1,32 @@
+{
+  "name": "Wren Ashdown",
+  "player": "example",
+  "race": "human",
+  "level": 3,
+  "quote": "The map is never the territory, but it keeps you from walking off a cliff.",
+
+  "attributes": { "might": 5, "wits": 8, "spirit": 6 },
+
+  "racial_trait": "human",
+  "origin_traits": ["scholarly"],
+
+  "primary_attribute": "wits",
+  "ac_attribute": "wits",
+  "init_attribute": "wits",
+
+  "max_hp": 22,
+  "current_hp": 22,
+  "max_mana": 8,
+  "current_mana": 8,
+  "temp_hp": 0,
+
+  "accomplished_skills": ["lore", "perception", "persuasion"],
+  "accomplished_weapons": ["bow"],
+  "accomplished_saves": ["wits"],
+
+  "perks": ["keen_eye", "scholar"],
+  "perk_choices": { "scholar": ["lore"] },
+
+  "custom_perks": [],
+  "notes": "A demo character for the Parchment Sample system. Not part of any real ruleset."
+}

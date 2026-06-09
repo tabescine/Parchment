@@ -143,10 +143,14 @@ function IE.Import(text)
         return true, "imported system '" .. (clean.system_name or "?") .. "'."
     end
 
+    -- Validate characters against the active system, or shape-only when none is
+    -- loaded yet (so a character can be imported before its system).
+    local validateSystem = ns.HasSystem() and ns.GetSystem() or nil
+
     if kind == "character_db" then
         local count = 0
         for charKey, char in pairs(data.characters or {}) do
-            local ok, issues = ns.Schema.ValidateCharacter(char, ns.GetSystem())
+            local ok, issues = ns.Schema.ValidateCharacter(char, validateSystem)
             if not ok then
                 return false, "character '" .. tostring(charKey) .. "' invalid: " .. SummarizeIssues(issues)
             end
@@ -160,7 +164,7 @@ function IE.Import(text)
     local key = data._key
     if not key then return false, "character has no key; add a \"_key\" field." end
     local clean = StripMeta(data)
-    local ok, issues = ns.Schema.ValidateCharacter(clean, ns.GetSystem())
+    local ok, issues = ns.Schema.ValidateCharacter(clean, validateSystem)
     if not ok then return false, "character invalid: " .. SummarizeIssues(issues) end
 
     ParchmentCharDB.characters = ParchmentCharDB.characters or {}

@@ -9,10 +9,10 @@ into:
     WTF/Account/<ACCOUNT>/SavedVariables/ParchmentCharDB.lua
 
 The schema is the same one the addon uses (see Tools/examples/). The converter
-is deliberately generic: it does not hardcode the system attributes or skills, it just
-transcodes the structure. The one piece of schema knowledge it applies is that
-object keys which look like integers (e.g. a level_bonuses map keyed "3", "9")
-become Lua numeric keys, so the addon's numeric lookups keep working.
+is deliberately generic: it does not hardcode any ruleset's attributes or
+skills, it just transcodes the structure. The one piece of schema knowledge it
+applies is that object keys which look like integers (e.g. a level_bonuses map
+keyed "3", "9") become Lua numeric keys, so the addon's numeric lookups work.
 
 Usage:
     python parchment_converter.py INPUT [-o OUTPUT] [-t system|character|auto]
@@ -20,7 +20,7 @@ Usage:
 
 Examples:
     python parchment_converter.py examples/sample.system.json
-    python parchment_converter.py examples/tabescine.character.json -o ParchmentCharDB.lua
+    python parchment_converter.py examples/sample.character.json -o ParchmentCharDB.lua
 """
 
 import argparse
