@@ -112,13 +112,66 @@ local function ShowTooltip(self, node)
     GameTooltip:Show()
 end
 
--- Handles a click on a node: select on left, deselect on right.
+-- Refreshes the viewer and the character sheet (if open) after a change.
+local function AfterChange(self)
+    Refresh(self)
+    if ns.CharacterSheetUI then ns.CharacterSheetUI.RefreshIfShown() end
+end
+
+-- Opens the choice picker for a perk that grants a player choice and records the
+-- result onto the character.
+local function OpenChoicePicker(self, tree, perk)
+    local choice = perk.choice
+    local items = {}
+    if choice.kind == "skill" then
+        for _, s in ipairs(ns.GetSystem().skills or {}) do items[#items + 1] = { id = s.id, name = s.name } end
+    elseif choice.kind == "weapon" then
+        for _, w in ipairs(ns.GetSystem().weapons or {}) do items[#items + 1] = { id = w.id, name = w.name } end
+    else
+        for _, d in ipairs(ns.GetSystem().damage_types or {}) do items[#items + 1] = { id = d, name = d } end
+    end
+    ns.Dialogs.Pick({
+        title = perk.name,
+        prompt = choice.prompt or "Choose:",
+        items = items,
+        max = PT.ChoiceMax(self.char, perk),
+        selected = (self.char.perk_choices and self.char.perk_choices[perk.id]) or {},
+        onConfirm = function(ids)
+            PT.SetChoices(self.char, perk, ids)
+            AfterChange(self)
+        end,
+    })
+end
+
+-- Handles a click on a node: select on left, deselect on right. Perks that grant
+-- a choice prompt for it (and let you edit the choice when already taken).
 local function OnNodeClick(self, node, button)
     local perk, tree = node.perk, node.tree
     if tree.homebrew then
         SetMsg(self, "Homebrew perks are set via import or the character sheet.", false)
         return
     end
+
+    if perk.choice then
+        if button == "RightButton" then
+            local ok, reason = PT.Deselect(self.char, tree, perk)
+            SetMsg(self, ok and ("Removed " .. perk.name .. ".") or reason, not ok)
+            if ok then AfterChange(self) end
+            return
+        end
+        -- Take a rank if not yet taken (or a further rank on a repeatable), then
+        -- prompt for the choice(s).
+        if PT.Rank(self.char, perk) == 0 then
+            local ok, reason = PT.Select(self.char, self.sheet, tree, perk)
+            if not ok then SetMsg(self, reason, true); return end
+        elseif perk.repeatable and PT.CanAddRank(self.char, self.sheet, tree, perk) then
+            PT.Select(self.char, self.sheet, tree, perk)
+        end
+        Refresh(self)
+        OpenChoicePicker(self, tree, perk)
+        return
+    end
+
     local ok, reason
     if button == "RightButton" then
         ok, reason = PT.Deselect(self.char, tree, perk)
@@ -127,11 +180,7 @@ local function OnNodeClick(self, node, button)
         ok, reason = PT.Select(self.char, self.sheet, tree, perk)
         SetMsg(self, ok and ("Selected " .. perk.name .. ".") or reason, not ok)
     end
-    if ok then
-        Refresh(self)
-        -- Reflect the change on the character sheet if it is open.
-        if ns.CharacterSheetUI then ns.CharacterSheetUI.RefreshIfShown() end
-    end
+    if ok then AfterChange(self) end
 end
 
 -- Creates one pooled node button (scripts read node.perk / node.tree).

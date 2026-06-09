@@ -114,6 +114,12 @@ function Schema.ValidateSystem(system)
                     if perk.req_attribute and not attrIds[perk.req_attribute] then
                         Report(issues, pctx, "unknown req_attribute '" .. tostring(perk.req_attribute) .. "'")
                     end
+                    if perk.choice then
+                        local k = perk.choice.kind
+                        if k ~= "skill" and k ~= "weapon" and k ~= "damage_type" then
+                            Report(issues, pctx, "choice.kind invalid '" .. tostring(k) .. "'")
+                        end
+                    end
                     for _, req in ipairs(perk.prerequisites or {}) do
                         if not allPerkIds[req] then
                             Report(issues, pctx, "prerequisite '" .. tostring(req) .. "' not found in any tree")
@@ -209,6 +215,32 @@ function Schema.ValidateCharacter(char, system)
             end
             if e.add_modifier and not attrIds[e.add_modifier] then
                 Report(issues, ctx, "unknown add_modifier attribute '" .. tostring(e.add_modifier) .. "'")
+            end
+        end
+    end
+
+    -- Perk choices must key real perks and pick ids valid for the choice kind.
+    local weaponIds = IdSet(system.weapons)
+    local dmgTypes = {}
+    for _, d in ipairs(system.damage_types or {}) do dmgTypes[d] = true end
+    for pid, chosen in pairs(char.perk_choices or {}) do
+        if not perkIds[pid] then
+            Report(issues, "perk_choices", "unknown perk '" .. tostring(pid) .. "'")
+        else
+            local kind
+            for _, tree in ipairs(system.perk_trees or {}) do
+                for _, p in ipairs(tree.perks or {}) do
+                    if p.id == pid and p.choice then kind = p.choice.kind end
+                end
+            end
+            for _, cid in ipairs(chosen) do
+                if kind == "skill" and not skillIds[cid] then
+                    Report(issues, "perk_choices[" .. pid .. "]", "unknown skill '" .. tostring(cid) .. "'")
+                elseif kind == "weapon" and not weaponIds[cid] then
+                    Report(issues, "perk_choices[" .. pid .. "]", "unknown weapon '" .. tostring(cid) .. "'")
+                elseif kind == "damage_type" and next(dmgTypes) and not dmgTypes[cid] then
+                    Report(issues, "perk_choices[" .. pid .. "]", "unknown damage type '" .. tostring(cid) .. "'")
+                end
             end
         end
     end

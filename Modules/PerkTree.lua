@@ -218,10 +218,35 @@ function PT.Deselect(char, tree, perk)
     for i, v in ipairs(char.perks) do
         if v == perk.id then
             table.remove(char.perks, i)
+            -- Trim or clear any recorded choices to match the new rank.
+            local choices = char.perk_choices and char.perk_choices[perk.id]
+            if choices then
+                local newRank = PT.Rank(char, perk)
+                if newRank == 0 then
+                    char.perk_choices[perk.id] = nil
+                else
+                    local maxN = PT.ChoiceMax(char, perk)
+                    while #choices > maxN do table.remove(choices) end
+                end
+            end
             return true
         end
     end
     return false, "Not taken."
+end
+
+-- Returns the maximum number of choices a perk's choice spec allows at the
+-- character's current rank (repeatable perks scale with rank).
+function PT.ChoiceMax(char, perk)
+    if not perk.choice then return 0 end
+    local per = perk.choice.count or 1
+    return perk.repeatable and (per * PT.Rank(char, perk)) or per
+end
+
+-- Records the chosen ids for a perk's choice.
+function PT.SetChoices(char, perk, ids)
+    char.perk_choices = char.perk_choices or {}
+    char.perk_choices[perk.id] = ids
 end
 
 -- Returns invested, available perk points. One point is granted per level.

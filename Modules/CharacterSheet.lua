@@ -155,6 +155,23 @@ local function FindPerkInSystem(system, id)
     end
 end
 
+-- Counts occurrences of id in a list.
+local function CountIn(list, id)
+    local c = 0
+    for _, v in ipairs(list or {}) do
+        if v == id then c = c + 1 end
+    end
+    return c
+end
+
+-- Resolves a record id to its display name within a system list (skills/weapons).
+local function NameInList(list, id)
+    for _, rec in ipairs(list or {}) do
+        if rec.id == id then return rec.name end
+    end
+    return id
+end
+
 -- Computes the full sheet for a character against a system definition.
 --
 -- Returns a single table (see the field comments inline). Returns nil when
@@ -163,6 +180,8 @@ function CharacterSheet.Compute(char, system)
     if type(char) ~= "table" or type(system) ~= "table" then return nil end
 
     local traits = SelectedTraits(char, system)
+    local level = char.level or 1
+    local accomplishment = ns.GetAccomplishmentBonus(level)
 
     -- Resolve selected standard-sphere perks: a display list (unique, with rank
     -- and sphere) and a flat per-occurrence list for effect folding.
@@ -181,15 +200,44 @@ function CharacterSheet.Compute(char, system)
         end
     end
 
-    -- Effects come from traits, homebrew perks, and any selected sphere perks
-    -- that carry machine-readable effects.
+    -- Perk-driven choices (Scholar, Jack of All Trades, Weaponmaster, ...): build
+    -- the extra effects/accomplishments they grant and tag the chosen values onto
+    -- the display entry for that perk.
+    local choiceEffects, extraSkills, extraWeapons = {}, {}, {}
+    for pid, chosen in pairs(char.perk_choices or {}) do
+        local perk = FindPerkInSystem(system, pid)
+        local choice = perk and perk.choice
+        if choice and CountIn(char.perks, pid) > 0 then
+            local names = {}
+            for _, cid in ipairs(chosen) do
+                if choice.kind == "skill" then
+                    names[#names + 1] = NameInList(system.skills, cid)
+                    if choice.apply == "accomplished" then
+                        extraSkills[cid] = true
+                    elseif choice.apply == "double_accomplishment" then
+                        choiceEffects[#choiceEffects + 1] = { { type = "skill", skill = cid, value = accomplishment }, perk.name }
+                    else
+                        local n = tonumber(tostring(choice.apply):match("skill_bonus:(%d+)"))
+                        if n then choiceEffects[#choiceEffects + 1] = { { type = "skill", skill = cid, value = n }, perk.name } end
+                    end
+                elseif choice.kind == "weapon" then
+                    names[#names + 1] = NameInList(system.weapons, cid)
+                    if choice.apply == "accomplished" then extraWeapons[cid] = true end
+                else
+                    names[#names + 1] = cid
+                end
+            end
+            if spherePerkSeen[pid] then spherePerkSeen[pid].choices = names end
+        end
+    end
+
+    -- Effects come from traits, homebrew perks, selected sphere perks that carry
+    -- machine-readable effects, and the choice-derived effects above.
     local effectPerks = {}
     for _, p in ipairs(char.custom_perks or {}) do effectPerks[#effectPerks + 1] = p end
     for _, p in ipairs(takenForEffects) do effectPerks[#effectPerks + 1] = p end
     local fx = AccumulateEffects(traits, effectPerks)
-
-    local level = char.level or 1
-    local accomplishment = ns.GetAccomplishmentBonus(level)
+    for _, ce in ipairs(choiceEffects) do ApplyEffect(fx, ce[1], ce[2]) end
 
     -- Attributes: base + trait bonus + global all-attribute adjustment.
     local final, modifier = {}, {}
@@ -209,6 +257,7 @@ function CharacterSheet.Compute(char, system)
 
     -- Skills grouped under their governing attribute.
     local accomplishedSkills = ListToSet(char.accomplished_skills)
+    for id in pairs(extraSkills) do accomplishedSkills[id] = true end
     local skills = {}
     for _, skill in ipairs(system.skills or {}) do
         local mod = modifier[skill.attribute] or 0
@@ -238,6 +287,7 @@ function CharacterSheet.Compute(char, system)
 
     -- Weapon proficiencies (display + accomplished flag).
     local accomplishedWeapons = ListToSet(char.accomplished_weapons)
+    for id in pairs(extraWeapons) do accomplishedWeapons[id] = true end
     local weapons = {}
     for _, weapon in ipairs(system.weapons or {}) do
         if accomplishedWeapons[weapon.id] then

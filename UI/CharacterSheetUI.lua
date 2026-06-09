@@ -253,6 +253,7 @@ local function RenderBody(self)
         Header(content, "PERKS")
         for _, p in ipairs(sheet.sphere_perks) do
             local title = p.name .. (p.rank > 1 and (" x" .. p.rank) or "")
+                .. (p.choices and #p.choices > 0 and ("  |cff8ec6ff[" .. table.concat(p.choices, ", ") .. "]|r") or "")
                 .. (p.sphere and ("  |cff8ec6ff(" .. p.sphere .. ")|r") or "")
             Paragraph(content, title .. ":", p.description, C_DIM)
         end
