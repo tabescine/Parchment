@@ -40,6 +40,23 @@ local Refresh
 -- Signed integer (+3 / -2 / +0).
 local function Signed(n) return (n >= 0 and "+" or "") .. n end
 
+-- Returns the character's hit die size and final VIT modifier.
+local function HitDieAndVit(char)
+    local sheet = ns.CharacterSheet.Compute(char, ns.GetSystem())
+    local die = tonumber(tostring(sheet.derived.hit_dice):match("d(%d+)")) or 6
+    local vitMod = 0
+    for _, a in ipairs(sheet.attributes) do if a.id == "vit" then vitMod = a.modifier end end
+    return die, vitMod
+end
+
+-- Average HP contributed per level by Vitality: VIT modifier + the hit die's
+-- average ((die + 1) / 2). Differences between two of these are whole numbers
+-- (each die-band step and each +1 modifier is +1), matching the rules.
+local function PerLevelVit(char)
+    local die, vitMod = HitDieAndVit(char)
+    return vitMod + (die + 1) / 2
+end
+
 -- Recomputes and redraws the editor plus the sheet / perk viewer if open.
 local function Changed(self)
     Refresh(self)
@@ -210,7 +227,9 @@ local function BuildFrame()
     f.levelText:SetPoint("TOPLEFT", CTRL_X, y)
     f.levelText:SetTextColor(UI.GOLD[1], UI.GOLD[2], UI.GOLD[3])
     f.levelUpBtn = CreateFrame("Button", nil, c, "UIPanelButtonTemplate")
-    f.levelUpBtn:SetSize(78, 20); f.levelUpBtn:SetText("Level Up"); f.levelUpBtn:SetPoint("TOPLEFT", CTRL_X + 40, y + 1)
+    f.levelUpBtn:SetSize(76, 20); f.levelUpBtn:SetText("Level Up"); f.levelUpBtn:SetPoint("TOPLEFT", CTRL_X + 34, y + 1)
+    f.levelDownBtn = CreateFrame("Button", nil, c, "UIPanelButtonTemplate")
+    f.levelDownBtn:SetSize(86, 20); f.levelDownBtn:SetText("Level Down"); f.levelDownBtn:SetPoint("TOPLEFT", CTRL_X + 114, y + 1)
     adv()
 
     -- Resources: editable max HP / Mana, and an ad-hoc HP gain roll.
@@ -223,6 +242,10 @@ local function BuildFrame()
     f.rollBtn:SetSize(48, 20); f.rollBtn:SetText("Roll"); f.rollBtn:SetPoint("TOPLEFT", CTRL_X + 56, y + 1)
     f.addHpBtn = CreateFrame("Button", nil, c, "UIPanelButtonTemplate")
     f.addHpBtn:SetSize(48, 20); f.addHpBtn:SetText("Add"); f.addHpBtn:SetPoint("TOPLEFT", CTRL_X + 108, y + 1)
+    adv()
+    f.hpBreakdown = c:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    f.hpBreakdown:SetPoint("TOPLEFT", CTRL_X, y + 2)
+    f.hpBreakdown:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
     adv()
 
     -- Attributes.
@@ -308,8 +331,25 @@ local function BuildFrame()
         st:OnStep(function(delta)
             if not f.char then return end
             f.char.attributes = f.char.attributes or {}
-            local v = (f.char.attributes[id] or 5) + delta
-            f.char.attributes[id] = math.max(1, math.min(maxAttr, v))
+            local newVal = math.max(1, math.min(maxAttr, (f.char.attributes[id] or 1) + delta))
+            -- Vitality changes apply retroactively: each previous level gains
+            -- the change in per-level HP (VIT modifier delta + hit-die average
+            -- delta). The current/new level is rolled separately via Gain HP.
+            if id == "vit" then
+                local level = f.char.level or 1
+                local before = PerLevelVit(f.char)
+                f.char.attributes.vit = newVal
+                local after = PerLevelVit(f.char)
+                local retro = (after - before) * (level - 1)
+                if retro ~= 0 then
+                    f.char.max_hp = (f.char.max_hp or 0) + retro
+                    f.char.current_hp = (f.char.current_hp or 0) + retro
+                    f.note = string.format("Vitality change: %+d HP retroactively (%d level%s).",
+                        retro, level - 1, (level - 1) == 1 and "" or "s")
+                end
+            else
+                f.char.attributes[id] = newVal
+            end
             Changed(f)
         end)
     end
@@ -393,8 +433,18 @@ local function BuildFrame()
 
     -- Resource editing.
     f.rollBtn:SetScript("OnClick", function() EditorUI.RollHP(f) end)
+    f.rollBtn:SetScript("OnEnter", function(self)
+        if not f.char then return end
+        local die, vitMod = HitDieAndVit(f.char)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Roll Hit Points", 1, 1, 1)
+        GameTooltip:AddLine("Rolls 1d" .. die .. " + VIT modifier (" .. Signed(vitMod) .. "), minimum 1.", 0.85, 0.82, 0.75, true)
+        GameTooltip:Show()
+    end)
+    f.rollBtn:SetScript("OnLeave", GameTooltip_Hide)
     f.addHpBtn:SetScript("OnClick", function() EditorUI.AddHP(f) end)
     f.levelUpBtn:SetScript("OnClick", function() EditorUI.DoLevelUp(f) end)
+    f.levelDownBtn:SetScript("OnClick", function() EditorUI.DoLevelDown(f) end)
     local function maxCommit(box, field)
         box:SetScript("OnEnterPressed", function(self)
             if f.char then f.char[field] = tonumber(self:GetText()) or 0 end
@@ -406,14 +456,19 @@ local function BuildFrame()
     return f
 end
 
--- Rolls a hit die + VIT modifier into the HP-gain box.
+-- Rolls a hit die + VIT modifier (minimum 1) into the HP-gain box and shows the
+-- breakdown beneath it. The minimum avoids a negative, which a numeric edit box
+-- cannot display.
 function EditorUI.RollHP(self)
     if not self.char then return end
-    local sheet = ns.CharacterSheet.Compute(self.char, ns.GetSystem())
-    local die = tonumber(tostring(sheet.derived.hit_dice):match("d(%d+)")) or 6
-    local vitMod = 0
-    for _, a in ipairs(sheet.attributes) do if a.id == "vit" then vitMod = a.modifier end end
-    self.hpBox:SetText(tostring(math.random(1, die) + vitMod))
+    local die, vitMod = HitDieAndVit(self.char)
+    local roll = math.random(1, die)
+    local raw = roll + vitMod
+    local total = math.max(1, raw)
+    self.hpBox:SetText(tostring(total))
+    local text = string.format("d%d: %d %s %d = %d", die, roll, vitMod >= 0 and "+" or "-", math.abs(vitMod), raw)
+    if total ~= raw then text = text .. "  (min " .. total .. ")" end
+    self.hpBreakdown:SetText(text)
 end
 
 -- Adds the Gain HP value to both maximum and current HP (an ad-hoc gain that is
@@ -425,6 +480,7 @@ function EditorUI.AddHP(self)
     self.char.max_hp = (self.char.max_hp or 0) + hp
     self.char.current_hp = (self.char.current_hp or 0) + hp
     self.hpBox:SetText("")
+    self.hpBreakdown:SetText("")
     self.note = "+" .. hp .. " HP (max " .. self.char.max_hp .. ")"
     Changed(self)
 end
@@ -440,6 +496,14 @@ function EditorUI.DoLevelUp(self)
     else
         self.note = notes[1]
     end
+    Changed(self)
+end
+
+-- Lowers the level by one (undo an accidental level-up). HP is unchanged.
+function EditorUI.DoLevelDown(self)
+    if not self.char then return end
+    local ok, note = CE.LevelDown(self.char, ns.GetSystem())
+    self.note = ok and ("Level down: " .. note .. ".  Adjust HP manually if needed.") or note
     Changed(self)
 end
 
@@ -480,6 +544,7 @@ Refresh = function(self)
     local function setBox(box, v) if not box:HasFocus() then box:SetText(v or "") end end
     setBox(self.nameBox, char.name); setBox(self.playerBox, char.player)
     setBox(self.quoteBox, char.quote); setBox(self.notesBox, char.notes)
+    self.hpBreakdown:SetText("")
     setBox(self.maxHpBox, tostring(char.max_hp or 0))
     setBox(self.maxManaBox, tostring(char.max_mana or 0))
 

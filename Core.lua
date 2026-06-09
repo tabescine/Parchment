@@ -191,6 +191,7 @@ local function PrintHelp()
     Print("  " .. C_GOLD .. "/pmt dm|r      - toggle DM mode (broadcast vs receive sync)")
     Print("  " .. C_GOLD .. "/pmt share|r   - DM: send your system to the group")
     Print("  " .. C_GOLD .. "/pmt view <name>|r - view another player's character sheet")
+    Print("  " .. C_GOLD .. "/pmt cached|r  - browse cached sheets (|cffc8a868/pmt cached clear|r to wipe)")
     Print("  " .. C_GOLD .. "/pmt save|r    - write all data to disk (reloads the UI)")
     Print("  " .. C_GOLD .. "/pmt who|r     - list known characters")
     Print("  " .. C_GOLD .. "/pmt validate|r- check the loaded system and characters")
@@ -242,6 +243,9 @@ local function HandleSlash(input)
     elseif cmd == "view" then
         if arg and arg ~= "" then ns.Sharing.Request(strtrim(arg))
         else Print(C_YELLOW .. "usage: /pmt view <player name>" .. "|r") end
+    elseif cmd == "cached" then
+        if arg and strtrim(arg):lower() == "clear" then ns.Sharing.ClearCache()
+        else ns.Sharing.OpenCache() end
     elseif cmd == "who" then
         PrintRoster()
     elseif cmd == "validate" then

@@ -49,9 +49,25 @@ function CE.NewBlank()
         primary_attribute = "int", ac_attribute = "agi", init_attribute = "agi",
         accomplished_skills = {}, accomplished_weapons = {}, accomplished_saves = {},
         perks = {}, custom_perks = {}, perk_choices = {},
-        current_hp = 0, max_hp = 0, current_mana = 0, max_mana = 0, hit_dice = "1d6",
-        notes = "",
+        -- HP/Mana are left unset until the build is finished (InitResources),
+        -- so they derive from the final stats rather than a fixed 0.
+        hit_dice = "1d6", notes = "",
     }
+end
+
+-- Sets the level-1 starting HP and Mana from the character's stats: HP is the
+-- maximum of the hit die + 5; Mana is the computed maximum (2 x primary spell
+-- modifier, or Vitality). Called when a new character is finished.
+function CE.InitResources(char, system)
+    char.max_hp, char.max_mana = nil, nil
+    local sheet = ns.CharacterSheet.Compute(char, system)
+    if not sheet then return end
+    char.hit_dice = sheet.derived.hit_dice
+    local die = tonumber(tostring(sheet.derived.hit_dice):match("d(%d+)")) or 6
+    char.max_hp = die + 5
+    char.current_hp = char.max_hp
+    char.max_mana = sheet.derived.mana.max or 0
+    char.current_mana = char.max_mana
 end
 
 -- Returns the list of races a character may be (union of racial-trait
@@ -125,6 +141,16 @@ function CE.LevelUp(char, hpGain, system)
         if b.weapon_dice then notes[#notes + 1] = "+" .. b.weapon_dice .. " weapon die" end
     end
     return true, notes
+end
+
+-- Lowers the character's level by one (e.g. to undo an accidental level-up) and
+-- refreshes the hit-dice string. Does not touch HP, which is managed manually.
+-- Returns ok, note.
+function CE.LevelDown(char, system)
+    if (char.level or 1) <= 1 then return false, "Already at level 1." end
+    char.level = char.level - 1
+    char.hit_dice = ns.CharacterSheet.Compute(char, system).derived.hit_dice
+    return true, "now level " .. char.level
 end
 
 -- Returns a list of soft build warnings (never blocking). Combines structural

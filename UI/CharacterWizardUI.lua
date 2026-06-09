@@ -243,6 +243,7 @@ end
 
 -- Saves the draft, makes it active, and opens the editor.
 function WizardUI.Finish(self)
+    CE.InitResources(self.draft, ns.GetSystem())
     local key, n = nil, 0
     repeat n = n + 1; key = "Character-" .. n until not (ParchmentCharDB.characters and ParchmentCharDB.characters[key])
     CE.SaveNew(key, self.draft)
