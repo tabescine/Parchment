@@ -27,6 +27,7 @@ Core.lua
 # Shared UI chrome (defines ns.UI; must load before panels that use it).
 UI\Window.lua
 UI\Dialogs.lua
+UI\Widgets.lua
 
 # Modules (logic) and their UI. Each registers its opener with Core.
 Modules\CharacterSheet.lua
@@ -37,3 +38,5 @@ Modules\ImportExport.lua
 UI\ImportExportUI.lua
 Modules\PerkTree.lua
 UI\PerkTreeUI.lua
+Modules\CharacterEditor.lua
+UI\CharacterEditorUI.lua

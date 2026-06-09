@@ -54,6 +54,14 @@ local function CreateRow(f)
     row.label:SetPoint("RIGHT", -6, 0)
     row.label:SetJustifyH("LEFT")
     row:SetScript("OnClick", function() Toggle(f, row.itemId) end)
+    row:SetScript("OnEnter", function(self)
+        if not self.tip then return end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(self.tipTitle or " ", 1, 1, 1)
+        GameTooltip:AddLine(self.tip, 0.85, 0.82, 0.75, true)
+        GameTooltip:Show()
+    end)
+    row:SetScript("OnLeave", GameTooltip_Hide)
     return row
 end
 
@@ -67,6 +75,8 @@ RenderRows = function(f)
         local row = content.rows[i] or CreateRow(f)
         content.rows[i] = row
         row.itemId = item.id
+        row.tip = item.tooltip
+        row.tipTitle = item.name
         row:ClearAllPoints()
         row:SetPoint("TOPLEFT", content, "TOPLEFT", 2, y)
         row:SetPoint("TOPRIGHT", content, "TOPRIGHT", -2, y)

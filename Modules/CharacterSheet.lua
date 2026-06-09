@@ -310,7 +310,7 @@ function CharacterSheet.Compute(char, system)
         accomplishment = accomplishment,
         primary_attribute = primary,
         hit_dice = level .. ns.GetHitDie(modifier["vit"] or 0),
-        hp = { current = char.current_hp, max = (char.max_hp or 0) + fx.maxHP },
+        hp = { current = char.current_hp, max = (char.max_hp or 0) + fx.maxHP, temp = char.temp_hp },
         mana = { current = char.current_mana, max = (char.max_mana or math.max(0, 2 * spellMod)) + fx.maxMana },
         ac = 10 + acMod + fx.ac,
         ac_attribute = char.ac_attribute,

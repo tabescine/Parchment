@@ -52,12 +52,34 @@ end
 -- Body canvas helpers. Each operates on the content frame and advances a
 -- vertical cursor (self.y). Text regions are pooled and reused across renders.
 
--- Begins a fresh layout pass: rewind the cursor and both pool cursors.
+-- Begins a fresh layout pass: rewind the cursor and the pool cursors.
 local function CanvasReset(content)
     content.y = -PAD
     content.used = 0
     content.texUsed = 0
+    content.btnUsed = 0
     content.rowIndex = 0
+end
+
+-- Returns the next pooled hover button (transparent, spans a row) used to show
+-- a breakdown tooltip. Scripts read btn.tip(GameTooltip).
+local function AcquireBtn(content)
+    content.btnUsed = content.btnUsed + 1
+    local b = content.btnPool[content.btnUsed]
+    if not b then
+        b = CreateFrame("Button", nil, content)
+        b:SetScript("OnEnter", function(self)
+            if not self.tip then return end
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            self.tip(GameTooltip)
+            GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", GameTooltip_Hide)
+        content.btnPool[content.btnUsed] = b
+    end
+    b:ClearAllPoints()
+    b:Show()
+    return b
 end
 
 -- Returns the next pooled FontString, creating it on demand. Pooled regions are
@@ -99,6 +121,7 @@ end
 local function CanvasFinish(content)
     for i = content.used + 1, #content.pool do content.pool[i]:Hide() end
     for i = content.texUsed + 1, #content.texPool do content.texPool[i]:Hide() end
+    for i = content.btnUsed + 1, #content.btnPool do content.btnPool[i]:Hide() end
     content:SetHeight(-content.y + PAD)
 end
 
@@ -123,8 +146,9 @@ end
 
 -- Adds a label/value row with the value right-aligned. Data rows (non-empty
 -- label) alternate a faint background stripe so the eye tracks each label to
--- its value; continuation rows (empty label) are left unstriped.
-local function Row(content, label, value, indent, valColor)
+-- its value; continuation rows (empty label) are left unstriped. When `tip` is
+-- given, a hover button over the row shows tip(GameTooltip).
+local function Row(content, label, value, indent, valColor, tip)
     if label and label ~= "" then
         content.rowIndex = content.rowIndex + 1
         if content.rowIndex % 2 == 0 then
@@ -147,6 +171,14 @@ local function Row(content, label, value, indent, valColor)
     local c = valColor or C_TEXT
     v:SetTextColor(c[1], c[2], c[3])
     v:SetText(value or "")
+
+    if tip then
+        local b = AcquireBtn(content)
+        b:SetPoint("TOPLEFT", content, "TOPLEFT", 4, content.y + 2)
+        b:SetPoint("TOPRIGHT", content, "TOPRIGHT", -4, content.y + 2)
+        b:SetHeight(16)
+        b.tip = tip
+    end
     content.y = content.y - 16
 end
 
@@ -209,34 +241,64 @@ local function RenderBody(self)
         end
     end
 
-    -- Skills and saves, grouped under each attribute's saving throw.
+    -- Skills and saves, grouped under each attribute's saving throw. Each row
+    -- carries a hover tooltip breaking down how its total is reached.
     Header(content, "SKILLS & SAVING THROWS")
-    local saveByAttr = {}
+    local saveByAttr, modById = {}, {}
     for _, s in ipairs(sheet.saves) do saveByAttr[s.id] = s end
+    for _, a in ipairs(sheet.attributes) do modById[a.id] = a end
+    local accomplishment = sheet.derived.accomplishment
+    local primary = sheet.derived.primary_attribute
     local skillsByAttr = {}
     for _, sk in ipairs(sheet.skills) do
         skillsByAttr[sk.attribute] = skillsByAttr[sk.attribute] or {}
         table.insert(skillsByAttr[sk.attribute], sk)
     end
-    for _, a in ipairs(sheet.attributes) do
-        local save = saveByAttr[a.id]
-        local saveLabel = a.name:upper() .. " Saving Throw"
-            .. (save and save.accomplished and "  *" or "")
-            .. (save and SourceTag(save.sources) or "")
-        Row(content, saveLabel, save and Signed(save.total) or "-", 0,
-            save and save.accomplished and C_STAR or C_HEAD)
-        for _, sk in ipairs(skillsByAttr[a.id] or {}) do
-            local name = (sk.accomplished and "* " or "") .. sk.name .. SourceTag(sk.sources)
-            Row(content, name, Signed(sk.total), INDENT, sk.accomplished and C_STAR or C_TEXT)
+
+    local function breakdownTip(title, attr, accomplished, sources, total)
+        return function(tt)
+            tt:AddLine(title, C_GOLD[1], C_GOLD[2], C_GOLD[3])
+            tt:AddLine(attr.name .. " modifier: " .. Signed(attr.modifier), 0.9, 0.9, 0.9)
+            if accomplished then tt:AddLine("Accomplished: " .. Signed(accomplishment), 0.9, 0.9, 0.9) end
+            if sources and #sources > 0 then
+                tt:AddLine("Modified by: " .. table.concat(sources, ", "), 0.56, 0.78, 1)
+            end
+            tt:AddLine("Total: " .. Signed(total), C_GOLD[1], C_GOLD[2], C_GOLD[3])
         end
     end
 
-    -- Weapon proficiencies.
+    for _, a in ipairs(sheet.attributes) do
+        local save = saveByAttr[a.id]
+        local isPrimary = (a.id == primary)
+        local saveLabel = a.name:upper() .. " Saving Throw"
+            .. (save and save.accomplished and "  *" or "")
+            .. (isPrimary and "  |cffc8a868(primary)|r" or "")
+            .. (save and SourceTag(save.sources) or "")
+        Row(content, saveLabel, save and Signed(save.total) or "-", 0,
+            save and save.accomplished and C_STAR or C_HEAD,
+            save and breakdownTip(a.name .. " Saving Throw", a, save.accomplished, save.sources, save.total))
+        for _, sk in ipairs(skillsByAttr[a.id] or {}) do
+            local name = (sk.accomplished and "* " or "") .. sk.name .. SourceTag(sk.sources)
+            Row(content, name, Signed(sk.total), INDENT, sk.accomplished and C_STAR or C_TEXT,
+                breakdownTip(sk.name, a, sk.accomplished, sk.sources, sk.total))
+        end
+    end
+
+    -- Weapon proficiencies (hover for damage and properties).
     if #sheet.weapons > 0 then
         Header(content, "WEAPON SKILLS (accomplished)")
         for _, w in ipairs(sheet.weapons) do
             local props = #w.properties > 0 and ("  [" .. table.concat(w.properties, ", ") .. "]") or ""
-            Row(content, w.name .. props, w.damage)
+            local weapon = w
+            Row(content, w.name .. props, w.damage, 0, nil, function(tt)
+                tt:AddLine(weapon.name, C_GOLD[1], C_GOLD[2], C_GOLD[3])
+                tt:AddLine("Damage: " .. (weapon.damage or "-")
+                    .. (weapon.versatile and ("  (two-handed " .. weapon.versatile .. ")") or ""), 0.9, 0.9, 0.9)
+                if #weapon.properties > 0 then
+                    tt:AddLine("Properties: " .. table.concat(weapon.properties, ", "), 0.9, 0.9, 0.9)
+                end
+                tt:AddLine("Accomplished: adds " .. Signed(accomplishment) .. " to attack rolls", 0.56, 0.78, 1)
+            end)
         end
     end
 
@@ -283,6 +345,8 @@ local function RefreshVitals(self)
     self.hpMax:SetText("/ " .. tostring(d.hp.max or "?"))
     self.manaBox:SetText(tostring(d.mana.current or d.mana.max or 0))
     self.manaMax:SetText("/ " .. tostring(d.mana.max or "?"))
+    self.tempBox:SetText(tostring(d.hp.temp or 0))
+    self.tempMax:SetText("")
 end
 
 -- Recomputes the sheet for the active character and redraws everything.
@@ -398,21 +462,39 @@ local function BuildFrame()
 
     f.hpBox, f.hpMax = MakeResource("Hit Points", 0)
     f.manaBox, f.manaMax = MakeResource("Mana", 150)
+    f.tempBox, f.tempMax = MakeResource("Temp HP", 290)
 
-    f.hpBox:SetScript("OnEnterPressed", function(box) CommitResource(f, "current_hp", box) end)
-    f.hpBox:SetScript("OnEscapePressed", function(box) box:ClearFocus(); Refresh(f) end)
-    f.manaBox:SetScript("OnEnterPressed", function(box) CommitResource(f, "current_mana", box) end)
-    f.manaBox:SetScript("OnEscapePressed", function(box) box:ClearFocus(); Refresh(f) end)
+    local function wireResource(box, field)
+        box:SetScript("OnEnterPressed", function(b) CommitResource(f, field, b) end)
+        box:SetScript("OnEscapePressed", function(b) b:ClearFocus(); Refresh(f) end)
+    end
+    wireResource(f.hpBox, "current_hp")
+    wireResource(f.manaBox, "current_mana")
+    wireResource(f.tempBox, "temp_hp")
+
+    -- Footer: Save to Disk (persists SavedVariables via a confirmed reload).
+    local saveBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    saveBtn:SetSize(96, 22)
+    saveBtn:SetText("Save to Disk")
+    saveBtn:SetPoint("BOTTOMLEFT", PAD, 10)
+    saveBtn:SetScript("OnClick", ns.SaveToDisk)
+    saveBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Reloads the UI to write all Parchment changes to disk.", 1, 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    saveBtn:SetScript("OnLeave", GameTooltip_Hide)
 
     -- Scrolling body.
     local scroll = CreateFrame("ScrollFrame", "ParchmentSheetScroll", f, "UIPanelScrollFrameTemplate")
     scroll:SetPoint("TOPLEFT", PAD, -PAD - 86)
-    scroll:SetPoint("BOTTOMRIGHT", -PAD - 22, PAD)
+    scroll:SetPoint("BOTTOMRIGHT", -PAD - 22, 38)
 
     local content = CreateFrame("Frame", nil, scroll)
     content:SetSize(FRAME_W - PAD * 2 - 22, 10)
     content.pool = {}
     content.texPool = {}
+    content.btnPool = {}
     scroll:SetScrollChild(content)
     f.content = content
 

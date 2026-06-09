@@ -34,6 +34,7 @@ local MODULE_COMMANDS = {
     sheet = "sheet",
     perks = "perks",
     import = "import",
+    edit = "edit",
     config = "config",
 }
 
@@ -156,6 +157,21 @@ function ns.OpenModule(id)
     end
 end
 
+-- Persistence. WoW only writes SavedVariables to disk on a UI reload or logout,
+-- so "save to disk" is a confirmed ReloadUI (which flushes the data).
+StaticPopupDialogs["PARCHMENT_SAVE_RELOAD"] = {
+    text = "Save all Parchment data to disk now?\n\nWoW only writes addon data on a UI reload or logout, so this will reload your interface.",
+    button1 = "Save & Reload",
+    button2 = CANCEL,
+    OnAccept = function() ReloadUI() end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
+-- Prompts to persist all data to disk via a confirmed UI reload.
+function ns.SaveToDisk()
+    StaticPopup_Show("PARCHMENT_SAVE_RELOAD")
+end
+
 -- Slash command handling.
 
 local function PrintHelp()
@@ -163,8 +179,10 @@ local function PrintHelp()
     Print("  " .. C_GOLD .. "/pmt sheet|r   - open the character sheet")
     Print("  " .. C_GOLD .. "/pmt init|r    - open the initiative tracker")
     Print("  " .. C_GOLD .. "/pmt perks|r   - open the perk tree viewer")
+    Print("  " .. C_GOLD .. "/pmt edit|r    - open the character editor")
     Print("  " .. C_GOLD .. "/pmt import|r  - open the import/export dialog")
     Print("  " .. C_GOLD .. "/pmt config|r  - open settings")
+    Print("  " .. C_GOLD .. "/pmt save|r    - write all data to disk (reloads the UI)")
     Print("  " .. C_GOLD .. "/pmt who|r     - list known characters")
     Print("  " .. C_GOLD .. "/pmt validate|r- check the loaded system and characters")
     Print("  " .. C_GOLD .. "/pmt reseed|r  - reload the bundled system (replaces the current one)")
@@ -214,6 +232,8 @@ local function HandleSlash(input)
         PrintRoster()
     elseif cmd == "validate" then
         RunValidation()
+    elseif cmd == "save" then
+        ns.SaveToDisk()
     elseif cmd == "reseed" then
         ns.ReseedSystem()
         local system = ns.GetSystem()
