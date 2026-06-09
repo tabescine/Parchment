@@ -24,6 +24,7 @@ Data\CharacterDefault.lua
 # Core: addon init, SavedVariables wiring, data access API, slash commands.
 Core.lua
 Modules\Comm.lua
+Modules\Systems.lua
 
 # Shared UI chrome (defines ns.UI; must load before panels that use it).
 UI\Window.lua

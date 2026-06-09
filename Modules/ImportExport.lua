@@ -132,9 +132,14 @@ function IE.Import(text)
         local clean = StripMeta(data)
         local ok, issues = ns.Schema.ValidateSystem(clean)
         if not ok then return false, "system invalid: " .. SummarizeIssues(issues) end
-        ParchmentSystemDB = clean
-        -- Mark the system DM-owned so version migration won't overwrite it.
-        if ns.Addon and ns.Addon.db then ns.Addon.db.global.systemSource = "imported" end
+        -- Make it active and cache it in the system library; SetActive marks the
+        -- system DM-owned so version migration won't overwrite it.
+        if ns.Systems then
+            ns.Systems.SetActive(clean, "import")
+        else
+            ParchmentSystemDB = clean
+            if ns.Addon and ns.Addon.db then ns.Addon.db.global.systemSource = "imported" end
+        end
         return true, "imported system '" .. (clean.system_name or "?") .. "'."
     end
 

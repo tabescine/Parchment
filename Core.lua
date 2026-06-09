@@ -190,6 +190,7 @@ local function PrintHelp()
     Print("  " .. C_GOLD .. "/pmt config|r  - open settings")
     Print("  " .. C_GOLD .. "/pmt dm|r      - toggle DM mode (broadcast vs receive sync)")
     Print("  " .. C_GOLD .. "/pmt share|r   - DM: send your system to the group")
+    Print("  " .. C_GOLD .. "/pmt systems|r - choose the active system (bundled + cached)")
     Print("  " .. C_GOLD .. "/pmt view <name>|r - view another player's character sheet")
     Print("  " .. C_GOLD .. "/pmt cached|r  - browse cached sheets (|cffc8a868/pmt cached clear|r to wipe)")
     Print("  " .. C_GOLD .. "/pmt minimap|r - toggle the minimap button")
@@ -263,6 +264,8 @@ local function HandleSlash(input)
             Print(ok and (C_GREEN .. "shared the system with your group." .. "|r")
                 or (C_RED .. (err or "share failed") .. "|r"))
         end
+    elseif cmd == "systems" then
+        if ns.Systems then ns.Systems.OpenPicker() end
     elseif cmd == "minimap" then
         if ns.Minimap then
             local shown = ns.Minimap.Toggle()
@@ -343,16 +346,7 @@ function Parchment:OnEnable()
     if ns.Minimap then ns.Minimap.Init() end
     if not ns.Comm then return end
     ns.Comm.Init()
-
-    -- A shared system from the DM is adopted read-only; mark it so version
-    -- migration never overwrites it (same guard as an imported system).
-    ns.Comm.On("SYSTEM", function(system, sender)
-        if type(system) ~= "table" then return end
-        ParchmentSystemDB = system
-        self.db.global.systemSource = "imported"
-        Print(C_GREEN .. "received system '" .. (system.system_name or "?")
-            .. "' from " .. tostring(sender) .. "." .. "|r")
-        if ns.CharacterSheetUI then ns.CharacterSheetUI.RefreshIfShown() end
-        if ns.PerkTreeUI and ns.PerkTreeUI.frame and ns.PerkTreeUI.frame:IsShown() then ns.PerkTreeUI.Open() end
-    end)
+    -- A DM-shared system is handled by Modules/Systems.lua: it is cached to the
+    -- system library and the player is prompted to adopt it, never overwriting
+    -- their active system without consent.
 end
