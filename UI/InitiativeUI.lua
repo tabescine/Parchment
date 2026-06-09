@@ -153,6 +153,9 @@ function Refresh(self)
     self.nextBtn:SetEnabled(editable)
     self.resetBtn:SetEnabled(editable)
     self.meBtn:SetText(editable and "Me" or "Submit")
+    if self.publicCheck and ns.Addon and ns.Addon.db then
+        self.publicCheck:SetChecked(ns.Addon.db.profile.publicRolls)
+    end
     RenderList(self)
 end
 
@@ -162,13 +165,18 @@ local function CommitInput(self, rolled)
     if not CanEdit() then return end
     local name = self.nameBox:GetText()
     local value = tonumber(self.modBox:GetText()) or 0
-    if rolled then IT.AddRolled(name, value) else IT.Add(name, value) end
     self.nameBox:SetText("")
     self.modBox:SetText("")
     self.nameBox:ClearFocus()
     self.modBox:ClearFocus()
-    Refresh(self)
-    Sync()
+    if rolled then
+        -- May resolve asynchronously (public rolls); refresh in the callback.
+        IT.AddRolled(name, value, false, function() Refresh(self); Sync() end)
+    else
+        IT.Add(name, value)
+        Refresh(self)
+        Sync()
+    end
 end
 
 -- "Me": as DM/solo, adds the active character (rolled). As a player in a group,
@@ -179,13 +187,12 @@ local function AddActiveCharacter(self)
     local sheet = ns.CharacterSheet.Compute(char, ns.GetSystem())
     if not sheet then return end
     if CanEdit() then
-        IT.AddRolled(sheet.name, sheet.derived.initiative, false)
-        Refresh(self)
-        Sync()
+        IT.AddRolled(sheet.name, sheet.derived.initiative, false, function() Refresh(self); Sync() end)
     else
-        local roll = IT.RollD20(sheet.derived.initiative)
-        local ok, err = ns.Comm.Send("INITSUBMIT", { name = sheet.name, init = roll })
-        ns.Print(ok and ("submitted initiative " .. roll .. " to the DM.") or (err or "submit failed."))
+        IT.RequestRoll(sheet.derived.initiative, function(total)
+            local ok, err = ns.Comm.Send("INITSUBMIT", { name = sheet.name, init = total })
+            ns.Print(ok and ("submitted initiative " .. total .. " to the DM.") or (err or "submit failed."))
+        end)
     end
 end
 
@@ -225,6 +232,28 @@ local function BuildFrame()
     f.resetBtn = MakeButton(f, "Reset", 54, "Clear all combatants.")
     f.resetBtn:SetPoint("BOTTOMLEFT", 122, 14)
 
+    -- Public-roll toggle: route Roll/Me through the in-game dice roller so the
+    -- whole party sees the result, instead of a hidden local d20.
+    f.publicCheck = CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
+    f.publicCheck:SetSize(22, 22)
+    f.publicCheck:SetPoint("BOTTOMRIGHT", -8, 12)
+    f.publicLabel = f.publicCheck:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    f.publicLabel:SetPoint("RIGHT", f.publicCheck, "LEFT", -1, 0)
+    f.publicLabel:SetText("Public roll")
+    f.publicCheck:SetScript("OnClick", function(self)
+        if ns.Addon and ns.Addon.db then
+            ns.Addon.db.profile.publicRolls = self:GetChecked() and true or false
+        end
+    end)
+    f.publicCheck:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Public rolls", 1, 1, 1)
+        GameTooltip:AddLine("Roll with the in-game dice roller so the whole party "
+            .. "sees it, instead of a hidden local d20.", 0.9, 0.9, 0.9, true)
+        GameTooltip:Show()
+    end)
+    f.publicCheck:SetScript("OnLeave", GameTooltip_Hide)
+
     -- Wire actions.
     f.addBtn:SetScript("OnClick", function() CommitInput(f, false) end)
     f.rollBtn:SetScript("OnClick", function() CommitInput(f, true) end)
@@ -261,6 +290,7 @@ ns.RegisterModule("initiative", InitiativeUI.Toggle)
 local function RefreshIfShown()
     if InitiativeUI.frame and InitiativeUI.frame:IsShown() then Refresh(InitiativeUI.frame) end
 end
+InitiativeUI.RefreshIfShown = RefreshIfShown
 
 -- Sync handlers: players adopt the DM's broadcast order; the DM accepts player
 -- initiative submissions, adds them, and rebroadcasts.

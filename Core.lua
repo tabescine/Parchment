@@ -25,7 +25,7 @@ local C_GOLD = "|cffc8a868"
 -- AceDB layout for addon settings (the data tables live in their own SVs).
 local DB_DEFAULTS = {
     global = { activeCharacter = nil },
-    profile = { minimap = { hide = false }, dm = false },
+    profile = { minimap = { hide = false }, dm = false, publicRolls = false },
 }
 
 -- Slash subcommand -> module id (nil routing falls through to help).
@@ -191,6 +191,7 @@ local function PrintHelp()
     Print("  " .. C_GOLD .. "/pmt dm|r      - toggle DM mode (broadcast vs receive sync)")
     Print("  " .. C_GOLD .. "/pmt share|r   - DM: send your system to the group")
     Print("  " .. C_GOLD .. "/pmt systems|r - choose the active system (bundled + cached)")
+    Print("  " .. C_GOLD .. "/pmt rolls|r   - toggle public (party-visible) initiative rolls")
     Print("  " .. C_GOLD .. "/pmt view <name>|r - view another player's character sheet")
     Print("  " .. C_GOLD .. "/pmt cached|r  - browse cached sheets (|cffc8a868/pmt cached clear|r to wipe)")
     Print("  " .. C_GOLD .. "/pmt minimap|r - toggle the minimap button")
@@ -266,6 +267,13 @@ local function HandleSlash(input)
         end
     elseif cmd == "systems" then
         if ns.Systems then ns.Systems.OpenPicker() end
+    elseif cmd == "rolls" then
+        local p = ns.Addon.db.profile
+        p.publicRolls = not p.publicRolls
+        Print((p.publicRolls and C_GREEN .. "public rolls ON" or C_YELLOW .. "public rolls OFF")
+            .. "|r - initiative rolls " .. (p.publicRolls and "use the in-game dice roller (party-visible)."
+                or "use a hidden local d20."))
+        if ns.InitiativeUI and ns.InitiativeUI.RefreshIfShown then ns.InitiativeUI.RefreshIfShown() end
     elseif cmd == "minimap" then
         if ns.Minimap then
             local shown = ns.Minimap.Toggle()

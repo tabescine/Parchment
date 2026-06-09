@@ -10,7 +10,7 @@
 --
 -- Reads from: ns.Addon.db.global.initiative.
 -- Exposes on ns.InitiativeTracker: GetState, Add, AddRolled, Remove, SetCurrent,
---   Next, Prev, Start, Reset, RollD20.
+--   Next, Prev, Start, Reset, RollD20, RequestRoll.
 
 local ADDON, ns = ...
 
@@ -51,9 +51,77 @@ function IT.SetState(incoming)
     state.round = incoming.round or 0
 end
 
--- Rolls a d20 and adds a modifier.
+-- Rolls a d20 locally and adds a modifier (hidden from the group).
 function IT.RollD20(modifier)
     return math.random(1, 20) + (modifier or 0)
+end
+
+-- Public-roll capture --------------------------------------------------------
+--
+-- When db.profile.publicRolls is set, rolls go through the in-game dice roller
+-- (RandomRoll) so the whole party sees them, and we read the result back off the
+-- system chat message. Requests queue FIFO and are matched to results in order.
+
+local rollQueue = {}
+
+-- Turns a format string like "%s rolls %d (%d-%d)" into a capture pattern.
+local function ToPattern(fmt)
+    local p = fmt:gsub("[%-%.%(%)%[%]%+%*%?%^%$%%]", "%%%0")
+    p = p:gsub("%%%%s", "(.+)")
+    p = p:gsub("%%%%d", "(%%d+)")
+    return p
+end
+local ROLL_PATTERN = ToPattern(RANDOM_ROLL_RESULT or "%s rolls %d (%d-%d)")
+
+-- True when public rolling is enabled and the in-game roller is available.
+local function PublicEnabled()
+    return ns.Addon and ns.Addon.db and ns.Addon.db.profile.publicRolls
+        and type(RandomRoll) == "function"
+end
+
+-- Requests a d20 roll, calling onComplete(total, raw) when it resolves. With
+-- public rolls off it resolves immediately and locally; with them on it fires a
+-- RandomRoll and resolves when the system message arrives (3s local fallback).
+function IT.RequestRoll(modifier, onComplete)
+    modifier = modifier or 0
+    if not PublicEnabled() then
+        local raw = math.random(1, 20)
+        onComplete(raw + modifier, raw)
+        return
+    end
+    local req = { modifier = modifier, onComplete = onComplete }
+    rollQueue[#rollQueue + 1] = req
+    if C_Timer and C_Timer.NewTimer then
+        req.timer = C_Timer.NewTimer(3, function()
+            for i, r in ipairs(rollQueue) do
+                if r == req then
+                    table.remove(rollQueue, i)
+                    local raw = math.random(1, 20)
+                    req.onComplete(raw + req.modifier, raw)
+                    return
+                end
+            end
+        end)
+    end
+    RandomRoll(1, 20)
+end
+
+-- Listens for our own 1-20 system rolls and resolves the oldest pending request.
+local listener = CreateFrame and CreateFrame("Frame")
+if listener then
+    listener:RegisterEvent("CHAT_MSG_SYSTEM")
+    listener:SetScript("OnEvent", function(_, _, message)
+        if #rollQueue == 0 then return end
+        local who, raw, low, high = message:match(ROLL_PATTERN)
+        if not who then return end
+        raw, low, high = tonumber(raw), tonumber(low), tonumber(high)
+        if low ~= 1 or high ~= 20 then return end
+        local me = UnitName and UnitName("player")
+        if me and who ~= me then return end
+        local req = table.remove(rollQueue, 1)
+        if req.timer then req.timer:Cancel() end
+        req.onComplete(raw + (req.modifier or 0), raw)
+    end)
 end
 
 -- Adds a combatant with an explicit initiative total, then re-sorts. Returns
@@ -69,11 +137,16 @@ function IT.Add(name, init, isNPC)
     return combatant
 end
 
--- Adds a combatant whose initiative is rolled as d20 + modifier. Returns the
--- rolled value.
-function IT.AddRolled(name, modifier, isNPC)
-    local roll = IT.RollD20(modifier)
-    if IT.Add(name, roll, isNPC) then return roll end
+-- Adds a combatant whose initiative is rolled as d20 + modifier. The roll may be
+-- asynchronous (public rolls), so the combatant is delivered via onAdded(combatant,
+-- total, raw) rather than returned.
+function IT.AddRolled(name, modifier, isNPC, onAdded)
+    name = name and strtrim(name) or ""
+    if name == "" then if onAdded then onAdded(nil) end return end
+    IT.RequestRoll(modifier, function(total, raw)
+        local combatant = IT.Add(name, total, isNPC)
+        if onAdded then onAdded(combatant, total, raw) end
+    end)
 end
 
 -- Removes the combatant at index, keeping the current pointer valid.
