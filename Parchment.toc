@@ -37,4 +37,5 @@ UI\PerkTreeUI.lua
 Modules\CharacterEditor.lua
 UI\CharacterEditorUI.lua
 UI\CharacterWizardUI.lua
+UI\ConfigUI.lua
 Modules\Minimap.lua

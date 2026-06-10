@@ -32,7 +32,10 @@ local function BuildMenu(owner)
         root:CreateDivider()
         root:CreateButton((ns.Comm.IsDM() and "DM mode: on" or "DM mode: off"), function()
             ns.Comm.SetDM(not ns.Comm.IsDM())
+            if ns.InitiativeUI and ns.InitiativeUI.RefreshIfShown then ns.InitiativeUI.RefreshIfShown() end
+            if ns.ConfigUI then ns.ConfigUI.RefreshIfShown() end
         end)
+        root:CreateButton("Settings", function() ns.OpenModule("config") end)
         root:CreateButton("Save to Disk", function() ns.SaveToDisk() end)
     end)
 end
@@ -67,12 +70,18 @@ function M.Init()
     end
 end
 
--- Shows or hides the minimap button (persisted).
-function M.Toggle()
+-- Shows or hides the minimap button explicitly (persisted). Returns whether
+-- the button is now shown, or nil when LibDBIcon is unavailable.
+function M.SetShown(shown)
     local icon = LibStub and LibStub("LibDBIcon-1.0", true)
     if not icon then return end
     local mm = ns.Addon.db.profile.minimap
-    mm.hide = not mm.hide
+    mm.hide = not shown
     if mm.hide then icon:Hide("Parchment") else icon:Show("Parchment") end
     return not mm.hide
+end
+
+-- Flips the minimap button's visibility (persisted).
+function M.Toggle()
+    return M.SetShown(ns.Addon.db.profile.minimap.hide)
 end

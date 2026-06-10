@@ -208,6 +208,21 @@ function ns.SaveToDisk()
     StaticPopup_Show("PARCHMENT_SAVE_RELOAD")
 end
 
+-- Broadcasts the active system to the group (DM only) and prints the outcome.
+-- Sharing is always this explicit action - toggling DM mode never auto-sends.
+-- Used by /pmt share and the settings window.
+function ns.ShareSystem()
+    if not ns.Comm.IsDM() then
+        Print(C_RED .. "only the DM shares the system. Use /pmt dm first." .. "|r")
+    elseif not ns.HasSystem() then
+        Print(C_RED .. "no system loaded to share. Import one with /pmt import first." .. "|r")
+    else
+        local ok, err = ns.Comm.Send("SYSTEM", ns.GetSystem())
+        Print(ok and (C_GREEN .. "shared the system with your group." .. "|r")
+            or (C_RED .. (err or "share failed") .. "|r"))
+    end
+end
+
 -- Slash command handling.
 
 local function PrintHelp()
@@ -291,16 +306,10 @@ local function HandleSlash(input)
         ns.Comm.SetDM(not ns.Comm.IsDM())
         Print((ns.Comm.IsDM() and C_GREEN .. "DM mode ON" or C_YELLOW .. "DM mode OFF")
             .. "|r - you " .. (ns.Comm.IsDM() and "broadcast" or "receive") .. " system and initiative sync.")
+        if ns.InitiativeUI and ns.InitiativeUI.RefreshIfShown then ns.InitiativeUI.RefreshIfShown() end
+        if ns.ConfigUI then ns.ConfigUI.RefreshIfShown() end
     elseif cmd == "share" then
-        if not ns.Comm.IsDM() then
-            Print(C_RED .. "only the DM shares the system. Use /pmt dm first." .. "|r")
-        elseif not ns.HasSystem() then
-            Print(C_RED .. "no system loaded to share. Import one with /pmt import first." .. "|r")
-        else
-            local ok, err = ns.Comm.Send("SYSTEM", ns.GetSystem())
-            Print(ok and (C_GREEN .. "shared the system with your group." .. "|r")
-                or (C_RED .. (err or "share failed") .. "|r"))
-        end
+        ns.ShareSystem()
     elseif cmd == "systems" then
         if ns.Systems then
             if arg and strtrim(arg):lower() == "delete" then ns.Systems.OpenDeletePicker()
@@ -313,10 +322,12 @@ local function HandleSlash(input)
             .. "|r - initiative rolls " .. (p.publicRolls and "use the in-game dice roller (party-visible)."
                 or "use a hidden local d20."))
         if ns.InitiativeUI and ns.InitiativeUI.RefreshIfShown then ns.InitiativeUI.RefreshIfShown() end
+        if ns.ConfigUI then ns.ConfigUI.RefreshIfShown() end
     elseif cmd == "minimap" then
         if ns.Minimap then
             local shown = ns.Minimap.Toggle()
             Print((shown and C_GREEN .. "minimap button shown" or C_YELLOW .. "minimap button hidden") .. "|r")
+            if ns.ConfigUI then ns.ConfigUI.RefreshIfShown() end
         end
     elseif cmd == "save" then
         ns.SaveToDisk()

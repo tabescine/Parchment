@@ -414,61 +414,19 @@ local function CommitResource(self, field, box)
     Refresh(self)
 end
 
--- Saves the frame's current size and anchor to the addon profile.
-local function SaveGeometry(f)
-    local db = ns.Addon and ns.Addon.db
-    if not db then return end
-    db.profile.sheet = db.profile.sheet or {}
-    local g = db.profile.sheet
-    g.width, g.height = f:GetWidth(), f:GetHeight()
-    local point, _, relPoint, x, y = f:GetPoint()
-    g.point, g.relPoint, g.x, g.y = point, relPoint, x, y
-end
-
--- Restores a previously saved size and anchor, if any.
-local function RestoreGeometry(f)
-    local db = ns.Addon and ns.Addon.db
-    local g = db and db.profile.sheet
-    if not (g and g.width) then return end
-    f:SetSize(g.width, g.height)
-    if g.point then
-        f:ClearAllPoints()
-        f:SetPoint(g.point, UIParent, g.relPoint or g.point, g.x or 0, g.y or 0)
-    end
-end
-
--- Builds the window once. Returns the frame table with helper widget refs.
+-- Builds the window once on the shared chrome (drag, close/Escape, grip, and
+-- geometry persistence under dbKey "sheet" - the same slot the sheet used
+-- before it moved onto UI.CreateWindow, so saved positions carry over).
+-- Returns the frame table with helper widget refs.
 local function BuildFrame()
-    local f = CreateFrame("Frame", "ParchmentSheetFrame", UIParent, "BackdropTemplate")
-    f:SetSize(FRAME_W, FRAME_H)
-    f:SetPoint("CENTER")
-    f:SetFrameStrata("HIGH")
-    f:SetClampedToScreen(true)
-    f:SetResizable(true)
-    f:SetResizeBounds(MIN_W, MIN_H, MAX_W, MAX_H)
-    f:SetBackdrop({
-        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
-        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-        tile = true, tileSize = 32, edgeSize = 24,
-        insets = { left = 6, right = 6, top = 6, bottom = 6 },
+    local f = ns.UI.CreateWindow("ParchmentSheetFrame", {
+        title = "Parchment", width = FRAME_W, height = FRAME_H,
+        minW = MIN_W, minH = MIN_H, maxW = MAX_W, maxH = MAX_H, dbKey = "sheet",
     })
 
-    -- Drag to move.
-    f:SetMovable(true)
-    f:EnableMouse(true)
-    f:RegisterForDrag("LeftButton")
-    f:SetScript("OnDragStart", f.StartMoving)
-    f:SetScript("OnDragStop", function(self) self:StopMovingOrSizing(); SaveGeometry(self) end)
-
-    -- Close button + Escape support.
-    local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
-    close:SetPoint("TOPRIGHT", -4, -4)
-    tinsert(UISpecialFrames, "ParchmentSheetFrame")
-
-    -- Title and quote subtitle.
-    f.title = f:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-    f.title:SetPoint("TOPLEFT", PAD, -PAD)
-    f.title:SetTextColor(C_GOLD[1], C_GOLD[2], C_GOLD[3])
+    -- The chrome's title doubles as the character-name title; the quote
+    -- subtitle sits beneath it.
+    f.title = f.titleFS
 
     f.subtitle = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     f.subtitle:SetPoint("TOPLEFT", PAD, -PAD - 22)
@@ -546,18 +504,6 @@ local function BuildFrame()
         if f.sheet then RenderBody(f) end
     end)
 
-    -- Bottom-right resize grip.
-    local grip = CreateFrame("Button", nil, f)
-    grip:SetSize(16, 16)
-    grip:SetPoint("BOTTOMRIGHT", -6, 6)
-    grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
-    grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
-    grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
-    grip:SetScript("OnMouseDown", function() f:StartSizing("BOTTOMRIGHT") end)
-    grip:SetScript("OnMouseUp", function() f:StopMovingOrSizing(); SaveGeometry(f) end)
-
-    RestoreGeometry(f)
-    f:Hide()
     return f
 end
 

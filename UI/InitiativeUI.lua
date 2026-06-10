@@ -249,6 +249,7 @@ local function BuildFrame()
         if ns.Addon and ns.Addon.db then
             ns.Addon.db.profile.publicRolls = self:GetChecked() and true or false
         end
+        if ns.ConfigUI then ns.ConfigUI.RefreshIfShown() end
     end)
     f.publicCheck:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
