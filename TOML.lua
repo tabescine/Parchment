@@ -188,7 +188,13 @@ function TOML.decode(str)
     local current = root
     local parseValue
 
-    local function err(msg) error(msg .. " (near position " .. pos .. ")", 0) end
+    -- Errors report line:column - a byte offset is useless in a long paste.
+    local function err(msg)
+        local before = s:sub(1, math.max(pos - 1, 0))
+        local _, lines = before:gsub("\n", "")
+        local col = pos - (before:match("()\n[^\n]*$") or 0)
+        error(msg .. " (line " .. (lines + 1) .. ", column " .. col .. ")", 0)
+    end
     local function peek(o) return s:sub(pos + (o or 0), pos + (o or 0)) end
     local function isWS(c) return c == " " or c == "\t" end
 

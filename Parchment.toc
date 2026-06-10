@@ -18,6 +18,7 @@ TOML.lua
 Core.lua
 Modules\Comm.lua
 Modules\Systems.lua
+Modules\Dice.lua
 
 # Shared UI chrome (defines ns.UI; must load before panels that use it).
 UI\Window.lua

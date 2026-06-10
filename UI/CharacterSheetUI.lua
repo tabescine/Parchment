@@ -62,19 +62,28 @@ local function CanvasReset(content)
 end
 
 -- Returns the next pooled hover button (transparent, spans a row) used to show
--- a breakdown tooltip. Scripts read btn.tip(GameTooltip).
+-- a breakdown tooltip and/or roll a check. Scripts read btn.tip(GameTooltip)
+-- and btn.roll = { label, modifier, who } (set fresh on every render).
 local function AcquireBtn(content)
     content.btnUsed = content.btnUsed + 1
     local b = content.btnPool[content.btnUsed]
     if not b then
         b = CreateFrame("Button", nil, content)
         b:SetScript("OnEnter", function(self)
-            if not self.tip then return end
+            if not (self.tip or self.roll) then return end
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            self.tip(GameTooltip)
+            if self.tip then self.tip(GameTooltip) end
+            if self.roll then
+                GameTooltip:AddLine("Click: roll d20 " .. Signed(self.roll.modifier), 0.56, 0.78, 1)
+            end
             GameTooltip:Show()
         end)
         b:SetScript("OnLeave", GameTooltip_Hide)
+        b:SetScript("OnClick", function(self)
+            if self.roll then
+                ns.Dice.Check(self.roll.label, self.roll.modifier, self.roll.who)
+            end
+        end)
         content.btnPool[content.btnUsed] = b
     end
     b:ClearAllPoints()
@@ -147,8 +156,9 @@ end
 -- Adds a label/value row with the value right-aligned. Data rows (non-empty
 -- label) alternate a faint background stripe so the eye tracks each label to
 -- its value; continuation rows (empty label) are left unstriped. When `tip` is
--- given, a hover button over the row shows tip(GameTooltip).
-local function Row(content, label, value, indent, valColor, tip)
+-- given, a hover button over the row shows tip(GameTooltip); when `roll`
+-- ({ label, modifier, who }) is given, clicking the row rolls that check.
+local function Row(content, label, value, indent, valColor, tip, roll)
     if label and label ~= "" then
         content.rowIndex = content.rowIndex + 1
         if content.rowIndex % 2 == 0 then
@@ -172,12 +182,13 @@ local function Row(content, label, value, indent, valColor, tip)
     v:SetTextColor(c[1], c[2], c[3])
     v:SetText(value or "")
 
-    if tip then
+    if tip or roll then
         local b = AcquireBtn(content)
         b:SetPoint("TOPLEFT", content, "TOPLEFT", 4, content.y + 2)
         b:SetPoint("TOPRIGHT", content, "TOPRIGHT", -4, content.y + 2)
         b:SetHeight(16)
         b.tip = tip
+        b.roll = roll
     end
     content.y = content.y - 16
 end
@@ -203,12 +214,20 @@ local function RenderBody(self)
     CanvasReset(content)
     local sheet = self.sheet
 
+    -- Click-to-roll specs. Only for the own character - a viewed (received)
+    -- sheet is read-only and its modifiers are not yours to roll.
+    local function rollSpec(label, mod)
+        if self.viewChar then return nil end
+        return { label = label, modifier = mod or 0, who = sheet.name }
+    end
+
     -- Derived stats, two readable rows of pairs.
     Header(content, "OVERVIEW")
     Row(content, "Level", tostring(sheet.level))
     Row(content, "Hit Dice", sheet.derived.hit_dice)
     Row(content, "Armor Class", tostring(sheet.derived.ac), 0, C_GOLD)
-    Row(content, "Initiative", Signed(sheet.derived.initiative))
+    Row(content, "Initiative", Signed(sheet.derived.initiative), 0, nil, nil,
+        rollSpec("Initiative", sheet.derived.initiative))
     Row(content, "Movement", Num(sheet.derived.movement) .. "m")
     Row(content, "Actions", tostring(sheet.derived.actions))
     Row(content, "Save DC", tostring(sheet.derived.save_dc), 0, C_GOLD)
@@ -227,7 +246,7 @@ local function RenderBody(self)
         else
             value = string.format("%d    %s", a.final, Signed(a.modifier))
         end
-        Row(content, a.name, value)
+        Row(content, a.name, value, 0, nil, nil, rollSpec(a.name .. " check", a.modifier))
         if #a.sources > 0 then
             Row(content, "", table.concat(a.sources, ", "), INDENT, C_DIM)
         end
@@ -276,11 +295,13 @@ local function RenderBody(self)
             .. (save and SourceTag(save.sources) or "")
         Row(content, saveLabel, save and Signed(save.total) or "-", 0,
             save and save.accomplished and C_STAR or C_HEAD,
-            save and breakdownTip(a.name .. " Saving Throw", a, save.accomplished, save.sources, save.total))
+            save and breakdownTip(a.name .. " Saving Throw", a, save.accomplished, save.sources, save.total),
+            save and rollSpec(a.name .. " save", save.total))
         for _, sk in ipairs(skillsByAttr[a.id] or {}) do
             local name = (sk.accomplished and "* " or "") .. sk.name .. SourceTag(sk.sources)
             Row(content, name, Signed(sk.total), INDENT, sk.accomplished and C_STAR or C_TEXT,
-                breakdownTip(sk.name, a, sk.accomplished, sk.sources, sk.total))
+                breakdownTip(sk.name, a, sk.accomplished, sk.sources, sk.total),
+                rollSpec(sk.name, sk.total))
         end
     end
 

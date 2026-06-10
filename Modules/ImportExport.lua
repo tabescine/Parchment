@@ -115,9 +115,15 @@ function IE.Import(text)
         if not data then
             data, luaErr = ParseLua(text)
             if not data then
+                -- '""' directly followed by text is the signature of escape
+                -- backslashes lost in transit (Discord and most markdown eat
+                -- lone backslashes outside code blocks), turning \" into ".
+                local hint = text:find('""%a') and
+                    ' HINT: a text field contains "" - were escape backslashes (\\") lost when the export was shared (e.g. pasted into Discord outside a code block)?'
+                    or ""
                 return false, "could not parse (JSON: " .. tostring(jsonErr)
                     .. "; TOML: " .. tostring(tomlErr)
-                    .. "; Lua: " .. tostring(luaErr) .. ")"
+                    .. "; Lua: " .. tostring(luaErr) .. ")" .. hint
             end
         end
     end

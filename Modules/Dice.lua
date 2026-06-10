@@ -1,0 +1,108 @@
+-- Parchment - Dice
+--
+-- The shared d20 roller behind initiative and sheet checks. With public rolls
+-- off, rolls resolve instantly from the local RNG. With them on
+-- (db.profile.publicRolls), the in-game dice roller (RandomRoll) fires so the
+-- whole party sees the raw die, and the result is read back off
+-- CHAT_MSG_SYSTEM: requests queue FIFO and match results in order, filtered
+-- to our own 1-20 rolls, with a 3s local fallback for throttled/dropped
+-- roller calls. Extracted from InitiativeTracker so the character sheet's
+-- click-to-roll checks share one implementation.
+--
+-- Reads from: ns.Addon.db.profile.publicRolls, ns.Print.
+-- Exposes on ns.Dice: Request, Check.
+
+local ADDON, ns = ...
+
+ns.Dice = ns.Dice or {}
+local Dice = ns.Dice
+
+-- Seed the RNG once so local d20 rolls are not identical every session.
+if math.randomseed then
+    local seed = (time and time() or 0) + math.floor((GetTime and GetTime() or 0) * 1000)
+    math.randomseed(seed)
+    math.random()
+end
+
+local rollQueue = {}
+
+-- Turns a format string like "%s rolls %d (%d-%d)" into a capture pattern.
+-- Some locales use positional specifiers (%1$s, %2$d); these are reduced to
+-- plain %s/%d first so the conversion below matches them too.
+local function ToPattern(fmt)
+    fmt = fmt:gsub("%%(%d+)%$", "%%")
+    local p = fmt:gsub("[%-%.%(%)%[%]%+%*%?%^%$%%]", "%%%0")
+    p = p:gsub("%%%%s", "(.+)")
+    p = p:gsub("%%%%d", "(%%d+)")
+    return p
+end
+local ROLL_PATTERN = ToPattern(RANDOM_ROLL_RESULT or "%s rolls %d (%d-%d)")
+
+-- True when public rolling is enabled and the in-game roller is available.
+local function PublicEnabled()
+    return ns.Addon and ns.Addon.db and ns.Addon.db.profile.publicRolls
+        and type(RandomRoll) == "function"
+end
+
+-- Requests a d20 roll, calling onComplete(total, raw) when it resolves. With
+-- public rolls off it resolves immediately and locally; with them on it fires
+-- a RandomRoll and resolves when the system message arrives (3s fallback).
+function Dice.Request(modifier, onComplete)
+    modifier = modifier or 0
+    if not PublicEnabled() then
+        local raw = math.random(1, 20)
+        onComplete(raw + modifier, raw)
+        return
+    end
+    local req = { modifier = modifier, onComplete = onComplete }
+    rollQueue[#rollQueue + 1] = req
+    if C_Timer and C_Timer.NewTimer then
+        req.timer = C_Timer.NewTimer(3, function()
+            for i, r in ipairs(rollQueue) do
+                if r == req then
+                    table.remove(rollQueue, i)
+                    local raw = math.random(1, 20)
+                    req.onComplete(raw + req.modifier, raw)
+                    return
+                end
+            end
+        end)
+    end
+    RandomRoll(1, 20)
+end
+
+-- Listens for our own 1-20 system rolls and resolves the oldest pending request.
+local listener = CreateFrame and CreateFrame("Frame")
+if listener then
+    listener:RegisterEvent("CHAT_MSG_SYSTEM")
+    listener:SetScript("OnEvent", function(_, _, message)
+        if #rollQueue == 0 then return end
+        local who, raw, low, high = message:match(ROLL_PATTERN)
+        if not who then return end
+        raw, low, high = tonumber(raw), tonumber(low), tonumber(high)
+        if low ~= 1 or high ~= 20 then return end
+        local me = UnitName and UnitName("player")
+        if me and who ~= me then return end
+        local req = table.remove(rollQueue, 1)
+        if req.timer then req.timer:Cancel() end
+        req.onComplete(raw + (req.modifier or 0), raw)
+    end)
+end
+
+-- Rolls a named d20 check (e.g. "Perception", +5) and announces the result:
+-- always printed locally; with public rolls on and a group, the breakdown is
+-- also sent to party/raid chat, where the preceding RandomRoll system line
+-- lets everyone verify the raw die. `who` (optional, e.g. the character name)
+-- prefixes the group announcement only.
+function Dice.Check(label, modifier, who)
+    modifier = modifier or 0
+    Dice.Request(modifier, function(total, raw)
+        local line = string.format("%s: %d (d20) %s %d = %d", label, raw,
+            modifier >= 0 and "+" or "-", math.abs(modifier), total)
+        ns.Print(line)
+        if PublicEnabled() and IsInGroup() then
+            local prefix = (who and who ~= "" and who .. " - ") or ""
+            SendChatMessage("Parchment: " .. prefix .. line, IsInRaid() and "RAID" or "PARTY")
+        end
+    end)
+end

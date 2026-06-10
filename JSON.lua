@@ -110,7 +110,13 @@ function JSON.decode(str)
     local pos = 1
     local parseValue
 
-    local function err(msg) error(msg .. " at position " .. pos, 0) end
+    -- Errors report line:column - a byte offset is useless in a long paste.
+    local function err(msg)
+        local before = s:sub(1, math.max(pos - 1, 0))
+        local _, lines = before:gsub("\n", "")
+        local col = pos - (before:match("()\n[^\n]*$") or 0)
+        error(msg .. " at line " .. (lines + 1) .. ", column " .. col, 0)
+    end
 
     local function skip()
         while pos <= #s do
