@@ -88,9 +88,10 @@ local function BuildFrame()
         end)
     y = y - 28
 
-    f.rollsCheck = Checkbox(f, y, "Public initiative rolls",
-        "Roll initiative with the in-game dice roller so the whole party sees "
-        .. "the result, instead of a hidden local d20.",
+    f.rollsCheck = Checkbox(f, y, "Public rolls",
+        "Roll with the in-game dice roller so the whole party sees the result "
+        .. "- initiative and sheet checks alike - instead of a hidden local "
+        .. "d20. Sheet checks also post their breakdown to party chat.",
         function(checked)
             ns.Addon.db.profile.publicRolls = checked
             RefreshDependents()

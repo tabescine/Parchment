@@ -1,101 +1,273 @@
 {
   "system_name": "Parchment Sample",
   "version": "1.0",
-
   "attributes": [
-    { "id": "might",  "name": "Might"  },
-    { "id": "wits",   "name": "Wits"   },
-    { "id": "spirit", "name": "Spirit" }
+    {
+      "id": "might",
+      "name": "Might"
+    },
+    {
+      "id": "wits",
+      "name": "Wits"
+    },
+    {
+      "id": "spirit",
+      "name": "Spirit"
+    }
   ],
-
   "modifier_table": {
-    "1": -3, "2": -2, "3": -2, "4": -1, "5": -1, "6": 0,
-    "7": 0, "8": 1, "9": 1, "10": 2, "11": 2, "12": 3
+    "1": -3,
+    "2": -2,
+    "3": -2,
+    "4": -1,
+    "5": -1,
+    "6": 0,
+    "7": 0,
+    "8": 1,
+    "9": 1,
+    "10": 2,
+    "11": 2,
+    "12": 3
   },
-
-  "point_buy": { "total": 15, "base": 1, "min": 1, "max": 8 },
-
+  "point_buy": {
+    "total": 15,
+    "base": 1,
+    "min": 1,
+    "max": 8
+  },
   "accomplish_targets": {
-    "skills": { "base": 3, "attribute": "wits" },
-    "weapons": { "base": 5, "attribute_max": ["might", "wits"] },
-    "saves": { "base": 2 }
+    "skills": {
+      "base": 3,
+      "attribute": "wits"
+    },
+    "weapons": {
+      "base": 5,
+      "attribute_max": [
+        "might",
+        "wits"
+      ]
+    },
+    "saves": {
+      "base": 2
+    }
   },
-
   "derived_stats": {
     "hit_die_attribute": "might",
     "hp_attribute": "might",
     "retroactive_hp": true,
-    "spell_attributes": ["spirit"],
+    "spell_attributes": [
+      "spirit"
+    ],
     "mana_attribute": "spirit",
     "mana_multiplier": 2,
     "movement_attribute": "wits"
   },
-
   "hit_dice_bands": [
-    { "max_mod": -1, "die": "d6"  },
-    { "max_mod": 1,  "die": "d8"  },
-    { "max_mod": 3,  "die": "d10" }
+    {
+      "max_mod": -1,
+      "die": "d6"
+    },
+    {
+      "max_mod": 1,
+      "die": "d8"
+    },
+    {
+      "max_mod": 3,
+      "die": "d10"
+    }
   ],
-
   "accomplishment_table": {
-    "1": 1, "2": 1, "3": 2, "4": 2, "5": 3,
-    "6": 3, "7": 4, "8": 4, "9": 5, "10": 5
+    "1": 1,
+    "2": 1,
+    "3": 2,
+    "4": 2,
+    "5": 3,
+    "6": 3,
+    "7": 4,
+    "8": 4,
+    "9": 5,
+    "10": 5
   },
-
-  "level_bonuses": { "5": { "actions": 1 } },
-
-  "damage_types": ["slashing", "piercing", "blunt", "fire", "frost", "arcane"],
-
+  "level_bonuses": {
+    "5": {
+      "actions": 1
+    }
+  },
+  "damage_types": [
+    "slashing",
+    "piercing",
+    "blunt",
+    "fire",
+    "frost",
+    "arcane"
+  ],
   "skills": [
-    { "id": "athletics",  "name": "Athletics",  "attribute": "might"  },
-    { "id": "endurance",  "name": "Endurance",  "attribute": "might"  },
-    { "id": "lore",       "name": "Lore",       "attribute": "wits"   },
-    { "id": "perception", "name": "Perception", "attribute": "wits"   },
-    { "id": "persuasion", "name": "Persuasion", "attribute": "spirit" },
-    { "id": "resolve",    "name": "Resolve",    "attribute": "spirit" }
+    {
+      "id": "athletics",
+      "name": "Athletics",
+      "attribute": "might"
+    },
+    {
+      "id": "endurance",
+      "name": "Endurance",
+      "attribute": "might"
+    },
+    {
+      "id": "lore",
+      "name": "Lore",
+      "attribute": "wits"
+    },
+    {
+      "id": "perception",
+      "name": "Perception",
+      "attribute": "wits"
+    },
+    {
+      "id": "persuasion",
+      "name": "Persuasion",
+      "attribute": "spirit"
+    },
+    {
+      "id": "resolve",
+      "name": "Resolve",
+      "attribute": "spirit"
+    }
   ],
-
   "weapons": [
-    { "id": "blade", "name": "Blade", "attribute": "might"  },
-    { "id": "bow",   "name": "Bow",   "attribute": "wits"   },
-    { "id": "staff", "name": "Staff", "attribute": "spirit" }
+    {
+      "id": "blade",
+      "name": "Blade",
+      "attribute": "might"
+    },
+    {
+      "id": "bow",
+      "name": "Bow",
+      "attribute": "wits"
+    },
+    {
+      "id": "staff",
+      "name": "Staff",
+      "attribute": "spirit"
+    },
+    {
+      "id": "dirk",
+      "name": "Dirk",
+      "attribute": [
+        "might",
+        "wits"
+      ]
+    }
   ],
-
   "racial_traits": [
-    { "id": "human", "name": "Human", "description": "Versatile folk. +1 Wits.",
-      "effects": [ { "type": "attribute", "id": "wits", "value": 1 } ] },
-    { "id": "orc",   "name": "Orc",   "description": "Hardy and strong. +1 Might.",
-      "effects": [ { "type": "attribute", "id": "might", "value": 1 } ] }
+    {
+      "id": "human",
+      "name": "Human",
+      "description": "Versatile folk. +1 Wits.",
+      "effects": [
+        {
+          "type": "attribute",
+          "id": "wits",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "id": "orc",
+      "name": "Orc",
+      "description": "Hardy and strong. +1 Might.",
+      "effects": [
+        {
+          "type": "attribute",
+          "id": "might",
+          "value": 1
+        }
+      ]
+    }
   ],
-
   "origin_traits": [
-    { "id": "scholarly", "name": "Scholarly Upbringing", "description": "Two extra points to spend at creation.",
-      "effects": [ { "type": "attribute_points", "value": 2 } ] },
-    { "id": "hardened",  "name": "Hardened", "description": "A life of toil. +1 Endurance.",
-      "effects": [ { "type": "skill", "skill": "endurance", "value": 1 } ] }
+    {
+      "id": "scholarly",
+      "name": "Scholarly Upbringing",
+      "description": "Two extra points to spend at creation.",
+      "effects": [
+        {
+          "type": "attribute_points",
+          "value": 2
+        }
+      ]
+    },
+    {
+      "id": "hardened",
+      "name": "Hardened",
+      "description": "A life of toil. +1 Endurance.",
+      "effects": [
+        {
+          "type": "skill",
+          "skill": "endurance",
+          "value": 1
+        }
+      ]
+    }
   ],
-
   "perk_trees": [
     {
       "id": "wanderer",
       "name": "Path of the Wanderer",
       "governing_attribute": "wits",
-      "layout": { "rows": [
-        { "perks": ["keen_eye", "scholar"] },
-        { "perks": ["toughened"] }
-      ] },
+      "layout": {
+        "rows": [
+          {
+            "perks": [
+              "keen_eye",
+              "scholar"
+            ]
+          },
+          {
+            "perks": [
+              "toughened"
+            ]
+          }
+        ]
+      },
       "perks": [
-        { "id": "keen_eye", "name": "Keen Eye",
+        {
+          "id": "keen_eye",
+          "name": "Keen Eye",
           "description": "Your senses sharpen. +1 to Perception.",
-          "effects": [ { "type": "skill", "skill": "perception", "value": 1 } ] },
-        { "id": "scholar", "name": "Scholar",
+          "effects": [
+            {
+              "type": "skill",
+              "skill": "perception",
+              "value": 1
+            }
+          ]
+        },
+        {
+          "id": "scholar",
+          "name": "Scholar",
           "description": "Choose a skill; it gains an extra accomplishment bonus.",
-          "choice": { "kind": "skill", "count": 1, "apply": "double_accomplishment",
-            "prompt": "Choose a skill to master." } },
-        { "id": "toughened", "name": "Toughened",
+          "choice": {
+            "kind": "skill",
+            "count": 1,
+            "apply": "double_accomplishment",
+            "prompt": "Choose a skill to master."
+          }
+        },
+        {
+          "id": "toughened",
+          "name": "Toughened",
           "description": "Hard roads make hard travellers. +1 to Endurance.",
-          "prerequisites": ["keen_eye"],
-          "effects": [ { "type": "skill", "skill": "endurance", "value": 1 } ] }
+          "prerequisites": [
+            "keen_eye"
+          ],
+          "effects": [
+            {
+              "type": "skill",
+              "skill": "endurance",
+              "value": 1
+            }
+          ]
+        }
       ]
     }
   ]

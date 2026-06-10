@@ -237,7 +237,7 @@ local function PrintHelp()
     Print("  " .. C_GOLD .. "/pmt dm|r      - toggle DM mode (broadcast vs receive sync)")
     Print("  " .. C_GOLD .. "/pmt share|r   - DM: send your system to the group")
     Print("  " .. C_GOLD .. "/pmt systems|r - choose the active system (|cffc8a868/pmt systems delete|r to remove one)")
-    Print("  " .. C_GOLD .. "/pmt rolls|r   - toggle public (party-visible) initiative rolls")
+    Print("  " .. C_GOLD .. "/pmt rolls|r   - toggle public (party-visible) dice rolls")
     Print("  " .. C_GOLD .. "/pmt view <name>|r - view another player's character sheet")
     Print("  " .. C_GOLD .. "/pmt cached|r  - browse cached sheets (|cffc8a868/pmt cached clear|r to wipe)")
     Print("  " .. C_GOLD .. "/pmt minimap|r - toggle the minimap button")
@@ -319,7 +319,7 @@ local function HandleSlash(input)
         local p = ns.Addon.db.profile
         p.publicRolls = not p.publicRolls
         Print((p.publicRolls and C_GREEN .. "public rolls ON" or C_YELLOW .. "public rolls OFF")
-            .. "|r - initiative rolls " .. (p.publicRolls and "use the in-game dice roller (party-visible)."
+            .. "|r - initiative and sheet checks " .. (p.publicRolls and "use the in-game dice roller (party-visible)."
                 or "use a hidden local d20."))
         if ns.InitiativeUI and ns.InitiativeUI.RefreshIfShown then ns.InitiativeUI.RefreshIfShown() end
         if ns.ConfigUI then ns.ConfigUI.RefreshIfShown() end

@@ -127,6 +127,13 @@ id = "staff"
 name = "Staff"
 attribute = "spirit"
 
+# attribute may be a list: the best of the named modifiers governs the
+# attack roll (finesse-style "use either" weapons).
+[[weapons]]
+id = "dirk"
+name = "Dirk"
+attribute = [ "might", "wits" ]
+
 [[racial_traits]]
 id = "human"
 name = "Human"

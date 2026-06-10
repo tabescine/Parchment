@@ -290,16 +290,34 @@ function CharacterSheet.Compute(char, system)
         }
     end
 
-    -- Weapon proficiencies (display + accomplished flag).
+    -- Weapon proficiencies (display + accomplished flag). When a weapon names
+    -- its governing attribute (weapon.attribute, like skills), an attack-roll
+    -- total is computed: attribute modifier + accomplishment (every listed
+    -- weapon is accomplished) + global attack-roll effects.
     local accomplishedWeapons = ListToSet(char.accomplished_weapons)
     for id in pairs(extraWeapons) do accomplishedWeapons[id] = true end
     local weapons = {}
     for _, weapon in ipairs(system.weapons or {}) do
         if accomplishedWeapons[weapon.id] then
-            weapons[#weapons + 1] = {
+            local entry = {
                 id = weapon.id, name = weapon.name, damage = weapon.damage,
                 versatile = weapon.versatile, properties = weapon.properties or {},
             }
+            if weapon.attribute then
+                -- attribute may be a list (finesse-style "use either"): the
+                -- best modifier wins and is reported as the governing one.
+                local attrs = type(weapon.attribute) == "table" and weapon.attribute or { weapon.attribute }
+                local bestId, bestMod
+                for _, id in ipairs(attrs) do
+                    local m = modifier[id]
+                    if m and (not bestMod or m > bestMod) then bestId, bestMod = id, m end
+                end
+                if bestId then
+                    entry.attack_attribute = bestId
+                    entry.attack_total = bestMod + accomplishment + fx.attack
+                end
+            end
+            weapons[#weapons + 1] = entry
         end
     end
 

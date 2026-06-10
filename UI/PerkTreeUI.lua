@@ -1,10 +1,12 @@
 -- Parchment - Perk Tree (UI)
 --
--- The perk tree viewer: a node graph per ability sphere. Nodes are colour-coded
--- by status (taken / available / locked / blocked), prerequisite lines connect
--- them, hovering shows requirements and description, left-click selects (or adds
--- a rank), right-click removes. A cycler switches spheres; a counter shows
--- invested vs available points.
+-- The perk tree viewer: a node graph per ability sphere. Node borders are
+-- colour-coded by status (taken / available / locked / blocked); a perk's
+-- optional data colour (red/black tier identity) tints its background. Lines
+-- connect prerequisites by default, or follow the tree's structural outline
+-- when its layout opts in (connect = "lattice"). Hovering shows requirements
+-- and description, left-click selects (or adds a rank), right-click removes.
+-- A cycler switches spheres; a counter shows invested vs available points.
 --
 -- Reads from: ns.GetSystem, ns.GetActiveCharacter, ns.CharacterSheet.Compute,
 --   ns.GetAttribute, ns.PerkTree, ns.UI.
@@ -18,12 +20,26 @@ local PT = ns.PerkTree
 local NODE_W, NODE_H = 128, 36
 local ROW_H, TOP_PAD = 62, 12
 
--- Status -> { border = {r,g,b}, bg = {r,g,b}, label = "..." }.
+-- Status -> { border = {r,g,b}, bg = {r,g,b}, text = {r,g,b}, label = "..." }.
+-- The bg is the fallback for systems without per-perk colours; when a perk
+-- declares color = "red"/"black" (tier identity, red tiers being mutually
+-- exclusive), the bg shows that instead and only border + text carry status.
+-- Blocked is orange so it cannot be confused with a red tier.
 local STATUS = {
-    taken = { border = { 0.4, 0.85, 0.4 }, bg = { 0.16, 0.34, 0.16 }, label = "Taken" },
-    available = { border = UI.GOLD, bg = { 0.26, 0.22, 0.12 }, label = "Available" },
-    locked = { border = { 0.4, 0.4, 0.4 }, bg = { 0.13, 0.13, 0.14 }, label = "Locked" },
-    exclusive = { border = UI.RED, bg = { 0.28, 0.13, 0.13 }, label = "Blocked (exclusive)" },
+    taken = { border = { 0.4, 0.85, 0.4 }, bg = { 0.16, 0.34, 0.16 },
+        text = { 0.78, 0.95, 0.78 }, label = "Taken" },
+    available = { border = UI.GOLD, bg = { 0.26, 0.22, 0.12 },
+        text = { 0.95, 0.93, 0.88 }, label = "Available" },
+    locked = { border = { 0.38, 0.38, 0.38 }, bg = { 0.13, 0.13, 0.14 },
+        text = { 0.58, 0.56, 0.52 }, label = "Locked" },
+    exclusive = { border = { 0.95, 0.55, 0.15 }, bg = { 0.28, 0.13, 0.13 },
+        text = { 0.58, 0.56, 0.52 }, label = "Blocked (exclusive)" },
+}
+
+-- Node backgrounds for data-declared perk colours.
+local SPHERE_BG = {
+    red = { 0.27, 0.09, 0.09 },
+    black = { 0.09, 0.09, 0.10 },
 }
 
 local PerkTreeUI = {}
@@ -276,9 +292,10 @@ local function RenderGraph(self)
                 local status = (tree.homebrew or node.replacement) and "taken"
                     or PT.Status(self.char, self.sheet, tree, perk)
                 local sc = STATUS[status]
-                node:SetBackdropColor(sc.bg[1], sc.bg[2], sc.bg[3], 0.9)
+                local bg = SPHERE_BG[perk.color] or sc.bg
+                node:SetBackdropColor(bg[1], bg[2], bg[3], 0.9)
                 node:SetBackdropBorderColor(sc.border[1], sc.border[2], sc.border[3], 1)
-                node.label:SetTextColor(0.95, 0.93, 0.88)
+                node.label:SetTextColor(sc.text[1], sc.text[2], sc.text[3])
 
                 if perk.max_ranks and perk.max_ranks > 1 then
                     node.rank:SetText(PT.Rank(self.char, perk) .. "/" .. perk.max_ranks)
@@ -298,16 +315,40 @@ local function RenderGraph(self)
 
     content:SetHeight(TOP_PAD + #rows * ROW_H + 16)
 
-    -- Prerequisite lines (only between nodes shown in this tree).
-    for _, perk in ipairs(tree.perks) do
-        local toNode = content.nodeMap[perk.id]
-        if toNode then
-            for _, pr in ipairs(perk.prerequisites or {}) do
-                local fromNode = content.nodeMap[pr]
-                if fromNode then
-                    local line = AcquireLine(self)
-                    line:SetStartPoint("CENTER", fromNode)
-                    line:SetEndPoint("CENTER", toNode)
+    -- Connecting lines. A tree may opt into structural lattice lines that
+    -- mirror its printed outline (layout.connect = "lattice"): consecutive
+    -- rows pair column-wise when equal-sized, otherwise they fan out/in
+    -- (3-into-1 converges, 1-into-3 spreads). The default remains
+    -- prerequisite lines, which carry real meaning for arbitrary systems;
+    -- prerequisites always stay visible in the tooltip either way.
+    if tree.layout and tree.layout.connect == "lattice" then
+        for ri = 1, #rows - 1 do
+            local a, b = rows[ri].perks, rows[ri + 1].perks
+            for ai, fromId in ipairs(a) do
+                for bi, toId in ipairs(b) do
+                    if #a ~= #b or ai == bi then
+                        local fromNode, toNode = content.nodeMap[fromId], content.nodeMap[toId]
+                        if fromNode and toNode then
+                            local line = AcquireLine(self)
+                            line:SetStartPoint("CENTER", fromNode)
+                            line:SetEndPoint("CENTER", toNode)
+                        end
+                    end
+                end
+            end
+        end
+    else
+        -- Prerequisite lines (only between nodes shown in this tree).
+        for _, perk in ipairs(tree.perks) do
+            local toNode = content.nodeMap[perk.id]
+            if toNode then
+                for _, pr in ipairs(perk.prerequisites or {}) do
+                    local fromNode = content.nodeMap[pr]
+                    if fromNode then
+                        local line = AcquireLine(self)
+                        line:SetStartPoint("CENTER", fromNode)
+                        line:SetEndPoint("CENTER", toNode)
+                    end
                 end
             end
         end
@@ -399,7 +440,7 @@ local function BuildFrame()
     legend:SetPoint("RIGHT", f, "RIGHT", -16, 0)
     legend:SetJustifyH("LEFT")
     legend:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
-    legend:SetText("|cff66d966Taken|r  |cffc8a868Available|r  |cff999999Locked|r  |cffe67272Blocked|r"
+    legend:SetText("|cff66d966Taken|r  |cffc8a868Available|r  |cff999999Locked|r  |cfff28c26Blocked|r"
         .. "   -   left-click select, right-click remove")
 
     f.msg = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")

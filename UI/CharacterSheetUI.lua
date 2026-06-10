@@ -311,15 +311,30 @@ local function RenderBody(self)
         for _, w in ipairs(sheet.weapons) do
             local props = #w.properties > 0 and ("  [" .. table.concat(w.properties, ", ") .. "]") or ""
             local weapon = w
-            Row(content, w.name .. props, w.damage, 0, nil, function(tt)
+            local value = w.damage or ""
+            if w.attack_total then
+                value = Signed(w.attack_total) .. (w.damage and ("    " .. w.damage) or "")
+            end
+            Row(content, w.name .. props, value, 0, nil, function(tt)
                 tt:AddLine(weapon.name, C_GOLD[1], C_GOLD[2], C_GOLD[3])
                 tt:AddLine("Damage: " .. (weapon.damage or "-")
                     .. (weapon.versatile and ("  (two-handed " .. weapon.versatile .. ")") or ""), 0.9, 0.9, 0.9)
                 if #weapon.properties > 0 then
                     tt:AddLine("Properties: " .. table.concat(weapon.properties, ", "), 0.9, 0.9, 0.9)
                 end
-                tt:AddLine("Accomplished: adds " .. Signed(accomplishment) .. " to attack rolls", 0.56, 0.78, 1)
-            end)
+                if weapon.attack_total then
+                    local attr = modById[weapon.attack_attribute]
+                    tt:AddLine("Attack: " .. Signed(weapon.attack_total) .. " ("
+                        .. (attr and attr.name or weapon.attack_attribute) .. " modifier "
+                        .. Signed(attr and attr.modifier or 0) .. " + accomplished "
+                        .. Signed(accomplishment)
+                        .. (sheet.derived.attack_modifier ~= 0
+                            and (" " .. Signed(sheet.derived.attack_modifier) .. " global") or "")
+                        .. ")", 0.9, 0.9, 0.9)
+                else
+                    tt:AddLine("Accomplished: adds " .. Signed(accomplishment) .. " to attack rolls", 0.56, 0.78, 1)
+                end
+            end, w.attack_total and rollSpec(w.name .. " attack", w.attack_total) or nil)
         end
     end
 

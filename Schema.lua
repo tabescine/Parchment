@@ -18,6 +18,7 @@ local SYSTEM_REQUIRED = { system_name = "string", attributes = "table" }
 local ATTRIBUTE_REQUIRED = { id = "string", name = "string" }
 local SKILL_REQUIRED = { id = "string", name = "string", attribute = "string" }
 local PERK_REQUIRED = { id = "string", name = "string" }
+local WEAPON_REQUIRED = { id = "string", name = "string" }
 local CHAR_REQUIRED = { name = "string", level = "number", attributes = "table" }
 
 ns.Schema = ns.Schema or {}
@@ -85,6 +86,23 @@ function Schema.ValidateSystem(system)
         local ctx = "skill[" .. i .. "]"
         if CheckRequired(skill, SKILL_REQUIRED, ctx, issues) and not attrIds[skill.attribute] then
             Report(issues, ctx, "unknown attribute '" .. tostring(skill.attribute) .. "'")
+        end
+    end
+
+    -- Weapons are optional; when present they need id + name. `attribute`
+    -- (governs attack rolls) may be one attribute id or a list of ids - the
+    -- best modifier applies, for finesse-style "use either" weapons. All
+    -- named attributes must resolve.
+    for i, weapon in ipairs(system.weapons or {}) do
+        local ctx = "weapon[" .. i .. "]"
+        if CheckRequired(weapon, WEAPON_REQUIRED, ctx, issues) and weapon.attribute ~= nil then
+            local attrs = weapon.attribute
+            if type(attrs) ~= "table" then attrs = { attrs } end
+            for _, id in ipairs(attrs) do
+                if not attrIds[id] then
+                    Report(issues, ctx, "unknown attribute '" .. tostring(id) .. "'")
+                end
+            end
         end
     end
 
