@@ -202,11 +202,13 @@ function PT.Deselect(char, tree, perk)
                 end
             end
             -- Block if this is the last satisfier of an "any-of" requirement.
+            -- Satisfies (not CountId) so a homebrew replacement filling another
+            -- any-of member counts, matching AnyTaken/Status/CanAddRank.
             if p and p.prerequisites_any then
                 local inAny, othersTaken = false, false
                 for _, pr in ipairs(p.prerequisites_any) do
                     if pr == perk.id then inAny = true
-                    elseif CountId(char.perks, pr) > 0 then othersTaken = true end
+                    elseif Satisfies(char, pr) then othersTaken = true end
                 end
                 if inAny and not othersTaken then
                     return false, "Required by " .. p.name .. "."

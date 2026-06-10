@@ -50,13 +50,29 @@ local function CachedFor(name)
     end
 end
 
--- Sends an addressed message to one player. Within a group it broadcasts on the
--- party/raid channel (works cross-realm) tagged with the recipient; receivers
--- ignore messages not addressed to them. Otherwise (or to oneself) it whispers.
+-- True when a named player is in our current party/raid (realm-tolerant).
+local function InMyGroup(name)
+    if not IsInGroup() then return false end
+    local prefix = IsInRaid() and "raid" or "party"
+    for i = 1, GetNumGroupMembers() do
+        local unit = prefix .. i
+        if UnitExists(unit) then
+            local n, r = UnitName(unit)
+            if n and SameName(FullName(n, r), name) then return true end
+        end
+    end
+    return false
+end
+
+-- Sends an addressed message to one player. A recipient in *our* group gets the
+-- party/raid broadcast (works cross-realm) tagged with their name; receivers
+-- ignore messages not addressed to them. Anyone else (or oneself) is whispered
+-- directly - routing by the recipient's membership, not merely our own, so a
+-- reply to an outside requester is not misdirected into our group.
 local function SendTo(msgType, payload, target)
     payload = payload or {}
     payload.to = target
-    if IsInGroup() and not SameName(target, Me()) then
+    if InMyGroup(target) and not SameName(target, Me()) then
         return ns.Comm.Send(msgType, payload)
     end
     return ns.Comm.Whisper(msgType, payload, target)
@@ -102,21 +118,39 @@ end
 -- show characters we receive. ShowCharacter is wrapped so a display error is
 -- reported rather than swallowed by AceComm's protected dispatch.
 if ns.Comm then
-    ns.Comm.On("REQ", function(payload, sender)
+    ns.Comm.On("REQ", function(payload, sender, distribution)
         if not ForMe(payload) then return end
         local char = ns.GetActiveCharacter()
-        if char and sender then
+        if not (char and sender) then return end
+        -- Mirror the request's path: a whispered request gets a whispered
+        -- reply (the requester may not be in our group at all).
+        if distribution == "WHISPER" then
+            ns.Comm.Whisper("CHAR", { char = char, to = sender }, sender)
+        else
             SendTo("CHAR", { char = char }, sender)
         end
     end)
     ns.Comm.On("CHAR", function(payload, sender)
         if type(payload) ~= "table" or type(payload.char) ~= "table" then return end
         if not ForMe(payload) then return end
-        if wipe then wipe(pending) else for k in pairs(pending) do pending[k] = nil end end
-        -- Persist to the cache, keyed by the sender.
-        if sender then
-            Cache()[sender] = { char = payload.char, name = payload.char.name, time = (time and time()) or 0 }
+
+        -- Only accept replies we actually asked for, and clear just that
+        -- request (others may still be in flight).
+        local pendingKey
+        for target in pairs(pending) do
+            if SameName(target, sender) then pendingKey = target break end
         end
+        if not pendingKey then return end
+        pending[pendingKey] = nil
+
+        -- Shape-check before persisting (their system may differ from ours,
+        -- so shape only - no cross-reference validation).
+        if not ns.Schema.ValidateCharacter(payload.char, nil) then
+            ns.Print((sender or "?") .. " sent a malformed character sheet; ignored.")
+            return
+        end
+
+        Cache()[sender] = { char = payload.char, name = payload.char.name, time = (time and time()) or 0 }
         ns.Print("received " .. (payload.char.name or "a character") .. " from " .. (sender or "?") .. ".")
         if ns.CharacterSheetUI then
             local ok, err = pcall(ns.CharacterSheetUI.ShowCharacter, payload.char, sender)

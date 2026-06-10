@@ -339,13 +339,16 @@ local function RenderBody(self)
 end
 
 -- Pushes the current character's resource numbers into the vitals header.
+-- Boxes the user is typing in are left alone so an external refresh (e.g. an
+-- editor keystroke) does not stomp the in-progress value.
 local function RefreshVitals(self)
     local d = self.sheet.derived
-    self.hpBox:SetText(tostring(d.hp.current or d.hp.max or 0))
+    local function setBox(box, v) if not box:HasFocus() then box:SetText(v) end end
+    setBox(self.hpBox, tostring(d.hp.current or d.hp.max or 0))
     self.hpMax:SetText("/ " .. tostring(d.hp.max or "?"))
-    self.manaBox:SetText(tostring(d.mana.current or d.mana.max or 0))
+    setBox(self.manaBox, tostring(d.mana.current or d.mana.max or 0))
     self.manaMax:SetText("/ " .. tostring(d.mana.max or "?"))
-    self.tempBox:SetText(tostring(d.hp.temp or 0))
+    setBox(self.tempBox, tostring(d.hp.temp or 0))
     self.tempMax:SetText("")
 end
 
@@ -379,8 +382,9 @@ local function Refresh(self)
         self.sheet = nil
         CanvasReset(self.content)
         CanvasFinish(self.content)
-        ns.UI.Empty(self, "No character yet.\n\nCreate one to get started.",
-            "Create a character", function() ns.OpenModule("new") end)
+        ns.UI.Empty(self, "No character yet.\n\nCreate one to get started, or import an existing one.",
+            "Create a character", function() ns.OpenModule("new") end,
+            "Import a character", function() ns.OpenModule("import") end)
         return
     end
     ns.UI.HideEmpty(self)

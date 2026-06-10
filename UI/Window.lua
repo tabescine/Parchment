@@ -77,10 +77,16 @@ function UI.CreateWindow(globalName, opts)
     f:SetScript("OnDragStart", f.StartMoving)
     f:SetScript("OnDragStop", function(self) self:StopMovingOrSizing(); SaveGeometry(self, opts.dbKey) end)
 
-    -- Close button + Escape support.
+    -- Close button + Escape support. Registration is idempotent: a window may
+    -- be rebuilt under the same global name (e.g. after a system swap) and
+    -- must not accumulate duplicate UISpecialFrames entries.
     local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", -4, -4)
-    tinsert(UISpecialFrames, globalName)
+    local registered = false
+    for _, name in ipairs(UISpecialFrames) do
+        if name == globalName then registered = true end
+    end
+    if not registered then tinsert(UISpecialFrames, globalName) end
 
     -- Title.
     f.titleFS = f:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
@@ -108,10 +114,11 @@ function UI.CreateWindow(globalName, opts)
     return f
 end
 
--- Shows a centered empty-state message with one action button over a window,
--- used when there is no system or no character to render. Created once per
--- frame and reused. Pass buttonText/onClick to offer an action (e.g. import).
-function UI.Empty(frame, message, buttonText, onClick)
+-- Shows a centered empty-state message with up to two action buttons over a
+-- window, used when there is no system or no character to render. Created
+-- once per frame and reused. Pass buttonText/onClick for the primary action
+-- (e.g. create) and button2Text/onClick2 for an alternative (e.g. import).
+function UI.Empty(frame, message, buttonText, onClick, button2Text, onClick2)
     local e = frame._emptyState
     if not e then
         -- A full-body panel so it masks any persistent widgets behind it.
@@ -130,6 +137,9 @@ function UI.Empty(frame, message, buttonText, onClick)
         e.btn = CreateFrame("Button", nil, e, "UIPanelButtonTemplate")
         e.btn:SetSize(160, 24)
         e.btn:SetPoint("TOP", e.msg, "BOTTOM", 0, -16)
+        e.btn2 = CreateFrame("Button", nil, e, "UIPanelButtonTemplate")
+        e.btn2:SetSize(160, 24)
+        e.btn2:SetPoint("TOP", e.btn, "BOTTOM", 0, -6)
         frame._emptyState = e
     end
     e.msg:SetText(message or "")
@@ -139,6 +149,13 @@ function UI.Empty(frame, message, buttonText, onClick)
         e.btn:Show()
     else
         e.btn:Hide()
+    end
+    if button2Text and onClick2 then
+        e.btn2:SetText(button2Text)
+        e.btn2:SetScript("OnClick", onClick2)
+        e.btn2:Show()
+    else
+        e.btn2:Hide()
     end
     e:Show()
     e:Raise()

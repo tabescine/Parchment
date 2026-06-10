@@ -221,7 +221,7 @@ local function PrintHelp()
     Print("  " .. C_GOLD .. "/pmt config|r  - open settings")
     Print("  " .. C_GOLD .. "/pmt dm|r      - toggle DM mode (broadcast vs receive sync)")
     Print("  " .. C_GOLD .. "/pmt share|r   - DM: send your system to the group")
-    Print("  " .. C_GOLD .. "/pmt systems|r - choose the active system from your library")
+    Print("  " .. C_GOLD .. "/pmt systems|r - choose the active system (|cffc8a868/pmt systems delete|r to remove one)")
     Print("  " .. C_GOLD .. "/pmt rolls|r   - toggle public (party-visible) initiative rolls")
     Print("  " .. C_GOLD .. "/pmt view <name>|r - view another player's character sheet")
     Print("  " .. C_GOLD .. "/pmt cached|r  - browse cached sheets (|cffc8a868/pmt cached clear|r to wipe)")
@@ -302,7 +302,10 @@ local function HandleSlash(input)
                 or (C_RED .. (err or "share failed") .. "|r"))
         end
     elseif cmd == "systems" then
-        if ns.Systems then ns.Systems.OpenPicker() end
+        if ns.Systems then
+            if arg and strtrim(arg):lower() == "delete" then ns.Systems.OpenDeletePicker()
+            else ns.Systems.OpenPicker() end
+        end
     elseif cmd == "rolls" then
         local p = ns.Addon.db.profile
         p.publicRolls = not p.publicRolls

@@ -31,11 +31,14 @@ local function State()
     return db.global.initiative
 end
 
--- Sorts combatants by initiative descending, breaking ties by name.
+-- Sorts combatants by initiative descending, breaking ties by name. Coerces
+-- init defensively so a corrupt entry (e.g. persisted before sanitizing was
+-- added) cannot make the comparator throw.
 local function SortDescending(state)
     table.sort(state.combatants, function(a, b)
-        if a.init ~= b.init then return a.init > b.init end
-        return (a.name or "") < (b.name or "")
+        local ai, bi = tonumber(a.init) or 0, tonumber(b.init) or 0
+        if ai ~= bi then return ai > bi end
+        return tostring(a.name or "") < tostring(b.name or "")
     end)
 end
 
@@ -44,11 +47,25 @@ function IT.GetState()
 end
 
 -- Replaces the whole turn order (used by players receiving the DM's sync).
+-- The incoming table crossed the wire, so it is rebuilt field by field: only
+-- well-formed combatants survive and the pointers are coerced into range,
+-- ensuring bad remote data can never poison the persisted state.
 function IT.SetState(incoming)
     local state = State()
-    state.combatants = incoming.combatants or {}
-    state.current = incoming.current or 0
-    state.round = incoming.round or 0
+    local combatants = {}
+    for _, c in ipairs(type(incoming.combatants) == "table" and incoming.combatants or {}) do
+        if type(c) == "table" and type(c.name) == "string" and c.name ~= "" then
+            combatants[#combatants + 1] = {
+                name = c.name,
+                init = tonumber(c.init) or 0,
+                isNPC = c.isNPC and true or false,
+            }
+        end
+    end
+    state.combatants = combatants
+    local current = math.floor(tonumber(incoming.current) or 0)
+    state.current = math.max(0, math.min(current, #combatants))
+    state.round = math.max(0, math.floor(tonumber(incoming.round) or 0))
 end
 
 -- Rolls a d20 locally and adds a modifier (hidden from the group).
@@ -65,7 +82,10 @@ end
 local rollQueue = {}
 
 -- Turns a format string like "%s rolls %d (%d-%d)" into a capture pattern.
+-- Some locales use positional specifiers (%1$s, %2$d); these are reduced to
+-- plain %s/%d first so the conversion below matches them too.
 local function ToPattern(fmt)
+    fmt = fmt:gsub("%%(%d+)%$", "%%")
     local p = fmt:gsub("[%-%.%(%)%[%]%+%*%?%^%$%%]", "%%%0")
     p = p:gsub("%%%%s", "(.+)")
     p = p:gsub("%%%%d", "(%%d+)")
@@ -125,15 +145,26 @@ if listener then
 end
 
 -- Adds a combatant with an explicit initiative total, then re-sorts. Returns
--- the combatant table. Ignores blank names.
+-- the combatant table. Ignores blank or non-string names; init is coerced to a
+-- number (it may arrive over the wire via INITSUBMIT).
 function IT.Add(name, init, isNPC)
-    name = name and strtrim(name) or ""
+    if type(name) ~= "string" then return nil end
+    name = strtrim(name)
     if name == "" then return nil end
     local state = State()
-    local combatant = { name = name, init = init or 0, isNPC = isNPC and true or false }
+    local combatant = { name = name, init = tonumber(init) or 0, isNPC = isNPC and true or false }
+
+    -- The sort can shift indices; keep the active turn on the same combatant.
+    local active = state.combatants[state.current]
     table.insert(state.combatants, combatant)
     SortDescending(state)
-    if state.current == 0 then state.current = 1 end
+    if active then
+        for i, c in ipairs(state.combatants) do
+            if c == active then state.current = i break end
+        end
+    elseif state.current == 0 then
+        state.current = 1
+    end
     return combatant
 end
 
@@ -149,11 +180,13 @@ function IT.AddRolled(name, modifier, isNPC, onAdded)
     end)
 end
 
--- Removes the combatant at index, keeping the current pointer valid.
+-- Removes the combatant at index, keeping the current pointer valid. Entries
+-- above the removed slot shift down one, so the pointer follows them.
 function IT.Remove(index)
     local state = State()
     if not state.combatants[index] then return end
     table.remove(state.combatants, index)
+    if index < state.current then state.current = state.current - 1 end
     local n = #state.combatants
     if state.current > n then state.current = n end
     if state.current < 1 and n > 0 then state.current = 1 end

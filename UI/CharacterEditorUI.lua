@@ -252,10 +252,11 @@ local function BuildFrame()
     f.hpBreakdown:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
     adv()
 
-    -- Attributes.
+    -- Attributes. May be empty on first run (no system imported yet); the
+    -- NoSystem overlay covers the form and GetFrame rebuilds on system change.
     y = y - 10; Header(c, "ATTRIBUTES", y); y = y - 24
     f.steppers, f.modText = {}, {}
-    for _, attr in ipairs(system.attributes) do
+    for _, attr in ipairs(system.attributes or {}) do
         Label(c, attr.name, PAD, y)
         local st = ns.Widgets.Stepper(c, 96)
         st:SetPoint("TOPLEFT", CTRL_X, y + 1)
@@ -326,16 +327,18 @@ local function BuildFrame()
     textCommit(f.nameBox, "name"); textCommit(f.playerBox, "player")
     textCommit(f.quoteBox, "quote"); textCommit(f.notesBox, "notes")
 
-    -- Base attributes may exceed the creation cap of 10 post-creation (level
-    -- milestone points and traits push toward the 11/12 perk requirements), so
-    -- the stepper allows up to the modifier table's range.
-    local maxAttr = #(system.modifier_table or {})
-    if maxAttr < 10 then maxAttr = 20 end
-    local cfg = ns.DerivedConfig()
-    local hpAttr = cfg.hp_attribute
     for id, st in pairs(f.steppers) do
         st:OnStep(function(delta)
             if not f.char then return end
+            -- System config is read at event time (not captured at build) so a
+            -- reimported system's modifier table / derived config is honored.
+            -- Base attributes may exceed the creation cap of 10 post-creation
+            -- (level milestone points and traits push toward the 11/12 perk
+            -- requirements), so the stepper allows the modifier table's range.
+            local maxAttr = #(ns.GetSystem().modifier_table or {})
+            if maxAttr < 10 then maxAttr = 20 end
+            local cfg = ns.DerivedConfig()
+            local hpAttr = cfg.hp_attribute
             f.char.attributes = f.char.attributes or {}
             local newVal = math.max(1, math.min(maxAttr, (f.char.attributes[id] or 1) + delta))
             -- Systems that opt into retroactive HP (derived_stats.retroactive_hp)
@@ -361,46 +364,61 @@ local function BuildFrame()
         end)
     end
 
+    -- Field pickers. Each guards on f.char both at click time and again in the
+    -- apply callback: ns.Dialogs.Pick is not modal, so the character can be
+    -- deleted (or the roster switched) while a picker is open.
     f.raceBtn:SetScript("OnClick", function()
+        if not f.char then return end
         local items = {}
         for _, r in ipairs(CE.Races(ns.GetSystem())) do items[#items + 1] = { id = r, name = r } end
-        Pick(f, "Race", "Choose a race", items, 1, { f.char and f.char.race }, function(ids) f.char.race = ids[1] end)
+        Pick(f, "Race", "Choose a race", items, 1, { f.char.race },
+            function(ids) if f.char then f.char.race = ids[1] end end)
     end)
     f.racialBtn:SetScript("OnClick", function()
+        if not f.char then return end
         Pick(f, "Racial Trait", "Choose a racial trait (hover for details)", RacialItems(ns.GetSystem(), f.char.race), 1,
-            { f.char.racial_trait }, function(ids) f.char.racial_trait = (ids[1] ~= "__none") and ids[1] or nil end)
+            { f.char.racial_trait },
+            function(ids) if f.char then f.char.racial_trait = (ids[1] ~= "__none") and ids[1] or nil end end)
     end)
     f.originBtn:SetScript("OnClick", function()
+        if not f.char then return end
         Pick(f, "Origin Traits", "Choose up to two (hover for details)", TraitItems(ns.GetSystem().origin_traits), 2,
-            f.char.origin_traits, function(ids) f.char.origin_traits = ids end)
+            f.char.origin_traits, function(ids) if f.char then f.char.origin_traits = ids end end)
     end)
     f.primaryBtn:SetScript("OnClick", function()
+        if not f.char then return end
         Pick(f, "Primary Attribute", "Choose the primary attribute", AttrItems(ns.GetSystem()), 1,
-            { f.char.primary_attribute }, function(ids) f.char.primary_attribute = ids[1] end)
+            { f.char.primary_attribute }, function(ids) if f.char then f.char.primary_attribute = ids[1] end end)
     end)
     f.acBtn:SetScript("OnClick", function()
+        if not f.char then return end
         Pick(f, "AC Attribute", "Choose the attribute that governs AC", AttrItems(ns.GetSystem()), 1,
-            { f.char.ac_attribute }, function(ids) f.char.ac_attribute = ids[1] end)
+            { f.char.ac_attribute }, function(ids) if f.char then f.char.ac_attribute = ids[1] end end)
     end)
     f.initBtn:SetScript("OnClick", function()
+        if not f.char then return end
         Pick(f, "Initiative Attribute", "Choose the attribute that governs initiative", AttrItems(ns.GetSystem()), 1,
-            { f.char.init_attribute }, function(ids) f.char.init_attribute = ids[1] end)
+            { f.char.init_attribute }, function(ids) if f.char then f.char.init_attribute = ids[1] end end)
     end)
     f.skillsBtn:SetScript("OnClick", function()
+        if not f.char then return end
         local items = {}
-        for _, s in ipairs(ns.GetSystem().skills) do items[#items + 1] = { id = s.id, name = s.name } end
+        for _, s in ipairs(ns.GetSystem().skills or {}) do items[#items + 1] = { id = s.id, name = s.name } end
         Pick(f, "Accomplished Skills", "Mark accomplished skills", items, #items,
-            f.char.accomplished_skills, function(ids) f.char.accomplished_skills = ids end)
+            f.char.accomplished_skills, function(ids) if f.char then f.char.accomplished_skills = ids end end)
     end)
     f.weaponsBtn:SetScript("OnClick", function()
+        if not f.char then return end
         local items = {}
-        for _, wpn in ipairs(ns.GetSystem().weapons) do items[#items + 1] = { id = wpn.id, name = wpn.name } end
+        for _, wpn in ipairs(ns.GetSystem().weapons or {}) do items[#items + 1] = { id = wpn.id, name = wpn.name } end
         Pick(f, "Accomplished Weapons", "Mark accomplished weapons", items, #items,
-            f.char.accomplished_weapons, function(ids) f.char.accomplished_weapons = ids end)
+            f.char.accomplished_weapons, function(ids) if f.char then f.char.accomplished_weapons = ids end end)
     end)
     f.savesBtn:SetScript("OnClick", function()
+        if not f.char then return end
         Pick(f, "Accomplished Saves", "Primary save is auto; choose one more", SaveItems(ns.GetSystem(), f.char.primary_attribute),
-            #ns.GetSystem().attributes, f.char.accomplished_saves, function(ids) f.char.accomplished_saves = ids end)
+            #(ns.GetSystem().attributes or {}), f.char.accomplished_saves,
+            function(ids) if f.char then f.char.accomplished_saves = ids end end)
     end)
 
     -- Hover tooltips on the accomplished count buttons explaining the target.
@@ -553,8 +571,9 @@ Refresh = function(self)
     local system = ns.GetSystem()
     if not char then
         self.titleFS:SetText("Character Editor")
-        ns.UI.Empty(self, "No character yet.\n\nCreate one to start editing.",
-            "Create a character", function() ns.OpenModule("new") end)
+        ns.UI.Empty(self, "No character yet.\n\nCreate one to start editing, or import an existing one.",
+            "Create a character", function() ns.OpenModule("new") end,
+            "Import a character", function() ns.OpenModule("import") end)
         return
     end
     ns.UI.HideEmpty(self)
@@ -573,10 +592,13 @@ Refresh = function(self)
 
     local modById = {}
     for _, a in ipairs(sheet.attributes) do modById[a.id] = a end
-    for _, attr in ipairs(system.attributes) do
-        self.steppers[attr.id]:SetText(tostring((char.attributes or {})[attr.id] or 1))
-        local a = modById[attr.id]
-        self.modText[attr.id]:SetText(a and (Signed(a.modifier) .. (a.bonus ~= 0 and "  (" .. a.final .. ")" or "")) or "")
+    for _, attr in ipairs(system.attributes or {}) do
+        local st = self.steppers[attr.id]
+        if st then
+            st:SetText(tostring((char.attributes or {})[attr.id] or 1))
+            local a = modById[attr.id]
+            self.modText[attr.id]:SetText(a and (Signed(a.modifier) .. (a.bonus ~= 0 and "  (" .. a.final .. ")" or "")) or "")
+        end
     end
 
     local used, avail = CE.AttributePoints(char, system)
@@ -602,8 +624,30 @@ Refresh = function(self)
     self.warnText:SetText(#warns > 0 and table.concat(warns, "\n") or "|cff66d966No warnings.|r")
 end
 
+-- The editor's attribute rows are laid out from the system loaded at build
+-- time, so a frame built for one system cannot show another. The signature
+-- detects a change in the attribute set so the frame is rebuilt for it.
+local function AttrSignature()
+    local ids = {}
+    for _, a in ipairs(ns.GetSystem().attributes or {}) do ids[#ids + 1] = tostring(a.id) end
+    return table.concat(ids, "\31")
+end
+
+-- Returns the singleton frame, rebuilding it when the system's attribute set
+-- changed since it was built (WoW frames cannot be destroyed; the stale one is
+-- hidden and orphaned).
 local function GetFrame()
-    if not EditorUI.frame then EditorUI.frame = BuildFrame() end
+    local sig = AttrSignature()
+    local f = EditorUI.frame
+    if f and f.attrSignature ~= sig then
+        f:Hide()
+        f:SetParent(nil)
+        EditorUI.frame = nil
+    end
+    if not EditorUI.frame then
+        EditorUI.frame = BuildFrame()
+        EditorUI.frame.attrSignature = sig
+    end
     return EditorUI.frame
 end
 
@@ -616,6 +660,12 @@ end
 function EditorUI.Toggle()
     local f = GetFrame()
     if f:IsShown() then f:Hide() else EditorUI.Open() end
+end
+
+-- Refreshes (and if needed rebuilds) the editor when it is open, e.g. after an
+-- import or a system switch.
+function EditorUI.RefreshIfShown()
+    if EditorUI.frame and EditorUI.frame:IsShown() then EditorUI.Open() end
 end
 
 ns.RegisterModule("edit", EditorUI.Toggle)

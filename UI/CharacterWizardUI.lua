@@ -128,11 +128,12 @@ local function BuildFrame()
     Label(p1, "Race", PAD, y); f.raceBtn = FieldButton(p1, y); y = y - ROW_H
     Label(p1, "Quote", PAD, y); f.quoteBox = TextBox(p1, y, 250); y = y - ROW_H
 
-    -- Attributes page (shown at step 3).
+    -- Attributes page (shown at step 3). May be empty on first run (no system
+    -- imported yet); the NoSystem overlay covers the form until one is.
     local p2 = NewPage(f); f.pages[3] = p2
     y = -PAD
     f.steppers, f.modText = {}, {}
-    for _, attr in ipairs(system.attributes) do
+    for _, attr in ipairs(system.attributes or {}) do
         Label(p2, attr.name, PAD, y)
         local st = ns.Widgets.Stepper(p2, 96); st:SetPoint("TOPLEFT", CTRL_X, y + 1)
         f.steppers[attr.id] = st
@@ -189,53 +190,72 @@ local function BuildFrame()
     textCommit(f.nameBox, "name"); textCommit(f.playerBox, "player"); textCommit(f.quoteBox, "quote")
 
     -- During creation the cap is the point-buy maximum (10); higher values come
-    -- later via level points and are handled in the editor, not the wizard.
-    local maxAttr = (system.point_buy and system.point_buy.max) or 10
+    -- later via level points and are handled in the editor, not the wizard. The
+    -- cap is read at event time so a reimported system's value is honored.
     for id, st in pairs(f.steppers) do
         st:OnStep(function(delta)
             if not f.draft then return end
+            local pb = ns.GetSystem().point_buy
+            local maxAttr = (pb and pb.max) or 10
             local v = (f.draft.attributes[id] or 5) + delta
             f.draft.attributes[id] = math.max(1, math.min(maxAttr, v))
             Refresh(f)
         end)
     end
 
+    -- Field pickers. Each guards on f.draft both at click time and again in
+    -- the apply callback: ns.Dialogs.Pick is not modal, so the wizard can be
+    -- cancelled (clearing the draft) while a picker is open.
     f.raceBtn:SetScript("OnClick", function()
+        if not f.draft then return end
         local items = {}
         for _, r in ipairs(CE.Races(ns.GetSystem())) do items[#items + 1] = { id = r, name = r } end
-        Pick(f, "Race", "Choose a race", items, 1, { f.draft.race }, function(ids) f.draft.race = ids[1] end)
+        Pick(f, "Race", "Choose a race", items, 1, { f.draft.race },
+            function(ids) if f.draft then f.draft.race = ids[1] end end)
     end)
     f.racialBtn:SetScript("OnClick", function()
+        if not f.draft then return end
         Pick(f, "Racial Trait", "Choose a racial trait (hover for details)", RacialItems(ns.GetSystem(), f.draft.race), 1,
-            { f.draft.racial_trait }, function(ids) f.draft.racial_trait = (ids[1] ~= "__none") and ids[1] or nil end)
+            { f.draft.racial_trait },
+            function(ids) if f.draft then f.draft.racial_trait = (ids[1] ~= "__none") and ids[1] or nil end end)
     end)
     f.originBtn:SetScript("OnClick", function()
+        if not f.draft then return end
         Pick(f, "Origin Traits", "Choose up to two (hover for details)", TraitItems(ns.GetSystem().origin_traits), 2,
-            f.draft.origin_traits, function(ids) f.draft.origin_traits = ids end)
+            f.draft.origin_traits, function(ids) if f.draft then f.draft.origin_traits = ids end end)
     end)
     f.primaryBtn:SetScript("OnClick", function()
+        if not f.draft then return end
         Pick(f, "Primary Attribute", "Choose the primary attribute", AttrItems(ns.GetSystem()), 1,
-            { f.draft.primary_attribute }, function(ids) f.draft.primary_attribute = ids[1] end)
+            { f.draft.primary_attribute }, function(ids) if f.draft then f.draft.primary_attribute = ids[1] end end)
     end)
     f.acBtn:SetScript("OnClick", function()
+        if not f.draft then return end
         Pick(f, "AC Attribute", "Choose the attribute that governs AC", AttrItems(ns.GetSystem()), 1,
-            { f.draft.ac_attribute }, function(ids) f.draft.ac_attribute = ids[1] end)
+            { f.draft.ac_attribute }, function(ids) if f.draft then f.draft.ac_attribute = ids[1] end end)
     end)
     f.initBtn:SetScript("OnClick", function()
+        if not f.draft then return end
         Pick(f, "Initiative Attribute", "Choose the attribute that governs initiative", AttrItems(ns.GetSystem()), 1,
-            { f.draft.init_attribute }, function(ids) f.draft.init_attribute = ids[1] end)
+            { f.draft.init_attribute }, function(ids) if f.draft then f.draft.init_attribute = ids[1] end end)
     end)
     f.skillsBtn:SetScript("OnClick", function()
-        Pick(f, "Accomplished Skills", "Mark accomplished skills", ListItems(ns.GetSystem().skills), #ns.GetSystem().skills,
-            f.draft.accomplished_skills, function(ids) f.draft.accomplished_skills = ids end)
+        if not f.draft then return end
+        local skills = ns.GetSystem().skills or {}
+        Pick(f, "Accomplished Skills", "Mark accomplished skills", ListItems(skills), #skills,
+            f.draft.accomplished_skills, function(ids) if f.draft then f.draft.accomplished_skills = ids end end)
     end)
     f.weaponsBtn:SetScript("OnClick", function()
-        Pick(f, "Accomplished Weapons", "Mark accomplished weapons", ListItems(ns.GetSystem().weapons), #ns.GetSystem().weapons,
-            f.draft.accomplished_weapons, function(ids) f.draft.accomplished_weapons = ids end)
+        if not f.draft then return end
+        local weapons = ns.GetSystem().weapons or {}
+        Pick(f, "Accomplished Weapons", "Mark accomplished weapons", ListItems(weapons), #weapons,
+            f.draft.accomplished_weapons, function(ids) if f.draft then f.draft.accomplished_weapons = ids end end)
     end)
     f.savesBtn:SetScript("OnClick", function()
+        if not f.draft then return end
         Pick(f, "Accomplished Saves", "Primary save is auto; choose one more", SaveItems(ns.GetSystem(), f.draft.primary_attribute),
-            #ns.GetSystem().attributes, f.draft.accomplished_saves, function(ids) f.draft.accomplished_saves = ids end)
+            #(ns.GetSystem().attributes or {}), f.draft.accomplished_saves,
+            function(ids) if f.draft then f.draft.accomplished_saves = ids end end)
     end)
 
     return f
@@ -258,6 +278,7 @@ Refresh = function(self)
     ns.UI.HideEmpty(self)
     local system = ns.GetSystem()
     local d = self.draft
+    if not d then return end
     self.stepLabel:SetText("Step " .. self.step .. " of " .. #STEPS .. ":  " .. STEPS[self.step])
     for i, p in ipairs(self.pages) do p:SetShown(i == self.step) end
     self.backBtn:SetEnabled(self.step > 1)
@@ -270,10 +291,13 @@ Refresh = function(self)
     local sheet = ns.CharacterSheet.Compute(d, system)
     local modById = {}
     for _, a in ipairs(sheet.attributes) do modById[a.id] = a end
-    for _, attr in ipairs(system.attributes) do
-        self.steppers[attr.id]:SetText(tostring((d.attributes or {})[attr.id] or 1))
-        local a = modById[attr.id]
-        self.modText[attr.id]:SetText(a and Signed(a.modifier) or "")
+    for _, attr in ipairs(system.attributes or {}) do
+        local st = self.steppers[attr.id]
+        if st then
+            st:SetText(tostring((d.attributes or {})[attr.id] or 1))
+            local a = modById[attr.id]
+            self.modText[attr.id]:SetText(a and Signed(a.modifier) or "")
+        end
     end
     local used, avail = CE.AttributePoints(d, system)
     local pc = (used == avail) and UI.GREEN or (used > avail and UI.RED or UI.HEAD)
@@ -317,8 +341,27 @@ Refresh = function(self)
     end
 end
 
+-- The wizard's attribute page is laid out from the system loaded at build
+-- time; rebuild the frame when the attribute set changes (the draft is not
+-- carried over - it belonged to the old system).
+local function AttrSignature()
+    local ids = {}
+    for _, a in ipairs(ns.GetSystem().attributes or {}) do ids[#ids + 1] = tostring(a.id) end
+    return table.concat(ids, "\31")
+end
+
 local function GetFrame()
-    if not WizardUI.frame then WizardUI.frame = BuildFrame() end
+    local sig = AttrSignature()
+    local f = WizardUI.frame
+    if f and f.attrSignature ~= sig then
+        f:Hide()
+        f:SetParent(nil)
+        WizardUI.frame = nil
+    end
+    if not WizardUI.frame then
+        WizardUI.frame = BuildFrame()
+        WizardUI.frame.attrSignature = sig
+    end
     return WizardUI.frame
 end
 
@@ -334,6 +377,19 @@ function WizardUI.Open()
     f.step = 1
     Refresh(f)
     f:Show()
+end
+
+-- Refreshes the wizard when it is open. If the system changed mid-creation the
+-- frame was rebuilt and the old draft dropped, so restart with a fresh one.
+function WizardUI.RefreshIfShown()
+    if not (WizardUI.frame and WizardUI.frame:IsShown()) then return end
+    local f = GetFrame()
+    if f.draft then
+        Refresh(f)
+        f:Show()
+    else
+        WizardUI.Open()
+    end
 end
 
 ns.RegisterModule("new", WizardUI.Open)

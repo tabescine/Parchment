@@ -42,6 +42,7 @@ local function MakeEditBox(parent, width, numeric)
     local e = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
     e:SetSize(width, 20)
     e:SetAutoFocus(false)
+    e:SetScript("OnEscapePressed", e.ClearFocus)
     if numeric then e:SetNumeric(true) end
     return e
 end
@@ -300,6 +301,8 @@ InitiativeUI.RefreshIfShown = RefreshIfShown
 -- initiative submissions, adds them, and rebroadcasts.
 if ns.Comm then
     ns.Comm.On("INIT", function(state)
+        -- The DM's own state is the source of truth; ignore other broadcasts.
+        if ns.Comm.IsDM() then return end
         if type(state) == "table" then
             IT.SetState(state)
             RefreshIfShown()
@@ -307,9 +310,10 @@ if ns.Comm then
     end)
     ns.Comm.On("INITSUBMIT", function(payload, sender)
         if not ns.Comm.IsDM() then return end
-        if type(payload) == "table" and payload.name then
-            IT.Add(payload.name, payload.init or 0, false)
-            ns.Print((sender or "a player") .. " submitted initiative " .. tostring(payload.init) .. ".")
+        if type(payload) ~= "table" or type(payload.name) ~= "string" then return end
+        local init = tonumber(payload.init) or 0
+        if IT.Add(payload.name, init, false) then
+            ns.Print((sender or "a player") .. " submitted initiative " .. init .. ".")
             RefreshIfShown()
             Sync()
         end

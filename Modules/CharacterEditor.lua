@@ -95,13 +95,15 @@ function CE.Races(system)
     return list
 end
 
--- Returns used, available attribute points. used = points spent above the base
--- of 1 per attribute; available = point-buy total + trait attribute_points +
--- level milestone attribute points up to the current level.
+-- Returns used, available attribute points. used = points spent above the
+-- system's point-buy base per attribute (matching NewBlank's seeding);
+-- available = point-buy total + trait attribute_points + level milestone
+-- attribute points up to the current level.
 function CE.AttributePoints(char, system)
+    local base = (system.point_buy and (system.point_buy.base or system.point_buy.min)) or 1
     local used = 0
     for _, attr in ipairs(system.attributes or {}) do
-        used = used + (((char.attributes or {})[attr.id] or 1) - 1)
+        used = used + (((char.attributes or {})[attr.id] or base) - base)
     end
     local available = (system.point_buy and system.point_buy.total) or 33
     for _, t in ipairs(SelectedTraits(char, system)) do
@@ -225,14 +227,17 @@ function CE.Warnings(char, system)
     elseif used < avail then
         w[#w + 1] = string.format("%d of %d attribute points spent (%d unspent).", used, avail, avail - used)
     end
-    -- The 1-10 cap applies only at creation; afterwards level points and traits
-    -- can push base attributes higher (toward 11/12 perk requirements). Only
-    -- flag values outside the modifier table's range.
+    -- The creation cap applies only at creation; afterwards level points and
+    -- traits can push base attributes higher (toward late perk requirements).
+    -- Only flag values outside the system's floor / modifier-table range.
+    local floor = (system.point_buy and system.point_buy.min) or 1
     local cap = #(system.modifier_table or {})
     for _, attr in ipairs(system.attributes or {}) do
-        local v = (char.attributes or {})[attr.id] or 1
-        if v < 1 or (cap > 0 and v > cap) then
-            w[#w + 1] = attr.name .. " is out of the 1-" .. cap .. " range."
+        local v = (char.attributes or {})[attr.id] or floor
+        if v < floor then
+            w[#w + 1] = attr.name .. " is below the minimum of " .. floor .. "."
+        elseif cap > 0 and v > cap then
+            w[#w + 1] = attr.name .. " is above the maximum of " .. cap .. "."
         end
     end
 

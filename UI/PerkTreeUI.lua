@@ -77,7 +77,7 @@ local function ShowTooltip(self, node)
         if perk.level then GameTooltip:AddLine("Homebrew - gained at level " .. perk.level, 0.9, 0.9, 0.9) end
         GameTooltip:AddLine("Taken", STATUS.taken.border[1], STATUS.taken.border[2], STATUS.taken.border[3])
         GameTooltip:AddLine(" ")
-        GameTooltip:AddLine(perk.description, 0.82, 0.80, 0.74, true)
+        GameTooltip:AddLine(perk.description or "", 0.82, 0.80, 0.74, true)
         GameTooltip:Show()
         return
     end
@@ -108,7 +108,7 @@ local function ShowTooltip(self, node)
     local sc = STATUS[status]
     GameTooltip:AddLine(sc.label, sc.border[1], sc.border[2], sc.border[3])
     GameTooltip:AddLine(" ")
-    GameTooltip:AddLine(perk.description, 0.82, 0.80, 0.74, true)
+    GameTooltip:AddLine(perk.description or "", 0.82, 0.80, 0.74, true)
     GameTooltip:Show()
 end
 
@@ -336,8 +336,9 @@ Refresh = function(self)
         self.sphereLabel:SetText("")
         self.points:SetText("")
         blank()
-        ns.UI.Empty(self, "No character yet.\n\nCreate one to choose perks.",
-            "Create a character", function() ns.OpenModule("new") end)
+        ns.UI.Empty(self, "No character yet.\n\nCreate one to choose perks, or import an existing one.",
+            "Create a character", function() ns.OpenModule("new") end,
+            "Import a character", function() ns.OpenModule("import") end)
         return
     end
     ns.UI.HideEmpty(self)
