@@ -1,12 +1,33 @@
-# Parchment Sample - neutral demo system (NOT a real ruleset; public domain).
-# Demonstrates the TOML system format. Import with /pmt import or convert with
-# parchment_converter.py. JSON (sample.system.json) is often easier for deeply
-# nested systems; both import identically.
+# =============================================================================
+# Parchment Sample - annotated demo system (NOT a real ruleset; public domain).
+#
+# This file doubles as the reference for Parchment's system format: every
+# feature the addon understands appears here at least once, with a comment.
+# Copy it, gut the contents, and fill in your own ruleset.
+#
+# Import it in-game with /pmt import (paste the whole file - comments are
+# fine), or convert it to a SavedVariables file with parchment_converter.py.
+# sample.system.json is the same system in JSON (JSON allows no comments, so
+# this file is the documented one).
+#
+# Only `system_name` and `attributes` are required. Everything else is
+# optional; leave a section out and the addon falls back to a sane default or
+# simply skips the feature. /pmt validate reports problems after import.
+# =============================================================================
 
-system_name = "Parchment Sample"
-version = "1.0"
+system_name = "Parchment Sample"   # required; also names the entry in /pmt systems
+version = "1.0"                    # free-form, for your own bookkeeping
+max_level = 10                     # level-up cap in the editor (default 30)
+
+# Damage types are only used by perks with a damage_type choice (see
+# elemental_brand below) - the chosen value is recorded and displayed.
 damage_types = ["slashing", "piercing", "blunt", "fire", "frost", "arcane"]
 
+# -----------------------------------------------------------------------------
+# modifier_table: attribute score -> modifier. THE core lookup: position N
+# holds the modifier for a final attribute value of N (values are clamped into
+# the table's range). This replaces any hard-coded "(score - 10) / 2" formula.
+# -----------------------------------------------------------------------------
 [modifier_table]
 1 = -3
 2 = -2
@@ -21,28 +42,56 @@ damage_types = ["slashing", "piercing", "blunt", "fire", "frost", "arcane"]
 11 = 2
 12 = 3
 
+# -----------------------------------------------------------------------------
+# point_buy: the character editor's attribute budget.
+#   total - points to spend at creation (spending 1 point = +1 attribute)
+#   base  - every attribute starts here (spent points are measured above it)
+#   min/max - per-attribute bounds enforced by the editor at creation
+# -----------------------------------------------------------------------------
 [point_buy]
 total = 15
 base = 1
 min = 1
 max = 8
 
-# Suggested accomplished-proficiency counts; a target may scale by an attribute.
+# -----------------------------------------------------------------------------
+# accomplish_targets: suggested counts of accomplished ("proficient") skills /
+# weapons / saves. Soft guidance only - the editor shows warnings, it never
+# blocks. Each target may be written three ways (all three shown here):
+#   plain number                       - fixed count
+#   { base, attribute }                - base + that attribute's modifier (min 0)
+#   { base, attribute_max = [ids] }    - base + the highest of those modifiers
+# Omit the whole table for defaults (skills 3, weapons 5, saves 2).
+# -----------------------------------------------------------------------------
 [accomplish_targets]
 skills = { base = 3, attribute = "wits" }
 weapons = { base = 5, attribute_max = ["might", "wits"] }
-saves = { base = 2 }
+saves = 2
 
-# Which attributes drive the derived stats (all optional; unset = no coupling).
+# -----------------------------------------------------------------------------
+# derived_stats: which attributes drive the computed stats. Parchment never
+# assumes an attribute exists - every coupling is declared here. Any field you
+# leave out contributes nothing (or uses the noted default).
+# -----------------------------------------------------------------------------
 [derived_stats]
-hit_die_attribute = "might"
-hp_attribute = "might"
-retroactive_hp = true            # changing Might re-grants HP for past levels (opt-in)
-spell_attributes = ["spirit"]
-mana_attribute = "spirit"
-mana_multiplier = 2
-movement_attribute = "wits"
+hit_die_attribute = "might"     # this attribute's modifier picks the hit-die band
+hp_attribute = "might"          # modifier added to each level's HP roll (editor)
+retroactive_hp = true           # raising hp_attribute re-grants HP for past levels
+spell_attributes = ["spirit"]   # primary attribute in this list => spellcaster
+mana_attribute = "spirit"       # mana source for non-casters (omit for none)
+mana_multiplier = 2             # max mana = multiplier x spell-source modifier
+movement_attribute = "wits"     # each positive modifier point adds movement_per_step
+movement_base = 12              # default 12
+movement_per_step = 0.5         # default 0.5
+ac_base = 10                    # AC = ac_base + AC-attribute modifier + effects
+save_dc_base = 10               # save DC = base + primary modifier + accomplishment
+actions_base = 2                # actions per turn before level/perk bonuses
 
+# -----------------------------------------------------------------------------
+# accomplishment_table: character level -> accomplishment bonus (the
+# proficiency-style bonus added to accomplished skills/saves/weapons and to
+# the save DC). Position N = the bonus at level N.
+# -----------------------------------------------------------------------------
 [accomplishment_table]
 1 = 1
 2 = 1
@@ -55,9 +104,22 @@ movement_attribute = "wits"
 9 = 5
 10 = 5
 
+# -----------------------------------------------------------------------------
+# level_bonuses: milestone grants, keyed by the level they unlock at. Two
+# kinds are understood: `actions` (extra actions on the sheet) and
+# `attribute_points` (extra points in the editor's budget).
+# -----------------------------------------------------------------------------
+[level_bonuses.3]
+attribute_points = 1
+
 [level_bonuses.5]
 actions = 1
 
+# -----------------------------------------------------------------------------
+# hit_dice_bands: hit die by the hit_die_attribute's modifier. Bands are
+# checked in order; the first with modifier <= max_mod wins. A modifier above
+# every band falls back to d4, so cover your top end.
+# -----------------------------------------------------------------------------
 [[hit_dice_bands]]
 max_mod = -1
 die = "d6"
@@ -70,6 +132,11 @@ die = "d8"
 max_mod = 3
 die = "d10"
 
+# -----------------------------------------------------------------------------
+# attributes (required): the stats themselves. `id` is what every other record
+# references; `name` is what the UI shows. Saving throws are generated
+# automatically, one per attribute.
+# -----------------------------------------------------------------------------
 [[attributes]]
 id = "might"
 name = "Might"
@@ -82,6 +149,10 @@ name = "Wits"
 id = "spirit"
 name = "Spirit"
 
+# -----------------------------------------------------------------------------
+# skills: each is governed by one attribute (its modifier is the skill's base).
+# Accomplished skills add the accomplishment bonus on top.
+# -----------------------------------------------------------------------------
 [[skills]]
 id = "athletics"
 name = "Athletics"
@@ -112,33 +183,59 @@ id = "resolve"
 name = "Resolve"
 attribute = "spirit"
 
+# -----------------------------------------------------------------------------
+# weapons: optional. A character only sees weapons they are accomplished with.
+#   attribute  - governs the attack roll (modifier + accomplishment); may be a
+#                LIST for finesse-style "use either" weapons (best modifier wins)
+#   damage     - free-form display string
+#   versatile  - optional two-handed damage, shown in the hover tooltip
+#   properties - free-form display tags, shown in the hover tooltip
+# -----------------------------------------------------------------------------
 [[weapons]]
 id = "blade"
 name = "Blade"
 attribute = "might"
+damage = "1d8"
+properties = ["versatile"]
+versatile = "1d10"
 
 [[weapons]]
 id = "bow"
 name = "Bow"
 attribute = "wits"
+damage = "1d6"
+properties = ["ranged", "two-handed"]
 
 [[weapons]]
 id = "staff"
 name = "Staff"
 attribute = "spirit"
+damage = "1d6"
 
-# attribute may be a list: the best of the named modifiers governs the
-# attack roll (finesse-style "use either" weapons).
+# attribute as a list: attack rolls use the better of Might or Wits.
 [[weapons]]
 id = "dirk"
 name = "Dirk"
-attribute = [ "might", "wits" ]
+attribute = ["might", "wits"]
+damage = "1d4"
+properties = ["light", "thrown"]
 
+# -----------------------------------------------------------------------------
+# racial_traits / origin_traits: a character picks one racial trait and any
+# number of origin traits. Mechanics go in `bonuses` and `penalties` - both
+# are lists of EFFECTS (the same vocabulary perks use, documented at the
+# bottom of this file). Penalties are ordinary effects with NEGATIVE values,
+# kept in their own list so the UI can present them as drawbacks.
+#
+# allowed_races: which races (beyond the always-available "human") may take
+# the trait; these names also populate the editor's race list. The special
+# token "all_but_human" is understood by the editor.
+# -----------------------------------------------------------------------------
 [[racial_traits]]
 id = "human"
 name = "Human"
 description = "Versatile folk. +1 Wits."
-[[racial_traits.effects]]
+[[racial_traits.bonuses]]
 type = "attribute"
 id = "wits"
 value = 1
@@ -146,65 +243,276 @@ value = 1
 [[racial_traits]]
 id = "orc"
 name = "Orc"
-description = "Hardy and strong. +1 Might."
-[[racial_traits.effects]]
+description = "Hardy and strong. +1 Might, but -1 Persuasion."
+allowed_races = ["orc"]
+[[racial_traits.bonuses]]
 type = "attribute"
 id = "might"
 value = 1
+[[racial_traits.penalties]]
+type = "skill"          # penalties use the same effect shapes ...
+skill = "persuasion"
+value = -1              # ... with negative values
 
 [[origin_traits]]
 id = "scholarly"
 name = "Scholarly Upbringing"
-description = "Two extra points to spend at creation."
-[[origin_traits.effects]]
-type = "attribute_points"
+description = "Two extra attribute points to spend at creation."
+[[origin_traits.bonuses]]
+type = "attribute_points"   # editor-budget effect; not part of the sheet math
 value = 2
 
 [[origin_traits]]
 id = "hardened"
 name = "Hardened"
-description = "A life of toil. +1 Endurance."
-[[origin_traits.effects]]
+description = "A life of toil. +1 Endurance and +2 max HP."
+[[origin_traits.bonuses]]
 type = "skill"
 skill = "endurance"
 value = 1
+[[origin_traits.bonuses]]
+type = "max_hp"
+value = 2
 
+[[origin_traits]]
+id = "fleet"
+name = "Fleet of Foot"
+description = "+1 movement, +1 Spirit saving throws."
+[[origin_traits.bonuses]]
+type = "movement"
+value = 1
+[[origin_traits.bonuses]]
+type = "save"           # save effects target an ATTRIBUTE id
+id = "spirit"
+value = 1
+
+# -----------------------------------------------------------------------------
+# perk_trees ("spheres"): each tree has perks plus an optional visual layout.
+#   governing_attribute - default attribute for perks' attribute requirements
+#   layout.rows         - top-to-bottom rows of perk ids for the viewer
+#   layout.connect      - "lattice" draws prerequisite lines between rows
+#
+# Perk fields (all optional except id/name):
+#   description       - hover text
+#   effects           - effect list folded into the sheet (vocabulary below)
+#   attribute_req     - minimum FINAL value of the governing attribute
+#   req_attribute     - check a different attribute than the tree's governing one
+#   level_req         - number (rank 1) or list (one entry per rank)
+#   prerequisites     - ALL of these perk ids must be taken (any tree)
+#   prerequisites_any - at least ONE of these must be taken
+#   exclusive_with    - cannot be taken alongside these (works cross-tree)
+#   max_ranks         - how often the perk can be taken (default 1)
+#   repeatable        - marks a multi-rank perk; rank = times its id appears
+#                       in char.perks; choices scale with rank
+#   color             - "red" or "black": tints the node background in the
+#                       viewer (a tier identity, separate from status colours)
+#   choice            - ask the player to pick targets when taken:
+#       kind   - "skill", "weapon" or "damage_type"
+#       count  - how many to pick (default 1)
+#       prompt - picker title
+#       apply  - what the pick does:
+#                  "accomplished"           target becomes accomplished
+#                  "double_accomplishment"  skill gains the bonus a second time
+#                  "skill_bonus:N"          flat +N on the chosen skill
+#                  (omit for a recorded, display-only choice - the only option
+#                   for kind = "damage_type")
+# -----------------------------------------------------------------------------
 [[perk_trees]]
 id = "wanderer"
 name = "Path of the Wanderer"
 governing_attribute = "wits"
 
+[perk_trees.layout]
+connect = "lattice"          # draw prerequisite connector lines
 [[perk_trees.layout.rows]]
 perks = ["keen_eye", "scholar"]
-
 [[perk_trees.layout.rows]]
-perks = ["toughened"]
+perks = ["quick_reflexes", "jack_of_all_trades"]
+[[perk_trees.layout.rows]]
+perks = ["pathfinder"]
 
+# The simplest perk: a flat effect, no requirements.
 [[perk_trees.perks]]
 id = "keen_eye"
 name = "Keen Eye"
-description = "Your senses sharpen. +1 to Perception."
+description = "Your senses sharpen. +1 Perception."
 [[perk_trees.perks.effects]]
 type = "skill"
 skill = "perception"
 value = 1
 
+# A skill choice that doubles the accomplishment bonus on the chosen skill.
 [[perk_trees.perks]]
 id = "scholar"
 name = "Scholar"
-description = "Choose a skill; it gains an extra accomplishment bonus."
+description = "Choose a skill; it gains the accomplishment bonus a second time."
 [perk_trees.perks.choice]
 kind = "skill"
 count = 1
 apply = "double_accomplishment"
 prompt = "Choose a skill to master."
 
+# attribute_req checks the tree's governing attribute (Wits) by default.
 [[perk_trees.perks]]
-id = "toughened"
-name = "Toughened"
-description = "Hard roads make hard travellers. +1 to Endurance."
+id = "quick_reflexes"
+name = "Quick Reflexes"
+description = "Requires Wits 6 and Keen Eye. +1 initiative."
+attribute_req = 6
 prerequisites = ["keen_eye"]
 [[perk_trees.perks.effects]]
-type = "skill"
-skill = "endurance"
+type = "initiative"
 value = 1
+
+# Cross-tree exclusivity: this perk and Vanguard's "specialist" lock each
+# other out. Also gated by character level.
+[[perk_trees.perks]]
+id = "jack_of_all_trades"
+name = "Jack of All Trades"
+description = "+1 to every skill. A generalist's path - excludes Specialist."
+level_req = 3
+exclusive_with = ["specialist"]
+[[perk_trees.perks.effects]]
+type = "all_skills"
+value = 1
+
+# prerequisites_any: EITHER of the row-2 perks unlocks this. The choice makes
+# two skills accomplished outright.
+[[perk_trees.perks]]
+id = "pathfinder"
+name = "Pathfinder"
+description = "Choose two skills; you become accomplished in them."
+prerequisites_any = ["quick_reflexes", "jack_of_all_trades"]
+[perk_trees.perks.choice]
+kind = "skill"
+count = 2
+apply = "accomplished"
+prompt = "Choose two skills to become accomplished in."
+
+# req_attribute overrides the governing attribute: this Wanderer perk is
+# gated by Spirit instead of Wits. save_dc / max_mana effects demoed here.
+[[perk_trees.perks]]
+id = "arcane_focus"
+name = "Arcane Focus"
+description = "Requires Spirit 7. +1 save DC and +2 max mana."
+req_attribute = "spirit"
+attribute_req = 7
+[[perk_trees.perks.effects]]
+type = "save_dc"
+value = 1
+[[perk_trees.perks.effects]]
+type = "max_mana"
+value = 2
+
+[[perk_trees]]
+id = "vanguard"
+name = "Path of the Vanguard"
+governing_attribute = "might"
+
+[[perk_trees.layout.rows]]
+perks = ["weapon_training", "toughness"]
+[[perk_trees.layout.rows]]
+perks = ["specialist", "battle_surge"]
+[[perk_trees.layout.rows]]
+perks = ["elemental_brand", "paragon"]
+
+# A perk may carry effects AND a choice: +1 to all attack rolls, plus the
+# chosen weapon becomes accomplished.
+[[perk_trees.perks]]
+id = "weapon_training"
+name = "Weapon Training"
+description = "+1 to attack rolls; choose a weapon to become accomplished with."
+[[perk_trees.perks.effects]]
+type = "attack_rolls"
+value = 1
+[perk_trees.perks.choice]
+kind = "weapon"
+count = 1
+apply = "accomplished"
+prompt = "Choose a weapon."
+
+# A repeatable (multi-rank) perk: its effects apply once PER RANK. level_req
+# as a list gates each rank separately (rank 1 at level 1, rank 2 at 3, ...).
+[[perk_trees.perks]]
+id = "toughness"
+name = "Toughness"
+description = "+2 max HP per rank. Up to three ranks."
+color = "red"            # tier tint in the viewer
+repeatable = true
+max_ranks = 3
+level_req = [1, 3, 5]
+[[perk_trees.perks.effects]]
+type = "max_hp"
+value = 2
+
+# The other half of the cross-tree exclusivity, with a flat skill bonus
+# choice ("skill_bonus:N").
+[[perk_trees.perks]]
+id = "specialist"
+name = "Specialist"
+description = "Choose a skill for a flat +2. A focused path - excludes Jack of All Trades."
+exclusive_with = ["jack_of_all_trades"]
+[perk_trees.perks.choice]
+kind = "skill"
+count = 1
+apply = "skill_bonus:2"
+prompt = "Choose a skill to specialise in."
+
+# ac / actions effects; prerequisites may point at perks in ANY tree.
+[[perk_trees.perks]]
+id = "battle_surge"
+name = "Battle Surge"
+description = "Requires Weapon Training and level 5. +1 AC and +1 action."
+level_req = 5
+prerequisites = ["weapon_training"]
+[[perk_trees.perks.effects]]
+type = "ac"
+value = 1
+[[perk_trees.perks.effects]]
+type = "actions"
+value = 1
+
+# A damage_type choice has no `apply` - the pick is recorded and shown on the
+# perk, for rules the table adjudicates ("your strikes deal fire damage").
+[[perk_trees.perks]]
+id = "elemental_brand"
+name = "Elemental Brand"
+description = "Choose a damage type; your weapon strikes can deal it."
+prerequisites = ["weapon_training"]
+[perk_trees.perks.choice]
+kind = "damage_type"
+count = 1
+prompt = "Choose your brand's damage type."
+
+# all_attributes: +1 to every attribute (and so, potentially, every modifier).
+[[perk_trees.perks]]
+id = "paragon"
+name = "Paragon"
+description = "Requires Battle Surge and level 9. +1 to all attributes."
+color = "black"          # tier tint in the viewer
+level_req = 9
+prerequisites = ["battle_surge"]
+[[perk_trees.perks.effects]]
+type = "all_attributes"
+value = 1
+
+# =============================================================================
+# EFFECT VOCABULARY (for trait bonuses/penalties, perk effects, and a
+# character's custom_perks effects). Every effect is { type, value, ... }:
+#
+#   { type = "attribute",  id = <attr>,  value = N }   +N to that attribute
+#   { type = "all_attributes",           value = N }   +N to every attribute
+#   { type = "skill", skill = <skill>,   value = N }   +N to that skill
+#   { type = "skill", skill = <skill>, add_modifier = <attr> }
+#                                  adds a COPY of that attribute's modifier to
+#                                  the skill ("twice your Wits modifier on Lore")
+#   { type = "all_skills",               value = N }   +N to every skill
+#   { type = "save",       id = <attr>,  value = N }   +N to that saving throw
+#   { type = "save",       id = <attr>, add_modifier = <attr> }   as for skills
+#   { type = "ac" | "attack_rolls" | "initiative" | "movement" | "actions"
+#          | "save_dc" | "max_hp" | "max_mana",  value = N }
+#   { type = "attribute_points", value = N }   extra editor budget (not sheet math)
+#
+# Any OTHER type (e.g. "damage_reduction") is informational: validated,
+# displayed with the perk/trait, but never folded into a total - by design,
+# situational rules stay in the players' hands.
+# =============================================================================

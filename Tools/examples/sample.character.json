@@ -1,32 +1,81 @@
 {
+  "_note": "Parchment Sample character in JSON. JSON allows no comments - see sample.character.toml for the fully annotated reference; both import identically.",
+  "_key": "wren",
   "name": "Wren Ashdown",
   "player": "example",
   "race": "human",
-  "level": 3,
+  "level": 5,
   "quote": "The map is never the territory, but it keeps you from walking off a cliff.",
-
-  "attributes": { "might": 5, "wits": 8, "spirit": 6 },
-
-  "racial_trait": "human",
-  "origin_traits": ["scholarly"],
-
+  "notes": "A demo character for the Parchment Sample system. Not part of any real ruleset.",
   "primary_attribute": "wits",
   "ac_attribute": "wits",
   "init_attribute": "wits",
-
-  "max_hp": 22,
-  "current_hp": 22,
+  "max_hp": 26,
+  "current_hp": 24,
+  "temp_hp": 2,
   "max_mana": 8,
   "current_mana": 8,
-  "temp_hp": 0,
-
-  "accomplished_skills": ["lore", "perception", "persuasion"],
-  "accomplished_weapons": ["bow"],
-  "accomplished_saves": ["wits"],
-
-  "perks": ["keen_eye", "scholar"],
-  "perk_choices": { "scholar": ["lore"] },
-
-  "custom_perks": [],
-  "notes": "A demo character for the Parchment Sample system. Not part of any real ruleset."
+  "hit_dice": "5d6",
+  "racial_trait": "human",
+  "origin_traits": [
+    "scholarly",
+    "hardened"
+  ],
+  "accomplished_skills": [
+    "lore",
+    "perception",
+    "persuasion"
+  ],
+  "accomplished_weapons": [
+    "bow"
+  ],
+  "accomplished_saves": [
+    "wits"
+  ],
+  "perks": [
+    "keen_eye",
+    "scholar",
+    "toughness",
+    "toughness"
+  ],
+  "attributes": {
+    "might": 5,
+    "wits": 8,
+    "spirit": 6
+  },
+  "perk_choices": {
+    "scholar": [
+      "lore"
+    ]
+  },
+  "custom_perks": [
+    {
+      "id": "trail_sense",
+      "name": "Trail Sense",
+      "description": "Wren reads the land like a ledger. +1 initiative, Lore gains her Wits modifier a second time, and DR 1 while travelling (table rule).",
+      "replaces": "quick_reflexes",
+      "effects": [
+        {
+          "type": "initiative",
+          "value": 1
+        },
+        {
+          "type": "skill",
+          "skill": "lore",
+          "add_modifier": "wits"
+        },
+        {
+          "type": "damage_reduction",
+          "value": 1
+        }
+      ]
+    }
+  ],
+  "attack_lines": [
+    {
+      "name": "Thrown lantern oil",
+      "die": "1d4",
+      "modifier": 1
+    }
+  ]
 }

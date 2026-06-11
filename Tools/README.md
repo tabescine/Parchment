@@ -1,21 +1,69 @@
 # Parchment Tools
 
-Companion tooling for the Parchment addon. These files live inside the addon
-folder for convenience; WoW ignores everything not listed in the `.toc`, so they
+Companion files for the Parchment addon. They live inside the addon folder
+for convenience; WoW ignores everything not listed in the `.toc`, so they
 ship harmlessly alongside the Lua.
 
-## parchment_converter.py
+## examples/
 
-Converts a JSON or TOML system definition or character into a Lua
-SavedVariables file you can drop straight into your WoW account:
+Parchment ships with **no ruleset** - it is a system-agnostic toolkit, and any
+real ruleset belongs to its own author. These files are a small, original,
+public-domain demo system ("Parchment Sample") that exists to document the
+import format and let you try the UI. They are not a playable game.
+
+The examples are deliberately exhaustive: **every feature of the system and
+character formats appears at least once**, and the TOML files annotate each
+one with a comment. To adopt your own ruleset, copy `sample.system.toml`, read
+it top to bottom, and replace the contents.
+
+- `sample.system.toml` - **the annotated format reference.** 3 attributes
+  (Might/Wits/Spirit), modifier table, point-buy, accomplish targets (all
+  three spec forms), a full `derived_stats` block, accomplishment table,
+  level bonuses, hit-dice bands, skills, weapons (incl. a finesse-style
+  attribute list), traits with bonuses *and* penalties, and two perk trees
+  exercising every perk feature: effects, requirements (attribute / level /
+  prerequisites / any-of / cross-tree exclusivity), multi-rank perks, every
+  `choice` variant, tier colours, and a lattice layout. The effect vocabulary
+  is documented in the file's footer.
+- `sample.character.toml` - **the annotated character reference** (Wren
+  Ashdown, level 5): trait/perk selections, perk choices, accomplished
+  skills/weapons/saves, a homebrew perk demonstrating `effects`,
+  `add_modifier`, `replaces`, and informational effect types, plus
+  `attack_lines` and the `_key` field a single-character in-game import
+  requires.
+- `sample.system.json` / `sample.character.json` - the same data in JSON
+  (generated from the TOML; JSON allows no comments, so the TOML files are
+  the documented ones). Both formats import identically.
+
+**Getting data into the game: use `/pmt import`.** Paste the whole file -
+comments included - system first, then the character. The dialog
+auto-detects JSON/TOML/Lua, validates against the schema, and only commits
+on success; `/pmt export` produces the same formats back. No external
+tooling is needed.
+
+## parchment_converter.py (optional)
+
+You probably don't need this: `/pmt import` covers the normal workflow
+entirely. The converter writes Lua SavedVariables files directly, which is
+useful in exactly two situations:
+
+- **File-based workflows** - you keep your ruleset in version control and
+  want to deploy edits straight into the game's data files without an
+  in-game paste each iteration.
+- **Recovery** - a SavedVariables file is corrupted badly enough that the
+  addon (and so its import dialog) cannot help; the converter rebuilds a
+  clean one offline from your JSON/TOML source.
+
+It converts a JSON or TOML system definition or character into a Lua
+SavedVariables file you drop into your WoW account:
 
 ```
 WTF/Account/<ACCOUNT>/SavedVariables/ParchmentSystemDB.lua
 WTF/Account/<ACCOUNT>/SavedVariables/ParchmentCharDB.lua
 ```
 
-Requires Python 3 (TOML input needs Python 3.11+ for the built-in `tomllib`, or
-`pip install toml`). JSON input needs nothing extra.
+Requires Python 3 (TOML input needs Python 3.11+ for the built-in `tomllib`,
+or `pip install toml`). JSON input needs nothing extra.
 
 ### Usage
 
@@ -29,6 +77,9 @@ python parchment_converter.py examples/sample.character.toml
 
 # Override output path / key / variable name
 python parchment_converter.py examples/sample.character.json -o ParchmentCharDB.lua -k "Wren-Stormrage"
+
+# --var overrides the Lua variable name in the output (rarely needed)
+python parchment_converter.py examples/sample.system.json --var MySystemDB
 ```
 
 Type is auto-detected (a file with `system_name`/`perk_trees` is a system; one
@@ -47,27 +98,7 @@ with `name`/`attributes` is a character). Force it with `-t system|character`.
 
 1. Edit a file under `examples/` (or copy one as a starting point).
 2. Run the converter to produce the `.lua` file.
-3. Quit WoW (SavedVariables are only read at launch), drop the `.lua` into the
+3. Quit WoW first (SavedVariables are read at launch and written on logout -
+   the game would overwrite your file), drop the `.lua` into the
    `SavedVariables/` folder above, and start the game.
 4. In game, `/pmt validate` confirms the data loaded and references resolve.
-
-## examples/
-
-Parchment ships with **no ruleset** - it is a system-agnostic toolkit, and any
-real ruleset belongs to its own author. These files are a small, original,
-public-domain demo system ("Parchment Sample") that exists only to document the
-import format and let you try the UI. They are not a playable game.
-
-- `sample.system.json` - the demo system: 3 attributes (Might/Wits/Spirit), a
-  modifier table, point-buy, hit-dice bands, six skills, three weapons, a couple
-  of racial/origin traits, one short perk tree (with a passive `effects` perk and
-  a `choice` perk), a `derived_stats` block declaring which attributes drive the
-  hit die, mana, and movement (Might/Spirit/Wits respectively), and an
-  `accomplish_targets` block whose targets scale by attribute (e.g. skills =
-  `{ base = 3, attribute = "wits" }`).
-- `sample.system.toml` - the same system in TOML (hand-editable, commented).
-- `sample.character.json` / `sample.character.toml` - a level-3 demo character
-  (Wren Ashdown) built for that system, in both formats.
-
-To try it: `/pmt import` in game and paste either system file, then paste a
-character file. (Both formats import identically.)

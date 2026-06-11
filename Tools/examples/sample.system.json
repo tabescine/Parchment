@@ -1,19 +1,15 @@
 {
+  "_note": "Parchment Sample system in JSON. JSON allows no comments - see sample.system.toml for the fully annotated reference; both import identically.",
   "system_name": "Parchment Sample",
   "version": "1.0",
-  "attributes": [
-    {
-      "id": "might",
-      "name": "Might"
-    },
-    {
-      "id": "wits",
-      "name": "Wits"
-    },
-    {
-      "id": "spirit",
-      "name": "Spirit"
-    }
+  "max_level": 10,
+  "damage_types": [
+    "slashing",
+    "piercing",
+    "blunt",
+    "fire",
+    "frost",
+    "arcane"
   ],
   "modifier_table": {
     "1": -3,
@@ -47,9 +43,7 @@
         "wits"
       ]
     },
-    "saves": {
-      "base": 2
-    }
+    "saves": 2
   },
   "derived_stats": {
     "hit_die_attribute": "might",
@@ -60,7 +54,32 @@
     ],
     "mana_attribute": "spirit",
     "mana_multiplier": 2,
-    "movement_attribute": "wits"
+    "movement_attribute": "wits",
+    "movement_base": 12,
+    "movement_per_step": 0.5,
+    "ac_base": 10,
+    "save_dc_base": 10,
+    "actions_base": 2
+  },
+  "accomplishment_table": {
+    "1": 1,
+    "2": 1,
+    "3": 2,
+    "4": 2,
+    "5": 3,
+    "6": 3,
+    "7": 4,
+    "8": 4,
+    "9": 5,
+    "10": 5
+  },
+  "level_bonuses": {
+    "3": {
+      "attribute_points": 1
+    },
+    "5": {
+      "actions": 1
+    }
   },
   "hit_dice_bands": [
     {
@@ -76,30 +95,19 @@
       "die": "d10"
     }
   ],
-  "accomplishment_table": {
-    "1": 1,
-    "2": 1,
-    "3": 2,
-    "4": 2,
-    "5": 3,
-    "6": 3,
-    "7": 4,
-    "8": 4,
-    "9": 5,
-    "10": 5
-  },
-  "level_bonuses": {
-    "5": {
-      "actions": 1
+  "attributes": [
+    {
+      "id": "might",
+      "name": "Might"
+    },
+    {
+      "id": "wits",
+      "name": "Wits"
+    },
+    {
+      "id": "spirit",
+      "name": "Spirit"
     }
-  },
-  "damage_types": [
-    "slashing",
-    "piercing",
-    "blunt",
-    "fire",
-    "frost",
-    "arcane"
   ],
   "skills": [
     {
@@ -137,17 +145,28 @@
     {
       "id": "blade",
       "name": "Blade",
-      "attribute": "might"
+      "attribute": "might",
+      "damage": "1d8",
+      "properties": [
+        "versatile"
+      ],
+      "versatile": "1d10"
     },
     {
       "id": "bow",
       "name": "Bow",
-      "attribute": "wits"
+      "attribute": "wits",
+      "damage": "1d6",
+      "properties": [
+        "ranged",
+        "two-handed"
+      ]
     },
     {
       "id": "staff",
       "name": "Staff",
-      "attribute": "spirit"
+      "attribute": "spirit",
+      "damage": "1d6"
     },
     {
       "id": "dirk",
@@ -155,6 +174,11 @@
       "attribute": [
         "might",
         "wits"
+      ],
+      "damage": "1d4",
+      "properties": [
+        "light",
+        "thrown"
       ]
     }
   ],
@@ -163,7 +187,7 @@
       "id": "human",
       "name": "Human",
       "description": "Versatile folk. +1 Wits.",
-      "effects": [
+      "bonuses": [
         {
           "type": "attribute",
           "id": "wits",
@@ -174,12 +198,22 @@
     {
       "id": "orc",
       "name": "Orc",
-      "description": "Hardy and strong. +1 Might.",
-      "effects": [
+      "description": "Hardy and strong. +1 Might, but -1 Persuasion.",
+      "allowed_races": [
+        "orc"
+      ],
+      "bonuses": [
         {
           "type": "attribute",
           "id": "might",
           "value": 1
+        }
+      ],
+      "penalties": [
+        {
+          "type": "skill",
+          "skill": "persuasion",
+          "value": -1
         }
       ]
     }
@@ -188,8 +222,8 @@
     {
       "id": "scholarly",
       "name": "Scholarly Upbringing",
-      "description": "Two extra points to spend at creation.",
-      "effects": [
+      "description": "Two extra attribute points to spend at creation.",
+      "bonuses": [
         {
           "type": "attribute_points",
           "value": 2
@@ -199,11 +233,31 @@
     {
       "id": "hardened",
       "name": "Hardened",
-      "description": "A life of toil. +1 Endurance.",
-      "effects": [
+      "description": "A life of toil. +1 Endurance and +2 max HP.",
+      "bonuses": [
         {
           "type": "skill",
           "skill": "endurance",
+          "value": 1
+        },
+        {
+          "type": "max_hp",
+          "value": 2
+        }
+      ]
+    },
+    {
+      "id": "fleet",
+      "name": "Fleet of Foot",
+      "description": "+1 movement, +1 Spirit saving throws.",
+      "bonuses": [
+        {
+          "type": "movement",
+          "value": 1
+        },
+        {
+          "type": "save",
+          "id": "spirit",
           "value": 1
         }
       ]
@@ -215,6 +269,7 @@
       "name": "Path of the Wanderer",
       "governing_attribute": "wits",
       "layout": {
+        "connect": "lattice",
         "rows": [
           {
             "perks": [
@@ -224,7 +279,13 @@
           },
           {
             "perks": [
-              "toughened"
+              "quick_reflexes",
+              "jack_of_all_trades"
+            ]
+          },
+          {
+            "perks": [
+              "pathfinder"
             ]
           }
         ]
@@ -233,7 +294,7 @@
         {
           "id": "keen_eye",
           "name": "Keen Eye",
-          "description": "Your senses sharpen. +1 to Perception.",
+          "description": "Your senses sharpen. +1 Perception.",
           "effects": [
             {
               "type": "skill",
@@ -245,7 +306,7 @@
         {
           "id": "scholar",
           "name": "Scholar",
-          "description": "Choose a skill; it gains an extra accomplishment bonus.",
+          "description": "Choose a skill; it gains the accomplishment bonus a second time.",
           "choice": {
             "kind": "skill",
             "count": 1,
@@ -254,16 +315,190 @@
           }
         },
         {
-          "id": "toughened",
-          "name": "Toughened",
-          "description": "Hard roads make hard travellers. +1 to Endurance.",
+          "id": "quick_reflexes",
+          "name": "Quick Reflexes",
+          "description": "Requires Wits 6 and Keen Eye. +1 initiative.",
+          "attribute_req": 6,
           "prerequisites": [
             "keen_eye"
           ],
           "effects": [
             {
-              "type": "skill",
-              "skill": "endurance",
+              "type": "initiative",
+              "value": 1
+            }
+          ]
+        },
+        {
+          "id": "jack_of_all_trades",
+          "name": "Jack of All Trades",
+          "description": "+1 to every skill. A generalist's path - excludes Specialist.",
+          "level_req": 3,
+          "exclusive_with": [
+            "specialist"
+          ],
+          "effects": [
+            {
+              "type": "all_skills",
+              "value": 1
+            }
+          ]
+        },
+        {
+          "id": "pathfinder",
+          "name": "Pathfinder",
+          "description": "Choose two skills; you become accomplished in them.",
+          "prerequisites_any": [
+            "quick_reflexes",
+            "jack_of_all_trades"
+          ],
+          "choice": {
+            "kind": "skill",
+            "count": 2,
+            "apply": "accomplished",
+            "prompt": "Choose two skills to become accomplished in."
+          }
+        },
+        {
+          "id": "arcane_focus",
+          "name": "Arcane Focus",
+          "description": "Requires Spirit 7. +1 save DC and +2 max mana.",
+          "req_attribute": "spirit",
+          "attribute_req": 7,
+          "effects": [
+            {
+              "type": "save_dc",
+              "value": 1
+            },
+            {
+              "type": "max_mana",
+              "value": 2
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vanguard",
+      "name": "Path of the Vanguard",
+      "governing_attribute": "might",
+      "layout": {
+        "rows": [
+          {
+            "perks": [
+              "weapon_training",
+              "toughness"
+            ]
+          },
+          {
+            "perks": [
+              "specialist",
+              "battle_surge"
+            ]
+          },
+          {
+            "perks": [
+              "elemental_brand",
+              "paragon"
+            ]
+          }
+        ]
+      },
+      "perks": [
+        {
+          "id": "weapon_training",
+          "name": "Weapon Training",
+          "description": "+1 to attack rolls; choose a weapon to become accomplished with.",
+          "effects": [
+            {
+              "type": "attack_rolls",
+              "value": 1
+            }
+          ],
+          "choice": {
+            "kind": "weapon",
+            "count": 1,
+            "apply": "accomplished",
+            "prompt": "Choose a weapon."
+          }
+        },
+        {
+          "id": "toughness",
+          "name": "Toughness",
+          "description": "+2 max HP per rank. Up to three ranks.",
+          "color": "red",
+          "repeatable": true,
+          "max_ranks": 3,
+          "level_req": [
+            1,
+            3,
+            5
+          ],
+          "effects": [
+            {
+              "type": "max_hp",
+              "value": 2
+            }
+          ]
+        },
+        {
+          "id": "specialist",
+          "name": "Specialist",
+          "description": "Choose a skill for a flat +2. A focused path - excludes Jack of All Trades.",
+          "exclusive_with": [
+            "jack_of_all_trades"
+          ],
+          "choice": {
+            "kind": "skill",
+            "count": 1,
+            "apply": "skill_bonus:2",
+            "prompt": "Choose a skill to specialise in."
+          }
+        },
+        {
+          "id": "battle_surge",
+          "name": "Battle Surge",
+          "description": "Requires Weapon Training and level 5. +1 AC and +1 action.",
+          "level_req": 5,
+          "prerequisites": [
+            "weapon_training"
+          ],
+          "effects": [
+            {
+              "type": "ac",
+              "value": 1
+            },
+            {
+              "type": "actions",
+              "value": 1
+            }
+          ]
+        },
+        {
+          "id": "elemental_brand",
+          "name": "Elemental Brand",
+          "description": "Choose a damage type; your weapon strikes can deal it.",
+          "prerequisites": [
+            "weapon_training"
+          ],
+          "choice": {
+            "kind": "damage_type",
+            "count": 1,
+            "prompt": "Choose your brand's damage type."
+          }
+        },
+        {
+          "id": "paragon",
+          "name": "Paragon",
+          "description": "Requires Battle Surge and level 9. +1 to all attributes.",
+          "color": "black",
+          "level_req": 9,
+          "prerequisites": [
+            "battle_surge"
+          ],
+          "effects": [
+            {
+              "type": "all_attributes",
               "value": 1
             }
           ]

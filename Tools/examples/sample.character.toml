@@ -1,38 +1,105 @@
-# Parchment Sample - example character (neutral demo, not a real ruleset).
-# Import with /pmt import, or convert with parchment_converter.py.
+# =============================================================================
+# Parchment Sample - annotated example character (for sample.system.toml).
+#
+# Like the system file, this doubles as the reference for the character
+# format: every field the addon reads appears here with a comment. Import it
+# AFTER the system with /pmt import (paste the whole file), or convert it with
+# parchment_converter.py. sample.character.json is the same character in JSON.
+#
+# Required fields: name, level, attributes - plus _key when importing a single
+# character in-game (it becomes the character's slot in the roster; exports
+# add it automatically). Everything else is optional.
+#
+# TOML note: keep these top-level keys ABOVE the first [section] header -
+# anything below a header belongs to that section.
+# =============================================================================
+
+_key = "wren"        # roster slot for single-character import; never stored
 
 name = "Wren Ashdown"
-player = "example"
-race = "human"
-level = 3
+player = "example"   # the player behind the character (free-form)
+race = "human"       # free-form display string; the editor offers the races
+                     # named by the system's racial-trait allowed_races
+level = 5
 quote = "The map is never the territory, but it keeps you from walking off a cliff."
+notes = "A demo character for the Parchment Sample system. Not part of any real ruleset."
 
+# Which attribute fills each configurable role on the sheet:
+#   primary_attribute - drives the save DC; spellcaster if it is one of the
+#                       system's derived_stats.spell_attributes
+#   ac_attribute      - its modifier is added to AC
+#   init_attribute    - its modifier is the initiative base
 primary_attribute = "wits"
 ac_attribute = "wits"
 init_attribute = "wits"
 
-max_hp = 22
-current_hp = 22
+# Resources. max_hp is the rolled total the player tracks; trait/perk max_hp
+# effects are added ON TOP for display (here: 26 + 2 Hardened + 4 Toughness
+# = 32 shown). An explicit max_mana overrides the derived formula (Wren is no
+# spellcaster - primary is Wits - so the formula would give 2 x Spirit
+# modifier = 0). temp_hp sits above current HP and is spent first.
+max_hp = 26
+current_hp = 24
+temp_hp = 2
 max_mana = 8
 current_mana = 8
-temp_hp = 0
+hit_dice = "5d6"     # informational; the editor keeps it current on level-up
 
+# One racial trait (id from the system's racial_traits) and any number of
+# origin traits. Their bonuses/penalties fold into the sheet automatically.
 racial_trait = "human"
-origin_traits = ["scholarly"]
+origin_traits = ["scholarly", "hardened"]
 
+# Accomplished = proficient: these get the level-based accomplishment bonus.
+# Skills/weapons reference system ids; saves use ATTRIBUTE ids.
 accomplished_skills = ["lore", "perception", "persuasion"]
-accomplished_weapons = ["bow"]
+accomplished_weapons = ["bow"]    # only accomplished weapons appear on the sheet
 accomplished_saves = ["wits"]
 
-perks = ["keen_eye", "scholar"]
-custom_perks = []
+# Sphere perks, as a flat list of ids. A repeatable perk appears once PER
+# RANK - Toughness twice = rank 2. Budget: one perk point per level (5);
+# custom_perks count too: 4 here + 1 homebrew below = 5.
+perks = ["keen_eye", "scholar", "toughness", "toughness"]
 
-notes = "A demo character for the Parchment Sample system. Not part of any real ruleset."
-
+# Base attribute scores, BEFORE trait bonuses (the sheet shows base, bonus and
+# final separately). Budget here: point_buy total 15 + Scholarly Upbringing 2
+# + the level-3 milestone point = 18; spent above base 1: 4+7+5 = 16.
 [attributes]
 might = 5
-wits = 8
+wits = 8      # final 9 after Human's +1
 spirit = 6
 
+# Recorded picks for perks that carry a choice, keyed by perk id.
 [perk_choices]
 scholar = ["lore"]
+
+# custom_perks: homebrew, granted by the DM directly on the character. Same
+# effect vocabulary as the system file (see its footer). `replaces` names a
+# sphere perk whose slot this fills - prerequisites and exclusivity treat the
+# replaced perk as taken, so the tree progresses past a homebrewed alternative
+# (here: Trail Sense stands in for Quick Reflexes, unlocking Pathfinder).
+# Unknown effect types ("damage_reduction") are shown but never folded into
+# totals - they are table rules, applied by people.
+[[custom_perks]]
+id = "trail_sense"
+name = "Trail Sense"
+description = "Wren reads the land like a ledger. +1 initiative, Lore gains her Wits modifier a second time, and DR 1 while travelling (table rule)."
+replaces = "quick_reflexes"
+[[custom_perks.effects]]
+type = "initiative"
+value = 1
+[[custom_perks.effects]]
+type = "skill"
+skill = "lore"
+add_modifier = "wits"
+[[custom_perks.effects]]
+type = "damage_reduction"   # informational: displayed, not computed
+value = 1
+
+# attack_lines: free-form attack rows shown in the sheet's ATTACKS section,
+# next to the automatic attack totals of accomplished weapons. Useful for
+# spells, consumables, or anything the weapon list does not cover.
+[[attack_lines]]
+name = "Thrown lantern oil"
+die = "1d4"
+modifier = 1
