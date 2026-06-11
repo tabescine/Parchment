@@ -27,48 +27,10 @@ local Refresh
 
 local Signed = ns.UI.Signed
 
--- Item-list builders (mirror the editor's, kept local so the wizard is
--- self-contained).
-local function ListItems(list)
-    local out = {}
-    for _, r in ipairs(list or {}) do out[#out + 1] = { id = r.id, name = r.name } end
-    return out
-end
-local function AttrItems(system, allow)
-    local out = {}
-    for _, a in ipairs(system.attributes or {}) do
-        if not allow or allow[a.id] then out[#out + 1] = { id = a.id, name = a.name } end
-    end
-    return out
-end
-local function TraitItems(list)
-    local out = {}
-    for _, r in ipairs(list or {}) do out[#out + 1] = { id = r.id, name = r.name, tooltip = r.description } end
-    return out
-end
-local function RacialItems(system, race)
-    local out = { { id = "__none", name = "(none)" } }
-    for _, t in ipairs(system.racial_traits or {}) do
-        for _, r in ipairs(t.allowed_races or {}) do
-            if r == race or (r == "all_but_human" and race ~= "human" and race ~= "") then
-                out[#out + 1] = { id = t.id, name = t.name, tooltip = t.description }
-                break
-            end
-        end
-    end
-    return out
-end
-local function SaveItems(system, primary)
-    local out = {}
-    for _, a in ipairs(system.attributes or {}) do
-        out[#out + 1] = { id = a.id, name = a.name .. (a.id == primary and "  (primary)" or "") }
-    end
-    return out
-end
-local function TraitName(system, key, id)
-    for _, t in ipairs(system[key] or {}) do if t.id == id then return t.name end end
-    return id
-end
+-- Picker item-list builders, shared with the editor (see UI/Widgets.lua).
+local W = ns.Widgets
+local ListItems, AttrItems, TraitItems = W.ListItems, W.AttrItems, W.TraitItems
+local RacialItems, SaveItems, TraitName = W.RacialItems, W.SaveItems, W.TraitName
 
 -- Small widget helpers.
 local function Label(p, text, x, y)

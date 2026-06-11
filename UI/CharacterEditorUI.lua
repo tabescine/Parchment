@@ -80,53 +80,10 @@ local function Pick(self, title, prompt, items, max, selected, apply)
     })
 end
 
--- Item-list builders from the system.
-local function AttrItems(system, allow)
-    local out = {}
-    for _, a in ipairs(system.attributes or {}) do
-        if not allow or allow[a.id] then out[#out + 1] = { id = a.id, name = a.name } end
-    end
-    return out
-end
--- Trait records as picker items, with the description as a hover tooltip.
-local function TraitItems(list)
-    local out = {}
-    for _, r in ipairs(list or {}) do
-        out[#out + 1] = { id = r.id, name = r.name, tooltip = r.description }
-    end
-    return out
-end
--- Racial traits available to a race (allowed_races match, or the all-but-human
--- wildcard for any non-human), each with its description as a tooltip.
-local function RacialItems(system, race)
-    local out = { { id = "__none", name = "(none)" } }
-    for _, t in ipairs(system.racial_traits or {}) do
-        local ok = false
-        for _, r in ipairs(t.allowed_races or {}) do
-            if r == race or (r == "all_but_human" and race ~= "human" and race ~= "") then ok = true end
-        end
-        if ok then out[#out + 1] = { id = t.id, name = t.name, tooltip = t.description } end
-    end
-    return out
-end
-
--- Attribute saves as picker items, marking and describing the primary save.
-local function SaveItems(system, primary)
-    local out = {}
-    for _, a in ipairs(system.attributes or {}) do
-        out[#out + 1] = {
-            id = a.id,
-            name = a.name .. (a.id == primary and "  (primary)" or ""),
-            tooltip = a.id == primary and "Automatically accomplished as your primary attribute's save." or nil,
-        }
-    end
-    return out
-end
-
-local function TraitName(system, listKey, id)
-    for _, t in ipairs(system[listKey] or {}) do if t.id == id then return t.name end end
-    return id
-end
+-- Picker item-list builders, shared with the wizard (see UI/Widgets.lua).
+local W = ns.Widgets
+local ListItems, AttrItems, TraitItems = W.ListItems, W.AttrItems, W.TraitItems
+local RacialItems, SaveItems, TraitName = W.RacialItems, W.SaveItems, W.TraitName
 
 -- Creates a static label at (x, y).
 local function Label(content, text, x, y)
@@ -399,15 +356,13 @@ local function BuildFrame()
     end)
     f.skillsBtn:SetScript("OnClick", function()
         if not f.char then return end
-        local items = {}
-        for _, s in ipairs(ns.GetSystem().skills or {}) do items[#items + 1] = { id = s.id, name = s.name } end
+        local items = ListItems(ns.GetSystem().skills)
         Pick(f, "Accomplished Skills", "Mark accomplished skills", items, #items,
             f.char.accomplished_skills, function(ids) if f.char then f.char.accomplished_skills = ids end end)
     end)
     f.weaponsBtn:SetScript("OnClick", function()
         if not f.char then return end
-        local items = {}
-        for _, wpn in ipairs(ns.GetSystem().weapons or {}) do items[#items + 1] = { id = wpn.id, name = wpn.name } end
+        local items = ListItems(ns.GetSystem().weapons)
         Pick(f, "Accomplished Weapons", "Mark accomplished weapons", items, #items,
             f.char.accomplished_weapons, function(ids) if f.char then f.char.accomplished_weapons = ids end end)
     end)
