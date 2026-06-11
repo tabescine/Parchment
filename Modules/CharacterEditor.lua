@@ -20,9 +20,7 @@ local CE = ns.CharacterEditor
 
 -- Finds a trait record by id in a system list ("racial_traits"/"origin_traits").
 local function FindTrait(system, listKey, id)
-    for _, t in ipairs(system[listKey] or {}) do
-        if t.id == id then return t end
-    end
+    return ns.FindById(system[listKey], id)
 end
 
 -- The trait records a character has selected (racial first, then origins).
@@ -161,18 +159,14 @@ function CE.AccomplishTargetDesc(which)
     local system = ns.GetSystem()
     local spec = (system.accomplish_targets or {})[which]
     local dflt = TARGET_DEFAULTS[which] or 0
-    local function attrName(id)
-        for _, a in ipairs(system.attributes or {}) do if a.id == id then return a.name end end
-        return id
-    end
     if type(spec) == "number" then return tostring(spec) end
     if type(spec) ~= "table" then return tostring(dflt) end
     local base = spec.base or dflt
     if spec.attribute then
-        return base .. " + " .. attrName(spec.attribute) .. " modifier (min 0)"
+        return base .. " + " .. ns.AttrName(spec.attribute) .. " modifier (min 0)"
     elseif spec.attribute_max and #spec.attribute_max > 0 then
         local names = {}
-        for _, id in ipairs(spec.attribute_max) do names[#names + 1] = attrName(id) end
+        for _, id in ipairs(spec.attribute_max) do names[#names + 1] = ns.AttrName(id) end
         return base .. " + highest of " .. table.concat(names, "/") .. " modifier (min 0)"
     end
     return tostring(base)

@@ -7,7 +7,7 @@
 -- behaviours common to every Parchment window.
 --
 -- Reads from: ns.Addon.db (for geometry persistence, keyed by opts.dbKey).
--- Exposes on ns.UI: .CreateWindow, and the shared palette constants.
+-- Exposes on ns.UI: .CreateWindow, .Signed, and the shared palette constants.
 
 local ADDON, ns = ...
 
@@ -22,6 +22,11 @@ UI.GREEN = { 0.55, 0.85, 0.55 }
 UI.RED = { 0.90, 0.45, 0.45 }
 UI.LINE = { 0.45, 0.38, 0.24, 0.7 }
 UI.HILITE = { 0.85, 0.72, 0.45, 0.18 }
+
+-- Formats a number with an explicit sign ("+2", "-1", "+0").
+function UI.Signed(n)
+    return (n >= 0 and "+" or "") .. n
+end
 
 local BACKDROP = {
     bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",

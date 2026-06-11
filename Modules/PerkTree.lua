@@ -29,9 +29,7 @@ end
 
 -- Finds a perk record by id within a tree.
 local function FindPerk(tree, id)
-    for _, p in ipairs(tree.perks or {}) do
-        if p.id == id then return p end
-    end
+    return ns.FindById(tree.perks, id)
 end
 
 -- Finds a perk by id across every tree (prerequisites may be cross-sphere).
@@ -49,12 +47,6 @@ local function AttrFinal(sheet, attrId)
         if a.id == attrId then return a.final end
     end
     return 0
-end
-
--- Human-readable name of an attribute id.
-local function AttrNameById(id)
-    local attr = ns.GetAttribute and ns.GetAttribute(id)
-    return attr and attr.name or (id or "?")
 end
 
 -- The attribute a perk's requirement checks against. Most perks use the tree's
@@ -161,7 +153,7 @@ function PT.CanAddRank(char, sheet, tree, perk)
     end
 
     if perk.attribute_req and AttrFinal(sheet, ReqAttr(perk, tree)) < perk.attribute_req then
-        return false, "Requires " .. AttrNameById(ReqAttr(perk, tree)) .. " " .. perk.attribute_req .. "."
+        return false, "Requires " .. ns.AttrName(ReqAttr(perk, tree)) .. " " .. perk.attribute_req .. "."
     end
     for _, pr in ipairs(perk.prerequisites or {}) do
         if not Satisfies(char, pr) then

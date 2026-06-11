@@ -37,8 +37,7 @@ ns.CharacterEditorUI = EditorUI
 
 local Refresh
 
--- Signed integer (+3 / -2 / +0).
-local function Signed(n) return (n >= 0 and "+" or "") .. n end
+local Signed = ns.UI.Signed
 
 -- Returns the character's hit die size and final VIT modifier.
 -- The hit die size and the modifier of the system's HP attribute (if any).
@@ -97,11 +96,6 @@ local function TraitItems(list)
     end
     return out
 end
-local function AttrName(system, id)
-    for _, a in ipairs(system.attributes or {}) do if a.id == id then return a.name end end
-    return id or "(none)"
-end
-
 -- Racial traits available to a race (allowed_races match, or the all-but-human
 -- wildcard for any non-human), each with its description as a tooltip.
 local function RacialItems(system, race)
@@ -358,7 +352,7 @@ local function BuildFrame()
                     f.char.max_hp = (f.char.max_hp or 0) + retro
                     f.char.current_hp = (f.char.current_hp or 0) + retro
                     f.note = string.format("%s change: %+d HP retroactively (%d level%s).",
-                        AttrName(ns.GetSystem(), id), retro, level - 1, (level - 1) == 1 and "" or "s")
+                        ns.AttrName(id), retro, level - 1, (level - 1) == 1 and "" or "s")
                 end
             else
                 f.char.attributes[id] = newVal
@@ -453,7 +447,7 @@ local function BuildFrame()
         local tg = CE.AccomplishTargets(sheet)
         tt:AddLine("Accomplished Saves", UI.GOLD[1], UI.GOLD[2], UI.GOLD[3])
         tt:AddLine("Primary attribute's save (automatic) plus your choices.  Target: " .. tg.saves, 0.9, 0.9, 0.9, true)
-        tt:AddLine("Primary: " .. AttrName(ns.GetSystem(), f.char.primary_attribute), 0.78, 0.66, 0.41)
+        tt:AddLine("Primary: " .. ns.AttrName(f.char.primary_attribute), 0.78, 0.66, 0.41)
     end)
 
     -- Resource editing.
@@ -465,7 +459,7 @@ local function BuildFrame()
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:SetText("Roll Hit Points", 1, 1, 1)
         if hpAttr then
-            GameTooltip:AddLine("Rolls 1d" .. die .. " + " .. AttrName(ns.GetSystem(), hpAttr)
+            GameTooltip:AddLine("Rolls 1d" .. die .. " + " .. ns.AttrName(hpAttr)
                 .. " modifier (" .. Signed(hpMod) .. "), minimum 1.", 0.85, 0.82, 0.75, true)
         else
             GameTooltip:AddLine("Rolls 1d" .. die .. ", minimum 1.", 0.85, 0.82, 0.75, true)
@@ -613,9 +607,9 @@ Refresh = function(self)
     local origins = {}
     for _, id in ipairs(char.origin_traits or {}) do origins[#origins + 1] = TraitName(system, "origin_traits", id) end
     self.originBtn:SetText(#origins > 0 and table.concat(origins, ", ") or "(none)")
-    self.primaryBtn:SetText(AttrName(system, char.primary_attribute))
-    self.acBtn:SetText(AttrName(system, char.ac_attribute))
-    self.initBtn:SetText(AttrName(system, char.init_attribute))
+    self.primaryBtn:SetText(ns.AttrName(char.primary_attribute))
+    self.acBtn:SetText(ns.AttrName(char.ac_attribute))
+    self.initBtn:SetText(ns.AttrName(char.init_attribute))
 
     local tg = CE.AccomplishTargets(sheet)
     self.skillsBtn:SetText(string.format("%d / %d", #(char.accomplished_skills or {}), tg.skills))

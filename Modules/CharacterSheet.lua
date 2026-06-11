@@ -36,15 +36,12 @@ local CharacterSheet = ns.CharacterSheet
 -- then origins), skipping any that do not resolve in the system.
 local function SelectedTraits(char, system)
     local out = {}
-    local function find(list, id)
-        for _, t in ipairs(list or {}) do if t.id == id then return t end end
-    end
     if char.racial_trait then
-        local t = find(system.racial_traits, char.racial_trait)
+        local t = ns.FindById(system.racial_traits, char.racial_trait)
         if t then out[#out + 1] = t end
     end
     for _, id in ipairs(char.origin_traits or {}) do
-        local t = find(system.origin_traits, id)
+        local t = ns.FindById(system.origin_traits, id)
         if t then out[#out + 1] = t end
     end
     return out
@@ -171,10 +168,8 @@ end
 
 -- Resolves a record id to its display name within a system list (skills/weapons).
 local function NameInList(list, id)
-    for _, rec in ipairs(list or {}) do
-        if rec.id == id then return rec.name end
-    end
-    return id
+    local rec = ns.FindById(list, id)
+    return rec and rec.name or id
 end
 
 -- Computes the full sheet for a character against a system definition.

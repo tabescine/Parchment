@@ -20,21 +20,20 @@ local MIN_W, MIN_H = 420, 360
 local MAX_W, MAX_H = 900, 1000
 local PAD = 16
 local INDENT = 14
-local C_GOLD = { 0.78, 0.66, 0.41 }
-local C_HEAD = { 0.85, 0.72, 0.45 }
-local C_TEXT = { 0.92, 0.90, 0.85 }
-local C_DIM = { 0.62, 0.60, 0.55 }
+-- Shared palette from UI/Window.lua; STAR and STRIPE are sheet-specific.
+local C_GOLD = ns.UI.GOLD
+local C_HEAD = ns.UI.HEAD
+local C_TEXT = ns.UI.TEXT
+local C_DIM = ns.UI.DIM
 local C_STAR = { 1.0, 0.82, 0.0 }
-local C_LINE = { 0.45, 0.38, 0.24, 0.7 }
+local C_LINE = ns.UI.LINE
 local C_STRIPE = { 1.0, 0.95, 0.85, 0.04 }
 
 local CharacterSheetUI = {}
 ns.CharacterSheetUI = CharacterSheetUI
 
 -- Formats a number with an explicit sign (+3, -2, +0).
-local function Signed(n)
-    return (n >= 0 and "+" or "") .. n
-end
+local Signed = ns.UI.Signed
 
 -- Trims trailing ".0" off a number formatted for display (13.0 -> 13).
 local function Num(n)

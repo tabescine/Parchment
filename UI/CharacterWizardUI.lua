@@ -25,7 +25,7 @@ ns.CharacterWizardUI = WizardUI
 
 local Refresh
 
-local function Signed(n) return (n >= 0 and "+" or "") .. n end
+local Signed = ns.UI.Signed
 
 -- Item-list builders (mirror the editor's, kept local so the wizard is
 -- self-contained).
@@ -64,10 +64,6 @@ local function SaveItems(system, primary)
         out[#out + 1] = { id = a.id, name = a.name .. (a.id == primary and "  (primary)" or "") }
     end
     return out
-end
-local function AttrName(system, id)
-    for _, a in ipairs(system.attributes or {}) do if a.id == id then return a.name end end
-    return id or "(none)"
 end
 local function TraitName(system, key, id)
     for _, t in ipairs(system[key] or {}) do if t.id == id then return t.name end end
@@ -308,9 +304,9 @@ Refresh = function(self)
     local origins = {}
     for _, id in ipairs(d.origin_traits or {}) do origins[#origins + 1] = TraitName(system, "origin_traits", id) end
     self.originBtn:SetText(#origins > 0 and table.concat(origins, ", ") or "(none)")
-    self.primaryBtn:SetText(AttrName(system, d.primary_attribute))
-    self.acBtn:SetText(AttrName(system, d.ac_attribute))
-    self.initBtn:SetText(AttrName(system, d.init_attribute))
+    self.primaryBtn:SetText(ns.AttrName(d.primary_attribute))
+    self.acBtn:SetText(ns.AttrName(d.ac_attribute))
+    self.initBtn:SetText(ns.AttrName(d.init_attribute))
 
     local tg = CE.AccomplishTargets(sheet)
     self.skillsBtn:SetText(string.format("%d / %d", #(d.accomplished_skills or {}), tg.skills))
@@ -322,8 +318,8 @@ Refresh = function(self)
     if self.step == #STEPS then
         local lines = {
             "|cffc8a868" .. (d.name or "?") .. "|r" .. (d.race ~= "" and ("  -  " .. d.race) or ""),
-            "Primary " .. AttrName(system, d.primary_attribute) .. ", AC " .. AttrName(system, d.ac_attribute)
-                .. ", Init " .. AttrName(system, d.init_attribute),
+            "Primary " .. ns.AttrName(d.primary_attribute) .. ", AC " .. ns.AttrName(d.ac_attribute)
+                .. ", Init " .. ns.AttrName(d.init_attribute),
             "Racial: " .. (d.racial_trait and TraitName(system, "racial_traits", d.racial_trait) or "none")
                 .. "   Origins: " .. (#origins > 0 and table.concat(origins, ", ") or "none"),
             "Accomplished: " .. #(d.accomplished_skills or {}) .. " skills, "

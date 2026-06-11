@@ -47,17 +47,9 @@ ns.PerkTreeUI = PerkTreeUI
 
 local Refresh
 
--- Name of an attribute id.
-local function AttrNameById(id)
-    local a = ns.GetAttribute(id)
-    return a and a.name or id
-end
-
 -- Finds a perk in a tree by id.
 local function FindPerk(tree, id)
-    for _, p in ipairs(tree.perks or {}) do
-        if p.id == id then return p end
-    end
+    return ns.FindById(tree.perks, id)
 end
 
 -- Resolves a list of perk ids to a comma-joined list of names (any tree).
@@ -109,7 +101,7 @@ local function ShowTooltip(self, node)
     end
 
     local reqAttr = perk.req_attribute or tree.governing_attribute
-    GameTooltip:AddLine("Requires " .. AttrNameById(reqAttr) .. " " .. (perk.attribute_req or 5), 0.9, 0.9, 0.9)
+    GameTooltip:AddLine("Requires " .. ns.AttrName(reqAttr) .. " " .. (perk.attribute_req or 5), 0.9, 0.9, 0.9)
     if perk.prerequisites and #perk.prerequisites > 0 then
         GameTooltip:AddLine("Needs: " .. NamesOf(perk.prerequisites), 0.9, 0.9, 0.9)
     end

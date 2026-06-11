@@ -15,7 +15,8 @@
 -- Reads from: ns.Schema.
 -- Exposes on ns: the data API (GetSystem, HasSystem, GetCharacter, ...),
 --   the module registry (RegisterModule, OpenModule), shared helpers
---   (Print, DeepCopy, SaveToDisk, ShareSystem), and ns.Addon.
+--   (Print, DeepCopy, FindById, AttrName, SaveToDisk, ShareSystem), and
+--   ns.Addon.
 
 local ADDON, ns = ...
 
@@ -118,11 +119,26 @@ function ns.SetActiveCharacter(key)
     return true
 end
 
+-- Finds a record by its `id` field in a list of records. Returns nil when
+-- absent. The system data is full of such lists (attributes, skills, perks,
+-- traits); modules share this instead of re-rolling the loop.
+function ns.FindById(list, id)
+    for _, record in ipairs(list or {}) do
+        if record.id == id then return record end
+    end
+end
+
 -- Returns the attribute record for an id, or nil.
 function ns.GetAttribute(id)
-    for _, attr in ipairs(ns.GetSystem().attributes or {}) do
-        if attr.id == id then return attr end
-    end
+    return ns.FindById(ns.GetSystem().attributes, id)
+end
+
+-- Display name for an attribute id: its name, the raw id when it does not
+-- resolve, or "(none)" for an unset (nil) selection.
+function ns.AttrName(id)
+    if not id then return "(none)" end
+    local attr = ns.GetAttribute(id)
+    return attr and attr.name or id
 end
 
 -- Maps an attribute value to its modifier via the system's modifier table,
@@ -173,9 +189,7 @@ end
 
 -- Returns the perk tree (sphere) record for an id, or nil.
 function ns.GetPerkTree(id)
-    for _, tree in ipairs(ns.GetSystem().perk_trees or {}) do
-        if tree.id == id then return tree end
-    end
+    return ns.FindById(ns.GetSystem().perk_trees, id)
 end
 
 -- Module registry.
