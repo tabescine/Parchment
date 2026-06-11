@@ -29,6 +29,8 @@ UI\Widgets.lua
 Modules\CharacterSheet.lua
 UI\CharacterSheetUI.lua
 Modules\Sharing.lua
+Modules\Party.lua
+UI\PartyUI.lua
 Modules\InitiativeTracker.lua
 UI\InitiativeUI.lua
 Modules\ImportExport.lua

@@ -24,6 +24,14 @@ function Comm.IsDM()
     return ns.Addon.db and ns.Addon.db.profile.dm or false
 end
 
+-- True when sender is this player. AceComm echoes our own group broadcasts
+-- back to us; handlers that must not react to themselves check this.
+function Comm.IsSelf(sender)
+    local me = (UnitName and UnitName("player")) or ""
+    if not sender then return false end
+    return sender == me or sender:match("^[^-]+") == me
+end
+
 function Comm.SetDM(on)
     ns.Addon.db.profile.dm = on and true or false
 end

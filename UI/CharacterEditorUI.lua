@@ -62,12 +62,15 @@ local function PerLevelHp(char)
 end
 
 -- Recomputes and redraws the editor plus the sheet / perk viewer if open.
+-- Also pushes a (throttled) vitals update to the group - edits here can
+-- change HP/Mana/level, which the party overview displays.
 local function Changed(self)
     Refresh(self)
     if ns.CharacterSheetUI then ns.CharacterSheetUI.RefreshIfShown() end
     if ns.PerkTreeUI and ns.PerkTreeUI.frame and ns.PerkTreeUI.frame:IsShown() then
         ns.PerkTreeUI.Open()
     end
+    if ns.Party then ns.Party.OnVitalsChanged() end
 end
 
 -- Opens a picker and applies the result, then refreshes.

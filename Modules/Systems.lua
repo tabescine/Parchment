@@ -171,6 +171,9 @@ StaticPopupDialogs["PARCHMENT_ADOPT_SYSTEM"] = {
 -- the comm path must hold the same line or a bad share breaks every window.
 if ns.Comm then
     ns.Comm.On("SYSTEM", function(system, sender)
+        -- Our own broadcast echoes back; a DM must not be prompted to adopt
+        -- the system they just shared.
+        if ns.Comm.IsSelf(sender) then return end
         if type(system) ~= "table" or type(system.system_name) ~= "string" then return end
         local ok = ns.Schema.ValidateSystem(system)
         if not ok then

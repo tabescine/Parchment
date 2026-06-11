@@ -448,6 +448,7 @@ local function CommitResource(self, field, box)
     if n then char[field] = n end
     box:ClearFocus()
     Refresh(self)
+    if ns.Party then ns.Party.OnVitalsChanged() end
 end
 
 -- Builds the window once on the shared chrome (drag, close/Escape, grip, and

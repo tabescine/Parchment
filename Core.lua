@@ -18,7 +18,7 @@
 
 local ADDON, ns = ...
 
--- Branding and message colours (see AGENTS code style).
+-- Branding and message colours.
 local PREFIX = "|cffc8a868[Parchment]|r "
 local C_GREEN = "|cff00ff00"
 local C_RED = "|cffff4444"
@@ -40,6 +40,7 @@ local MODULE_COMMANDS = {
     edit = "edit",
     new = "new",
     config = "config",
+    party = "party",
 }
 
 local LibStub = LibStub
@@ -238,6 +239,7 @@ local function PrintHelp()
     Print("  " .. C_GOLD .. "/pmt share|r   - DM: send your system to the group")
     Print("  " .. C_GOLD .. "/pmt systems|r - choose the active system (|cffc8a868/pmt systems delete|r to remove one)")
     Print("  " .. C_GOLD .. "/pmt rolls|r   - toggle public (party-visible) dice rolls")
+    Print("  " .. C_GOLD .. "/pmt party|r   - live party overview (HP/Mana/AC of group members)")
     Print("  " .. C_GOLD .. "/pmt view <name>|r - view another player's character sheet")
     Print("  " .. C_GOLD .. "/pmt cached|r  - browse cached sheets (|cffc8a868/pmt cached clear|r to wipe)")
     Print("  " .. C_GOLD .. "/pmt minimap|r - toggle the minimap button")
