@@ -91,6 +91,23 @@ its character-side counterpart. Import both with `/pmt import`; `Tools/`
 also holds an optional offline converter for version-controlled rulesets
 and SavedVariables recovery.
 
+## Development
+
+Parchment keeps its rules logic free of WoW APIs, so the data layer, codecs,
+schema, and the character/perk engines run - and are tested - under plain
+Lua 5.1, no game client or dependencies needed:
+
+```sh
+lua5.1 Tests/run.lua
+```
+
+The suite covers the data API and migrations, schema validation, the
+JSON/TOML codecs, sheet computation, the perk engine, comm version gating,
+the context-menu integration, and an end-to-end import of the sample files
+(whose documented numbers double as regression expectations). CI
+(`.github/workflows/ci.yml`) runs a syntax check plus this suite. UI code
+(frames, menus beyond their logic) is exercised in-game.
+
 ## License
 
 Parchment is released under the [MIT License](LICENSE).
