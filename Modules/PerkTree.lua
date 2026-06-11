@@ -11,7 +11,7 @@
 -- Reads from: ns.GetAttribute (for requirement messages). The caller passes the
 --   computed sheet so attribute requirements check final (post-trait) values.
 -- Exposes on ns.PerkTree: Status, CanAddRank, Select, Deselect, Points, Rank,
---   ReplacedBy, ChoiceMax, SetChoices.
+--   ReplacedBy, ChoiceMax, SetChoices, Search.
 
 local ADDON, ns = ...
 
@@ -248,4 +248,24 @@ end
 -- Both selected sphere perks and DM-granted homebrew perks count as invested.
 function PT.Points(char)
     return #(char.perks or {}) + #(char.custom_perks or {}), (char.level or 1)
+end
+
+-- Searches trees for perks whose name or description contains the query
+-- (case-insensitive plain text, surrounding whitespace ignored). Takes the
+-- tree LIST rather than reading the system, so callers can include synthetic
+-- spheres (the viewer's Homebrew tree). Returns { { tree, perk }, ... } in
+-- tree order; an empty query returns no matches.
+function PT.Search(trees, query)
+    query = tostring(query or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+    local out = {}
+    if query == "" then return out end
+    for _, tree in ipairs(trees or {}) do
+        for _, perk in ipairs(tree.perks or {}) do
+            local hay = ((perk.name or "") .. "\n" .. (perk.description or "")):lower()
+            if hay:find(query, 1, true) then
+                out[#out + 1] = { tree = tree, perk = perk }
+            end
+        end
+    end
+    return out
 end

@@ -7,6 +7,10 @@
 -- when its layout opts in (connect = "lattice"). Hovering shows requirements
 -- and description, left-click selects (or adds a rank), right-click removes.
 -- A cycler switches spheres; a counter shows invested vs available points.
+-- A search box filters live across ALL spheres (name + description): matches
+-- in the shown sphere stay bright while the rest dims, and a jump line lists
+-- per-sphere match counts elsewhere - click it to cycle to the next sphere
+-- with a match. The synthetic Homebrew sphere is searched too.
 --
 -- Reads from: ns.GetSystem, ns.GetActiveCharacter, ns.CharacterSheet.Compute,
 --   ns.GetAttribute, ns.PerkTree, ns.UI.
@@ -290,6 +294,8 @@ local function RenderGraph(self)
                 node:SetBackdropColor(bg[1], bg[2], bg[3], 0.9)
                 node:SetBackdropBorderColor(sc.border[1], sc.border[2], sc.border[3], 1)
                 node.label:SetTextColor(sc.text[1], sc.text[2], sc.text[3])
+                -- An active search dims everything that does not match.
+                node:SetAlpha((self.searchMatch and not self.searchMatch[perk]) and 0.25 or 1)
 
                 if perk.max_ranks and perk.max_ranks > 1 then
                     node.rank:SetText(PT.Rank(self.char, perk) .. "/" .. perk.max_ranks)
@@ -349,6 +355,69 @@ local function RenderGraph(self)
     end
 end
 
+-- The trimmed search query, or "" when not searching.
+local function Query(self)
+    return tostring(self.query or ""):gsub("^%s+", ""):gsub("%s+$", "")
+end
+
+-- Jumps to the next sphere (cycling forward) that has a search match.
+local function JumpToMatch(self)
+    local query = Query(self)
+    local trees = self.trees or {}
+    if query == "" or #trees == 0 then return end
+    for step = 1, #trees - 1 do
+        local idx = (self.treeIndex - 1 + step) % #trees + 1
+        if #PT.Search({ trees[idx] }, query) > 0 then
+            self.treeIndex = idx
+            Refresh(self)
+            return
+        end
+    end
+end
+
+-- Recomputes the search-match set for the current sphere and the jump line.
+-- self.searchMatch is nil when not searching, else a set keyed by perk table
+-- (RenderGraph dims nodes outside it).
+local function UpdateSearch(self, tree)
+    local query = Query(self)
+    if query == "" then
+        self.searchMatch = nil
+        self.searchInfo:Hide()
+        return
+    end
+
+    local matches = PT.Search(self.trees, query)
+    self.searchMatch = {}
+    local here, perTree = 0, {}
+    for _, m in ipairs(matches) do
+        if m.tree == tree then
+            self.searchMatch[m.perk] = true
+            here = here + 1
+        else
+            perTree[m.tree] = (perTree[m.tree] or 0) + 1
+        end
+    end
+
+    local text, clickable
+    if #matches == 0 then
+        text = "No perks match \"" .. query .. "\"."
+    else
+        local parts = { here .. (here == 1 and " match" or " matches") .. " in this sphere" }
+        local others = {}
+        for _, t in ipairs(self.trees) do          -- stable sphere order
+            if perTree[t] then others[#others + 1] = t.name .. " (" .. perTree[t] .. ")" end
+        end
+        if #others > 0 then
+            parts[#parts + 1] = "elsewhere: " .. table.concat(others, ", ")
+            clickable = true
+        end
+        text = table.concat(parts, "   -   ") .. (clickable and "   |cff8ec6ff[jump]|r" or "")
+    end
+    self.searchInfo.text:SetText(text)
+    self.searchInfo:SetEnabled(clickable and true or false)
+    self.searchInfo:Show()
+end
+
 -- Recomputes the active character and redraws the current sphere.
 Refresh = function(self)
     local function blank()
@@ -360,6 +429,7 @@ Refresh = function(self)
         self.char = nil
         self.sphereLabel:SetText("")
         self.points:SetText("")
+        self.searchInfo:Hide()
         blank()
         ns.UI.NoSystem(self)
         return
@@ -370,6 +440,7 @@ Refresh = function(self)
     if not char then
         self.sphereLabel:SetText("")
         self.points:SetText("")
+        self.searchInfo:Hide()
         blank()
         ns.UI.Empty(self, "No character yet.\n\nCreate one to choose perks, or import an existing one.",
             "Create a character", function() ns.OpenModule("new") end,
@@ -386,6 +457,7 @@ Refresh = function(self)
 
     local invested, available = PT.Points(char)
     self.points:SetText("Points: " .. invested .. " / " .. available)
+    UpdateSearch(self, tree)
     RenderGraph(self)
 end
 
@@ -428,10 +500,31 @@ local function BuildFrame()
     f.points:SetPoint("TOPRIGHT", -16, -48)
     f.points:SetTextColor(UI.HEAD[1], UI.HEAD[2], UI.HEAD[3])
 
+    -- Search box: filters the graph live (matches stay bright, the rest
+    -- dims); matches in other spheres land on the jump line below.
+    f.searchBox = CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+    f.searchBox:SetSize(140, 18)
+    f.searchBox:SetPoint("TOPRIGHT", -18, -68)
+    f.searchBox:SetAutoFocus(false)
+    f.searchHint = f.searchBox:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+    f.searchHint:SetPoint("LEFT", 2, 0)
+    f.searchHint:SetText("Search perks")
+    f.searchBox:SetScript("OnEscapePressed", function(box)
+        box:SetText("")
+        box:ClearFocus()
+    end)
+    f.searchBox:SetScript("OnEnterPressed", function(box) box:ClearFocus() end)
+    f.searchBox:SetScript("OnTextChanged", function(box)
+        f.query = box:GetText()
+        Refresh(f)
+    end)
+    f.searchBox:SetScript("OnEditFocusGained", function() f.searchHint:Hide() end)
+    f.searchBox:SetScript("OnEditFocusLost", function(box) f.searchHint:SetShown(box:GetText() == "") end)
+
     -- Legend and message line.
     local legend = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     legend:SetPoint("TOPLEFT", 16, -72)
-    legend:SetPoint("RIGHT", f, "RIGHT", -16, 0)
+    legend:SetPoint("RIGHT", f.searchBox, "LEFT", -12, 0)
     legend:SetJustifyH("LEFT")
     legend:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
     legend:SetText("|cff66d966Taken|r  |cffc8a868Available|r  |cff999999Locked|r  |cfff28c26Blocked|r"
@@ -443,9 +536,22 @@ local function BuildFrame()
     f.msg:SetJustifyH("LEFT")
     f.msg:SetWordWrap(false)
 
+    -- Search jump line: where else the query matches; click cycles to the
+    -- next sphere with a match.
+    f.searchInfo = CreateFrame("Button", nil, f)
+    f.searchInfo:SetHeight(14)
+    f.searchInfo:SetPoint("TOPLEFT", 16, -106)
+    f.searchInfo:SetPoint("RIGHT", f, "RIGHT", -16, 0)
+    f.searchInfo.text = f.searchInfo:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    f.searchInfo.text:SetAllPoints()
+    f.searchInfo.text:SetJustifyH("LEFT")
+    f.searchInfo.text:SetTextColor(UI.HEAD[1], UI.HEAD[2], UI.HEAD[3])
+    f.searchInfo:SetScript("OnClick", function() JumpToMatch(f) end)
+    f.searchInfo:Hide()
+
     -- Scrolling graph canvas.
     local scroll = CreateFrame("ScrollFrame", "ParchmentPerkScroll", f, "UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT", 14, -108)
+    scroll:SetPoint("TOPLEFT", 14, -124)
     scroll:SetPoint("BOTTOMRIGHT", -32, 14)
     local content = CreateFrame("Frame", nil, scroll)
     content:SetSize(10, 10)

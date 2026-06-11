@@ -19,7 +19,8 @@ every window - sheet math included - adapts to it.
   Attributes → Proficiencies → Review) and a freeform point-buy
   editor (`/pmt edit`) with live warnings, plus level-up support.
 - **Perk trees** - a viewer/builder for your system's perk spheres with
-  prerequisites, exclusivity, ranks, perk-driven choices, and homebrew perks.
+  prerequisites, exclusivity, ranks, perk-driven choices, homebrew perks,
+  and live search across every sphere (by name or description).
 - **Combat tracker** - turn order with automatic tie-breaking (via the
   system's `initiative_tiebreaker` stat) and manual DM reordering, rounds,
   a turn/round stopwatch, and per-row HP: players' live vitals inline,

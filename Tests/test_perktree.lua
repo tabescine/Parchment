@@ -87,3 +87,23 @@ assert(not ok and reason:find("Homebrew"), tostring(reason))
 -- Points: sphere perks and homebrew both invest; one point per level.
 local invested, available = PT.Points({ level = 4, perks = { "base", "multi" }, custom_perks = { {} } })
 assert(invested == 3 and available == 4)
+
+-- Search: case-insensitive plain text over name + description, across the
+-- given tree list (synthetic trees included), tree order preserved.
+local trees = {
+    { id = "t1", name = "One", perks = {
+        { id = "p1", name = "Keen Eye", description = "Sharper senses." },
+        { id = "p2", name = "Toughness", description = "More HP." },
+    } },
+    { id = "t2", name = "Two", perks = {
+        { id = "p3", name = "Eagle Eye", description = "See far." },
+    } },
+}
+local hits = PT.Search(trees, "eye")
+assert(#hits == 2 and hits[1].perk.id == "p1" and hits[2].perk.id == "p3")
+assert(hits[1].tree.id == "t1" and hits[2].tree.id == "t2")
+assert(#PT.Search(trees, "SHARPER") == 1, "description match must be case-insensitive")
+assert(#PT.Search(trees, "  hp  ") == 1, "query must be trimmed")
+assert(#PT.Search(trees, "") == 0 and #PT.Search(trees, "   ") == 0, "empty query matches nothing")
+assert(#PT.Search(trees, "%a") == 0, "pattern characters must be literal")
+assert(#PT.Search(nil, "eye") == 0)
