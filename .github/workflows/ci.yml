@@ -1,0 +1,28 @@
+# Parchment CI: syntax-check every Lua file and run the out-of-client test
+# suite (Tests/run.lua - plain Lua 5.1, no dependencies). Suitable as a
+# required status check for branch protection once the repo is public.
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Lua 5.1
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.1
+
+      - name: Syntax-check all Lua files (except vendored Libs)
+        run: |
+          find . -name '*.lua' -not -path './Libs/*' -print0 \
+            | xargs -0 -n1 luac5.1 -p
+
+      - name: Run tests
+        run: lua5.1 Tests/run.lua
