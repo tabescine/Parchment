@@ -491,9 +491,7 @@ end
 
 function EditorUI.NewCharacter(self)
     local char = CE.NewBlank()
-    local base, key, n = "Character", nil, 0
-    repeat n = n + 1; key = base .. "-" .. n until not (ParchmentCharDB.characters and ParchmentCharDB.characters[key])
-    CE.SaveNew(key, char)
+    CE.SaveNew(ns.NextCharacterKey(), char)
     Changed(self)
 end
 

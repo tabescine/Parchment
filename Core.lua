@@ -102,6 +102,26 @@ function ns.GetCharacter(key)
     return ns.GetCharacters()[key]
 end
 
+-- Stores (or replaces) a character under a key.
+function ns.SetCharacter(key, char)
+    ns.GetCharacters()[key] = char
+end
+
+-- Replaces the whole character database (full-roster import).
+function ns.SetCharacterDB(db)
+    ParchmentCharDB = db or {}
+end
+
+-- Returns the first free "<prefix>-N" character key (default prefix "Character").
+function ns.NextCharacterKey(prefix)
+    local chars, n, key = ns.GetCharacters(), 0, nil
+    repeat
+        n = n + 1
+        key = (prefix or "Character") .. "-" .. n
+    until not chars[key]
+    return key
+end
+
 -- Returns two values: the active character table and its key (or nil, nil).
 -- Falls back to the first character present when no active key is set.
 function ns.GetActiveCharacter()

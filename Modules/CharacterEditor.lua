@@ -8,7 +8,8 @@
 -- Validation is soft: Warnings reports problems but nothing here blocks an edit.
 --
 -- Reads from: ns.CharacterSheet.Compute, ns.Schema, ns.PerkTree, ns.GetModifier,
---   ns.GetHitDie, ns.SetActiveCharacter, ParchmentCharDB.
+--   ns.GetHitDie, and the character data API (Get/SetCharacter(s),
+--   SetActiveCharacter).
 -- Exposes on ns.CharacterEditor: NewBlank, InitResources, Races,
 --   AttributePoints, AccomplishTargets, AccomplishTargetDesc, LevelUp,
 --   LevelDown, Warnings, SaveNew, Delete.
@@ -269,14 +270,13 @@ end
 
 -- Saves a character under a key and makes it active.
 function CE.SaveNew(key, char)
-    ParchmentCharDB.characters = ParchmentCharDB.characters or {}
-    ParchmentCharDB.characters[key] = char
+    ns.SetCharacter(key, char)
     ns.SetActiveCharacter(key)
 end
 
 -- Deletes a character by key, re-pointing the active character if needed.
 function CE.Delete(key)
-    local chars = ParchmentCharDB.characters or {}
+    local chars = ns.GetCharacters()
     chars[key] = nil
     if ns.Addon.db.global.activeCharacter == key then
         ns.Addon.db.global.activeCharacter = next(chars)

@@ -1,13 +1,15 @@
 -- Parchment - Import / Export (logic)
 --
 -- Turns the live data into copyable text and turns pasted text back into data.
--- Import accepts JSON (via ns.JSON) or a Lua table literal (sandboxed loadstring
--- with an empty environment), auto-detects whether it is a system or character,
--- validates against the schema, and only commits to SavedVariables on success.
--- Export produces pretty JSON matching the converter's format.
+-- Import accepts JSON, TOML, or a Lua table literal (sandboxed loadstring with
+-- an empty environment), auto-detects whether it is a system or character,
+-- validates against the schema, and only commits on success - via
+-- ns.Systems.SetActive for systems and the character data API for characters,
+-- never by touching the SavedVariables globals directly.
+-- Export produces pretty JSON (or TOML) matching the converter's format.
 --
--- Reads from: ns.JSON, ns.Schema, ns.GetSystem, ns.GetCharacter(s),
---   ns.SetActiveCharacter.
+-- Reads from: ns.JSON, ns.TOML, ns.Schema, ns.Systems, ns.GetSystem,
+--   ns.GetCharacter(s), ns.SetCharacter(DB), ns.SetActiveCharacter.
 -- Exposes on ns.ImportExport: ExportSystem, ExportCharacter, Import.
 
 local ADDON, ns = ...
@@ -138,14 +140,9 @@ function IE.Import(text)
         local clean = StripMeta(data)
         local ok, issues = ns.Schema.ValidateSystem(clean)
         if not ok then return false, "system invalid: " .. SummarizeIssues(issues) end
-        -- Make it active and cache it in the system library; SetActive marks the
-        -- system DM-owned so version migration won't overwrite it.
-        if ns.Systems then
-            ns.Systems.SetActive(clean, "import")
-        else
-            ParchmentSystemDB = clean
-            if ns.Addon and ns.Addon.db then ns.Addon.db.global.systemSource = "imported" end
-        end
+        -- Systems owns all ParchmentSystemDB swaps: SetActive makes the import
+        -- active, caches it in the system library, and refreshes open windows.
+        ns.Systems.SetActive(clean, "import")
         return true, "imported system '" .. (clean.system_name or "?") .. "'."
     end
 
@@ -162,7 +159,7 @@ function IE.Import(text)
             end
             count = count + 1
         end
-        ParchmentCharDB = StripMeta(data)
+        ns.SetCharacterDB(StripMeta(data))
         return true, "imported " .. count .. " character(s)."
     end
 
@@ -173,8 +170,7 @@ function IE.Import(text)
     local ok, issues = ns.Schema.ValidateCharacter(clean, validateSystem)
     if not ok then return false, "character invalid: " .. SummarizeIssues(issues) end
 
-    ParchmentCharDB.characters = ParchmentCharDB.characters or {}
-    ParchmentCharDB.characters[key] = clean
+    ns.SetCharacter(key, clean)
     ns.SetActiveCharacter(key)
     return true, "imported character '" .. (clean.name or key) .. "'."
 end
