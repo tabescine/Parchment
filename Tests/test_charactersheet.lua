@@ -1,0 +1,127 @@
+-- CharacterSheet.Compute: the sheet math against a handcrafted mini system
+-- with known-by-construction expected totals.
+local T = dofile((TEST_ROOT or "") .. "Tests/wow_stubs.lua")
+T.InstallLifecycleStubs({})
+local ns = T.load({}, "Core.lua")
+T.load(ns, "Modules/CharacterSheet.lua")
+
+ParchmentSystemDB = {
+    system_name = "Mini",
+    attributes = { { id = "a", name = "Alpha" }, { id = "b", name = "Bravo" }, { id = "c", name = "Charlie" } },
+    modifier_table = { -1, 0, 1, 2 },           -- score 1..4 -> mod -1..2
+    accomplishment_table = { 2, 3 },            -- level 1 -> +2, level 2+ -> +3
+    hit_dice_bands = { { max_mod = 0, die = "d6" }, { max_mod = 9, die = "d10" } },
+    level_bonuses = { [2] = { actions = 1 } },
+    derived_stats = {
+        hit_die_attribute = "a",
+        spell_attributes = { "c" }, mana_attribute = "c", mana_multiplier = 3,
+        movement_attribute = "b", movement_base = 10, movement_per_step = 1,
+        ac_base = 12, save_dc_base = 8, actions_base = 2,
+    },
+    skills = {
+        { id = "s1", name = "Skill One", attribute = "a" },
+        { id = "s2", name = "Skill Two", attribute = "b" },
+    },
+    weapons = {
+        { id = "w1", name = "Club", attribute = "a", damage = "1d6", properties = {} },
+        { id = "w2", name = "Knife", attribute = { "a", "b" }, damage = "1d4", properties = {} },
+        { id = "w3", name = "Unused", attribute = "a", damage = "1d8", properties = {} },
+    },
+    racial_traits = {
+        { id = "r1", name = "Race One",
+          bonuses = { { type = "attribute", id = "a", value = 1 } },
+          penalties = { { type = "skill", skill = "s2", value = -1 } } },
+    },
+    perk_trees = { {
+        id = "t1", name = "Tree One",
+        perks = {
+            { id = "p_eff", name = "Effective", effects = { { type = "skill", skill = "s1", value = 2 } } },
+            { id = "p_choice", name = "Chooser", choice = { kind = "skill", apply = "double_accomplishment" } },
+            { id = "p_rep", name = "Sturdy", repeatable = true, max_ranks = 2,
+              effects = { { type = "max_hp", value = 1 } } },
+        },
+    } },
+}
+local system = ParchmentSystemDB
+
+local char = {
+    name = "Unit", level = 2,
+    attributes = { a = 1, b = 3, c = 4 },        -- a: 1+1(race)=2 mod 0; b: mod 1; c: mod 2
+    racial_trait = "r1",
+    primary_attribute = "c",                     -- in spell_attributes -> caster
+    ac_attribute = "b", init_attribute = "b",
+    max_hp = 10, current_hp = 7, temp_hp = 1,
+    accomplished_skills = { "s1" },
+    accomplished_saves = { "a" },
+    accomplished_weapons = { "w1", "w2" },
+    perks = { "p_eff", "p_choice", "p_rep", "p_rep" },   -- p_rep at rank 2
+    perk_choices = { p_choice = { "s1" } },
+    custom_perks = { {
+        id = "hb", name = "Homebrew",
+        effects = {
+            { type = "skill", skill = "s1", add_modifier = "c" },  -- +copy of c's mod (2)
+            { type = "save", id = "b", value = 1 },
+            { type = "made_up_informational", value = 5 },          -- must be ignored
+        },
+    } },
+    attack_lines = { { name = "Bomb", die = "2d6", modifier = 1 } },
+}
+
+local sheet = ns.CharacterSheet.Compute(char, system)
+assert(sheet, "Compute returned nil")
+assert(ns.CharacterSheet.Compute(nil, system) == nil and ns.CharacterSheet.Compute(char, nil) == nil)
+
+-- Attributes: base + trait bonus, modifier via the table, provenance recorded.
+local byId = {}
+for _, a in ipairs(sheet.attributes) do byId[a.id] = a end
+assert(byId.a.base == 1 and byId.a.bonus == 1 and byId.a.final == 2 and byId.a.modifier == 0)
+assert(byId.a.sources[1] == "+1 Race One")
+assert(byId.b.final == 3 and byId.b.modifier == 1)
+assert(byId.c.final == 4 and byId.c.modifier == 2)
+
+-- Skills. s1 = mod a (0) + accomplishment (3) + perk +2 + add_modifier copy of
+-- c (2) + doubled accomplishment (3) = 10. s2 = mod b (1) + race penalty -1 = 0.
+local skills = {}
+for _, s in ipairs(sheet.skills) do skills[s.id] = s end
+assert(skills.s1.total == 10, "s1 expected 10, got " .. skills.s1.total)
+assert(skills.s1.accomplished and not skills.s2.accomplished)
+assert(skills.s2.total == 0, "s2 expected 0, got " .. skills.s2.total)
+
+-- Saves: a accomplished (0+3); b has the homebrew +1 (1+1); c plain (2).
+local saves = {}
+for _, s in ipairs(sheet.saves) do saves[s.id] = s end
+assert(saves.a.total == 3 and saves.b.total == 2 and saves.c.total == 2)
+
+-- Weapons: only accomplished ones appear; list-attribute uses the best mod.
+local weapons = {}
+for _, w in ipairs(sheet.weapons) do weapons[w.id] = w end
+assert(weapons.w3 == nil, "unaccomplished weapon leaked onto the sheet")
+assert(weapons.w1.attack_total == 3)                        -- 0 + 3
+assert(weapons.w2.attack_total == 4 and weapons.w2.attack_attribute == "b")  -- best(0,1)=1 + 3
+
+-- Derived stats.
+local d = sheet.derived
+assert(d.accomplishment == 3)
+assert(d.hit_dice == "2d6")                                 -- a's mod 0 -> d6, level 2
+assert(d.hp.max == 12 and d.hp.current == 7 and d.hp.temp == 1)  -- 10 + 2x Sturdy
+assert(d.mana.max == 6)                                     -- caster: 3 x c's mod 2
+assert(d.ac == 13)                                          -- 12 + b's mod 1
+assert(d.initiative == 1)
+assert(d.movement == 11)                                    -- 10 + max(0,1) x 1
+assert(d.actions == 3)                                      -- 2 + level-2 bonus
+assert(d.save_dc == 13)                                     -- 8 + c's mod 2 + 3
+
+-- Perk display: rank counting and recorded choice names.
+local perks = {}
+for _, p in ipairs(sheet.sphere_perks) do perks[p.name] = p end
+assert(perks.Sturdy.rank == 2)
+assert(perks.Chooser.choices and perks.Chooser.choices[1] == "Skill One")
+
+-- attack_lines pass through untouched.
+assert(sheet.attack_lines[1].name == "Bomb")
+
+-- Non-caster fallback: primary outside spell_attributes uses mana_attribute.
+local char2 = { name = "N", level = 1, attributes = { a = 1, b = 3, c = 4 }, primary_attribute = "b" }
+local sheet2 = ns.CharacterSheet.Compute(char2, system)
+assert(sheet2.derived.mana.max == 6, "fallback mana attribute (c) should drive mana")
+assert(sheet2.derived.save_dc == 8 + 1 + 2)                 -- base + b's mod + level-1 acc 2
