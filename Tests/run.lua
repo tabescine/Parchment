@@ -15,6 +15,7 @@ local MANIFEST = {
     "test_perktree.lua",
     "test_widgets.lua",
     "test_comm.lua",
+    "test_party.lua",
     "test_menu.lua",
     "test_samples.lua",
 }

@@ -5,6 +5,8 @@
 -- players receive them read-only and can submit their own initiative back.
 --
 -- A single role flag (db.profile.dm) decides whether this client is the DM.
+-- Turning it on announces the role to the group (DMROLE) so clashing active
+-- DMs warn each other; the flag also rides the party vitals as a "(DM)" tag.
 -- Messages are typed envelopes { t = type, v = payload, ver = sender's addon
 -- version }; consumers register a handler per type via Comm.On.
 --
@@ -15,7 +17,7 @@
 -- mixed-version group degrades to "no sync" instead of undefined behaviour.
 --
 -- Reads from: ns.Addon (the AceAddon object with Comm/Serializer mixins), its
---   db, ns.Print.
+--   db, ns.Print, ns.Party (guarded; vitals push on role change).
 -- Exposes on ns.Comm: IsDM, IsSelf, SetDM, Send, Whisper, On, Init.
 
 local ADDON, ns = ...
@@ -83,7 +85,14 @@ function Comm.IsSelf(sender)
 end
 
 function Comm.SetDM(on)
-    ns.Addon.db.profile.dm = on and true or false
+    on = on and true or false
+    local was = Comm.IsDM()
+    ns.Addon.db.profile.dm = on
+    -- Claiming the role announces it to the group (Send no-ops when solo) so
+    -- an already-active DM and this new one both learn of the clash.
+    if on and not was then Comm.Send("DMROLE", {}) end
+    -- The DM tag rides the vitals snapshot; push an update on any change.
+    if ns.Party then ns.Party.OnVitalsChanged() end
 end
 
 -- The group channel to broadcast on, or nil when solo.
@@ -132,3 +141,18 @@ end
 function Comm.Init()
     ns.Addon:RegisterComm(PREFIX, OnReceive)
 end
+
+-- Role announcements: prints who took the DM role; when this client is ALSO
+-- an active DM, warn - two DMs would both broadcast system/initiative sync -
+-- and whisper our own claim back so the newcomer is warned too. The reply is
+-- only sent for group announces (never for a whispered one), so two clients
+-- cannot ping-pong.
+Comm.On("DMROLE", function(_, sender, distribution)
+    if Comm.IsSelf(sender) then return end
+    ns.Print((sender or "?") .. " enabled DM mode.")
+    if Comm.IsDM() then
+        ns.Print("|cffffcc00warning:|r you also have DM mode on - you would both broadcast"
+            .. " system and initiative sync. One of you should toggle it off (/pmt dm).")
+        if distribution ~= "WHISPER" then Comm.Whisper("DMROLE", {}, sender) end
+    end
+end)

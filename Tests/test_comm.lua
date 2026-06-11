@@ -15,9 +15,13 @@ local function boot(version)
     ns.Print = function(msg) printed[#printed + 1] = msg end
     local wire = {}
     ns.Addon = {
+        db = { profile = {} },
         Serialize = function(_, t) return t end,        -- pass-through "wire"
         Deserialize = function(_, d) return true, d end,
-        SendCommMessage = function(_, _, data) wire.sent = data end,
+        SendCommMessage = function(_, _, data, channel, target)
+            wire.sent, wire.channel, wire.target = data, channel, target
+            wire.count = (wire.count or 0) + 1
+        end,
         RegisterComm = function(_, _, cb) wire.receive = cb end,
     }
     T.load(ns, "Modules/Comm.lua")
@@ -66,6 +70,38 @@ assert(#got == 2)
 -- IsSelf handles plain and realm-qualified names.
 assert(ns.Comm.IsSelf("Me") and ns.Comm.IsSelf("Me-SomeRealm"))
 assert(not ns.Comm.IsSelf("You") and not ns.Comm.IsSelf(nil))
+
+-- DM role: claiming announces once; clashing DMs warn each other without
+-- ping-ponging.
+local prevCount = wire.count
+ns.Comm.SetDM(true)
+assert(wire.sent.t == "DMROLE" and wire.count == prevCount + 1, "no DMROLE announce")
+ns.Comm.SetDM(true)
+assert(wire.count == prevCount + 1, "re-claiming the role must not re-announce")
+ns.Comm.SetDM(false)
+assert(wire.count == prevCount + 1, "dropping the role must not announce")
+
+-- As a non-DM: an announce prints info, no reply goes out.
+prevCount = wire.count
+local printedBefore = #printed
+wire.receive("Parchment", { t = "DMROLE", v = {}, ver = "0.1.0" }, "PARTY", "Olga")
+assert(#printed == printedBefore + 1 and printed[#printed]:find("Olga"), "no info line")
+assert(wire.count == prevCount, "non-DM must not reply to DMROLE")
+
+-- As an active DM: warn AND whisper our claim back to the newcomer.
+ns.Addon.db.profile.dm = true
+printedBefore = #printed
+wire.receive("Parchment", { t = "DMROLE", v = {}, ver = "0.1.0" }, "PARTY", "Pete")
+assert(#printed == printedBefore + 2 and printed[#printed]:find("also have DM mode"), "no clash warning")
+assert(wire.count == prevCount + 1 and wire.sent.t == "DMROLE"
+    and wire.channel == "WHISPER" and wire.target == "Pete", "no whispered counter-claim")
+
+-- A WHISPERED announce (the counter-claim) warns but is never answered.
+prevCount = wire.count
+wire.receive("Parchment", { t = "DMROLE", v = {}, ver = "0.1.0" }, "WHISPER", "Quin")
+assert(printed[#printed]:find("also have DM mode"), "whispered claim must still warn")
+assert(wire.count == prevCount, "whispered DMROLE must not be answered (ping-pong)")
+ns.Addon.db.profile.dm = false
 
 -- Post-1.0 policy: minor drift syncs, major mismatch does not.
 local ns2, wire2 = boot("1.2.0")

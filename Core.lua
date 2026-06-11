@@ -31,7 +31,7 @@ local C_GOLD = "|cffc8a868"
 -- AceDB layout for addon settings (the data tables live in their own SVs).
 local DB_DEFAULTS = {
     global = { activeCharacter = nil },
-    profile = { minimap = { hide = false }, dm = false, publicRolls = false },
+    profile = { minimap = { hide = false }, dm = false, publicRolls = false, shareVitals = true },
 }
 
 -- Data-format versioning. DB_FORMAT describes the shape of everything

@@ -1,8 +1,8 @@
 -- Parchment - Config (UI)
 --
--- The settings window (/pmt config): checkboxes for the profile toggles that
--- previously lived only behind slash commands (DM mode, public initiative
--- rolls, minimap button), plus shortcuts to the system library and saving.
+-- The settings window (/pmt config): checkboxes for the profile toggles
+-- (DM mode, public initiative rolls, vitals sharing, minimap button), plus
+-- shortcuts to the system library and saving.
 -- Pure UI over db.profile - it owns no state of its own, so the slash
 -- commands and the minimap menu stay equally valid ways to flip the same
 -- settings (they refresh this window when it is open, and vice versa).
@@ -67,12 +67,12 @@ end
 -- Builds the window once. Refresh fills the checkbox states.
 local function BuildFrame()
     local f = UI.CreateWindow("ParchmentConfigFrame", {
-        title = "Settings", width = 320, height = 380,
-        minW = 300, minH = 380, maxW = 460, maxH = 520, dbKey = "configWindow",
+        title = "Settings", width = 320, height = 410,
+        minW = 300, minH = 410, maxW = 460, maxH = 550, dbKey = "configWindow",
     })
     -- Restored geometry may predate a taller layout; programmatic SetSize is
     -- not clamped by the resize bounds, so enforce the minimum here.
-    if f:GetHeight() < 380 then f:SetHeight(380) end
+    if f:GetHeight() < 410 then f:SetHeight(410) end
 
     local y = -48
     Header(f, y, "GENERAL"); y = y - 24
@@ -80,8 +80,9 @@ local function BuildFrame()
     f.dmCheck = Checkbox(f, y, "DM mode",
         "Act as the DM: your initiative edits broadcast to the group, and you "
         .. "may send your ruleset with 'Share system'. When off, you receive "
-        .. "the DM's sync and submit your own initiative instead. Toggling "
-        .. "this never sends anything by itself.",
+        .. "the DM's sync and submit your own initiative instead. Turning it "
+        .. "on announces the role to your group (so two active DMs notice "
+        .. "each other); sharing your system stays a separate, explicit action.",
         function(checked)
             ns.Comm.SetDM(checked)
             RefreshDependents()
@@ -95,6 +96,16 @@ local function BuildFrame()
         function(checked)
             ns.Addon.db.profile.publicRolls = checked
             RefreshDependents()
+        end)
+    y = y - 28
+
+    f.vitalsCheck = Checkbox(f, y, "Share vitals with party",
+        "Broadcast your character's HP/Mana/AC snapshot to group members for "
+        .. "their party overview (/pmt party). Turn off to keep your vitals "
+        .. "private - you still see members who share theirs.",
+        function(checked)
+            ns.Addon.db.profile.shareVitals = checked
+            if checked and ns.Party then ns.Party.OnVitalsChanged() end
         end)
     y = y - 28
 
@@ -136,6 +147,7 @@ Refresh = function(self)
     local p = ns.Addon.db.profile
     self.dmCheck:SetChecked(ns.Comm and ns.Comm.IsDM() or false)
     self.rollsCheck:SetChecked(p.publicRolls and true or false)
+    self.vitalsCheck:SetChecked(p.shareVitals ~= false)
     self.minimapCheck:SetChecked(not (p.minimap and p.minimap.hide))
 end
 

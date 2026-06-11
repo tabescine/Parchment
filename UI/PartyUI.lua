@@ -3,6 +3,7 @@
 -- A live overview of the group's characters (aimed at the DM, useful to
 -- anyone): one pooled row per member showing level, HP (current/max plus
 -- temp), Mana, AC and initiative modifier from received VITALS snapshots.
+-- Members with DM mode on carry a gold "(DM)" tag after their name.
 -- Refresh asks the whole group to re-send; rows dim when their snapshot goes
 -- stale. Clicking a row requests that member's full sheet via Sharing.
 --
@@ -87,7 +88,7 @@ local function RenderRows(self)
         row:SetPoint("TOPLEFT", content, "TOPLEFT", 2, y)
         row:SetPoint("TOPRIGHT", content, "TOPRIGHT", -2, y)
 
-        row.name:SetText(v.name)
+        row.name:SetText(v.name .. (v.dm and "  |cffc8a868(DM)|r" or ""))
         row.level:SetText(tostring(v.level))
         row.hp:SetText(v.hp .. " / " .. v.hpmax .. (v.temp > 0 and (" |cff8ec6ff+" .. v.temp .. "|r") or ""))
         row.mana:SetText(v.manamax > 0 and (v.mana .. " / " .. v.manamax) or "-")
