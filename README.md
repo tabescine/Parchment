@@ -26,7 +26,9 @@ every window - sheet math included - adapts to it.
   sheet on demand, dice rolls that are either private or party-visible.
 - **DM sharing with consent** - a DM can broadcast the active system to the
   group; receivers are prompted before anything replaces their own setup, and
-  every received system is kept in a local library (`/pmt systems`).
+  every received system is kept in a local library (`/pmt systems`). Sync
+  requires compatible addon versions - mismatched messages are ignored with a
+  chat notice saying who needs to update.
 - **Import/export** - paste JSON or TOML in-game (comments and all), export
   back out the same way. No external tooling needed; an optional offline
   converter lives in `Tools/` for file-based workflows and recovery.

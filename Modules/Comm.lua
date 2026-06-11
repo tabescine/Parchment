@@ -5,10 +5,17 @@
 -- players receive them read-only and can submit their own initiative back.
 --
 -- A single role flag (db.profile.dm) decides whether this client is the DM.
--- Messages are typed envelopes { t = type, v = payload }; consumers register a
--- handler per type via Comm.On.
+-- Messages are typed envelopes { t = type, v = payload, ver = sender's addon
+-- version }; consumers register a handler per type via Comm.On.
 --
--- Reads from: ns.Addon (the AceAddon object with Comm/Serializer mixins), its db.
+-- Version gating: a received message is only dispatched when the sender's
+-- version is sync-compatible with ours (same major; while the major is 0 -
+-- where a minor bump may change the wire format - the minor must match too).
+-- Incompatible messages are dropped with a one-time notice per sender, so a
+-- mixed-version group degrades to "no sync" instead of undefined behaviour.
+--
+-- Reads from: ns.Addon (the AceAddon object with Comm/Serializer mixins), its
+--   db, ns.Print.
 -- Exposes on ns.Comm: IsDM, IsSelf, SetDM, Send, Whisper, On, Init.
 
 local ADDON, ns = ...
@@ -18,6 +25,49 @@ local Comm = ns.Comm
 
 local PREFIX = "Parchment"
 local handlers = {}
+
+-- Our addon version, from the .toc (single source of truth).
+local VERSION = (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(ADDON, "Version"))
+    or (GetAddOnMetadata and GetAddOnMetadata(ADDON, "Version")) or "0.0.0"
+
+-- Parses "MAJOR.MINOR[.PATCH...]" into numbers; nil, nil when unparsable.
+local function MajorMinor(v)
+    local maj, min = tostring(v or ""):match("^(%d+)%.(%d+)")
+    return tonumber(maj), tonumber(min)
+end
+
+-- True when a sender's version can sync with ours: same major, and - while
+-- the major is 0 - the same minor too.
+local function Compatible(theirs)
+    local tMaj, tMin = MajorMinor(theirs)
+    local oMaj, oMin = MajorMinor(VERSION)
+    if not tMaj or not oMaj or tMaj ~= oMaj then return false end
+    return tMaj > 0 or tMin == oMin
+end
+
+-- True when their version is newer than ours (decides who the mismatch
+-- notice tells to update). Compares numeric segments left to right.
+local function IsNewer(theirs)
+    local t = {}; for n in tostring(theirs or ""):gmatch("%d+") do t[#t + 1] = tonumber(n) end
+    local o = {}; for n in tostring(VERSION):gmatch("%d+") do o[#o + 1] = tonumber(n) end
+    for i = 1, math.max(#t, #o) do
+        local a, b = t[i] or 0, o[i] or 0
+        if a ~= b then return a > b end
+    end
+    return false
+end
+
+-- Prints one notice per sender per session about a version mismatch.
+local versionWarned = {}
+local function WarnMismatch(sender, theirs)
+    local who = sender or "?"
+    if versionWarned[who] then return end
+    versionWarned[who] = true
+    local hint = IsNewer(theirs) and "Update your Parchment to sync with them."
+        or "They need to update their Parchment to sync with you."
+    ns.Print(string.format("%s runs Parchment %s, you run %s - sync between you is disabled. %s",
+        who, tostring(theirs or "(unknown)"), VERSION, hint))
+end
 
 -- True when this client is acting as the DM.
 function Comm.IsDM()
@@ -47,7 +97,7 @@ end
 function Comm.Send(msgType, payload)
     local channel = GroupChannel()
     if not channel then return false, "you are not in a party or raid." end
-    local data = ns.Addon:Serialize({ t = msgType, v = payload })
+    local data = ns.Addon:Serialize({ t = msgType, v = payload, ver = VERSION })
     ns.Addon:SendCommMessage(PREFIX, data, channel)
     return true
 end
@@ -55,7 +105,7 @@ end
 -- Sends a typed message directly to one player (addon whisper).
 function Comm.Whisper(msgType, payload, target)
     if not target or target == "" then return false, "no target." end
-    local data = ns.Addon:Serialize({ t = msgType, v = payload })
+    local data = ns.Addon:Serialize({ t = msgType, v = payload, ver = VERSION })
     ns.Addon:SendCommMessage(PREFIX, data, "WHISPER", target)
     return true
 end
@@ -65,11 +115,15 @@ function Comm.On(msgType, fn)
     handlers[msgType] = fn
 end
 
--- AceComm receive callback: deserialize and dispatch by type.
+-- AceComm receive callback: deserialize, gate on version, dispatch by type.
 local function OnReceive(prefix, text, distribution, sender)
     if prefix ~= PREFIX then return end
     local ok, env = ns.Addon:Deserialize(text)
     if not ok or type(env) ~= "table" then return end
+    if not Compatible(env.ver) then
+        if not Comm.IsSelf(sender) then WarnMismatch(sender, env.ver) end
+        return
+    end
     local fn = handlers[env.t]
     if fn then fn(env.v, sender, distribution) end
 end
