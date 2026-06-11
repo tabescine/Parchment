@@ -1,13 +1,16 @@
 -- Parchment - Import / Export (UI)
 --
--- The import/export modal: a large multi-line text box plus buttons to export
--- the active character or the system (a toggle picks JSON or TOML) and to
--- import pasted JSON, TOML, or Lua.
+-- The Import / Export panel of the hub window: a large multi-line text box
+-- plus buttons to export the active character or the system (a toggle picks
+-- JSON or TOML) and to import pasted JSON, TOML, or Lua.
 -- Import results (success or the reason for failure) show in a status line; a
--- successful import refreshes the character sheet if it is open.
+-- successful import refreshes every data-driven window. The status line is
+-- deliberately NOT cleared on show - an import's outcome survives hub
+-- refreshes triggered by the import itself.
 --
--- Reads from: ns.ImportExport, ns.UI, ns.CharacterSheetUI.
--- Exposes on ns.ImportExportUI: Open, Toggle.
+-- Reads from: ns.ImportExport, ns.UI, ns.HubUI, ns.Systems, ns.CharacterSheetUI.
+-- Exposes on ns.ImportExportUI: Open, Toggle (thin wrappers over the hub's
+--   import panel).
 -- Registers the "import" module opener with Core.
 
 local ADDON, ns = ...
@@ -105,18 +108,14 @@ local function DoImport(self)
     end
 end
 
--- Builds the window once.
-local function BuildFrame()
-    local f = UI.CreateWindow("ParchmentIEFrame", {
-        title = "Import / Export", width = 480, height = 470,
-        minW = 360, minH = 320, maxW = 760, maxH = 900, dbKey = "ieWindow",
-    })
+-- Builds the panel widgets once into the hub-provided frame.
+local function BuildContent(f)
     f.format = "json"
 
-    -- Instructions under the title.
+    -- Instructions at the top of the panel.
     local instr = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    instr:SetPoint("TOPLEFT", 16, -42)
-    instr:SetPoint("RIGHT", f, "RIGHT", -16, 0)
+    instr:SetPoint("TOPLEFT", 2, -2)
+    instr:SetPoint("RIGHT", f, "RIGHT", -2, 0)
     instr:SetJustifyH("LEFT")
     instr:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
     instr:SetText("Export copies data out in the chosen format. Import auto-detects "
@@ -125,8 +124,8 @@ local function BuildFrame()
 
     -- Bordered text area containing a scrolling multi-line edit box.
     local box = CreateFrame("Frame", nil, f, "BackdropTemplate")
-    box:SetPoint("TOPLEFT", 14, -64)
-    box:SetPoint("BOTTOMRIGHT", -14, 92)
+    box:SetPoint("TOPLEFT", 0, -62)
+    box:SetPoint("BOTTOMRIGHT", 0, 88)
     box:SetBackdrop({
         bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -172,48 +171,45 @@ local function BuildFrame()
 
     -- Status line.
     f.status = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    f.status:SetPoint("BOTTOMLEFT", 16, 68)
-    f.status:SetPoint("BOTTOMRIGHT", -16, 68)
+    f.status:SetPoint("BOTTOMLEFT", 2, 64)
+    f.status:SetPoint("BOTTOMRIGHT", -2, 64)
     f.status:SetJustifyH("LEFT")
     f.status:SetWordWrap(false)
 
     -- Top button row: export actions and the format toggle.
     local expChar = MakeButton(f, "Export Char", 88, function() DoExportCharacter(f) end)
-    expChar:SetPoint("BOTTOMLEFT", 16, 40)
+    expChar:SetPoint("BOTTOMLEFT", 0, 34)
     local expSys = MakeButton(f, "Export System", 96, function() DoExportSystem(f) end)
-    expSys:SetPoint("BOTTOMLEFT", 108, 40)
+    expSys:SetPoint("BOTTOMLEFT", 92, 34)
     f.formatBtn = MakeButton(f, "Format: JSON", 110, function() ToggleFormat(f) end)
-    f.formatBtn:SetPoint("BOTTOMLEFT", 208, 40)
+    f.formatBtn:SetPoint("BOTTOMLEFT", 192, 34)
 
     -- Bottom button row: import and clear.
     local importBtn = MakeButton(f, "Import", 64, function() DoImport(f) end)
-    importBtn:SetPoint("BOTTOMLEFT", 16, 12)
+    importBtn:SetPoint("BOTTOMLEFT", 0, 6)
     local clearBtn = MakeButton(f, "Clear", 56, function()
         f.pasteData = nil
         f.editBox:SetText("")
         f.editBox:SetMaxBytes(PASTE_CAP)
         SetStatus(f, "", false)
     end)
-    clearBtn:SetPoint("BOTTOMLEFT", 84, 12)
-
-    return f
+    clearBtn:SetPoint("BOTTOMLEFT", 68, 6)
 end
 
--- Returns the singleton frame, building it on first use.
-local function GetFrame()
-    if not ImportExportUI.frame then ImportExportUI.frame = BuildFrame() end
-    return ImportExportUI.frame
-end
+-- No Refresh on purpose: nothing in the panel goes stale, and clearing the
+-- status on show would wipe an import's own outcome (the import triggers a
+-- RefreshAll that re-shows this very panel).
+ns.HubUI.RegisterPanel({
+    id = "import", label = "Import / Export", order = 50,
+    Build = BuildContent,
+})
 
 function ImportExportUI.Open()
-    local f = GetFrame()
-    SetStatus(f, "", false)
-    f:Show()
+    ns.HubUI.Open("import")
 end
 
 function ImportExportUI.Toggle()
-    local f = GetFrame()
-    if f:IsShown() then f:Hide() else ImportExportUI.Open() end
+    ns.HubUI.Toggle("import")
 end
 
 ns.RegisterModule("import", ImportExportUI.Toggle)

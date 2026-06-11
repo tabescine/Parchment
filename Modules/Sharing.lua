@@ -8,7 +8,7 @@
 --
 -- Reads from: ns.Comm, ns.Addon (event registration), ns.GetActiveCharacter,
 --   ns.CharacterSheetUI, ns.Print.
--- Exposes on ns.Sharing: Request, OpenCache, ClearCache.
+-- Exposes on ns.Sharing: Request, GetCache, OpenCache, ClearCache.
 
 local ADDON, ns = ...
 
@@ -161,26 +161,15 @@ if ns.Comm then
     end)
 end
 
--- Opens a picker of cached sheets to view (works offline).
+-- The cache of received sheets, keyed by sender (read-only for the hub's
+-- Cached Sheets panel).
+function S.GetCache()
+    return Cache()
+end
+
+-- Opens the cached-sheets browser (the hub's Cached Sheets panel).
 function S.OpenCache()
-    local cache = Cache()
-    local items = {}
-    for key, entry in pairs(cache) do
-        items[#items + 1] = { id = key, name = (entry.name or "?") .. "  |cff888888(" .. key .. ")|r" }
-    end
-    if #items == 0 then
-        ns.Print("no cached sheets yet. View a player to cache theirs.")
-        return
-    end
-    ns.Dialogs.Pick({
-        title = "Cached Sheets", prompt = "View a cached character sheet", items = items, max = 1, selected = {},
-        onConfirm = function(ids)
-            local entry = ids[1] and cache[ids[1]]
-            if entry and ns.CharacterSheetUI then
-                ns.CharacterSheetUI.ShowCharacter(entry.char, ids[1] .. " (cached)")
-            end
-        end,
-    })
+    if ns.HubUI then ns.HubUI.Open("cached") end
 end
 
 -- Clears all cached sheets.

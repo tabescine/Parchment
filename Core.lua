@@ -301,7 +301,7 @@ local function PrintHelp()
     Print("  " .. C_GOLD .. "/pmt config|r  - open settings")
     Print("  " .. C_GOLD .. "/pmt dm|r      - toggle DM mode (broadcast vs receive sync)")
     Print("  " .. C_GOLD .. "/pmt share|r   - DM: send your system to the group")
-    Print("  " .. C_GOLD .. "/pmt systems|r - choose the active system (|cffc8a868/pmt systems delete|r to remove one)")
+    Print("  " .. C_GOLD .. "/pmt systems|r - manage your system library (activate / delete)")
     Print("  " .. C_GOLD .. "/pmt rolls|r   - toggle public (party-visible) dice rolls")
     Print("  " .. C_GOLD .. "/pmt party|r   - live party overview (HP/Mana/AC of group members)")
     Print("  " .. C_GOLD .. "/pmt view <name>|r - view another player's character sheet")
@@ -377,10 +377,8 @@ local function HandleSlash(input)
     elseif cmd == "share" then
         ns.ShareSystem()
     elseif cmd == "systems" then
-        if ns.Systems then
-            if arg and strtrim(arg):lower() == "delete" then ns.Systems.OpenDeletePicker()
-            else ns.Systems.OpenPicker() end
-        end
+        -- The system library lives in the hub (activate / delete per row).
+        if ns.HubUI then ns.HubUI.Open("systems") end
     elseif cmd == "rolls" then
         local p = ns.Addon.db.profile
         p.publicRolls = not p.publicRolls
