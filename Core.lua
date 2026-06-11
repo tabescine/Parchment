@@ -33,6 +33,27 @@ local DB_DEFAULTS = {
     profile = { minimap = { hide = false }, dm = false, publicRolls = false },
 }
 
+-- Data-format versioning. DB_FORMAT describes the shape of everything
+-- Parchment stores: the active system, the characters, the system library,
+-- and the sharing cache. When a release changes any stored shape, bump
+-- DB_FORMAT and append a migration step to MIGRATIONS - users' data is then
+-- upgraded in place at load, and nobody ever deletes a SavedVariables file.
+-- The stamp lives in ParchmentDB.global (NOT inside the data tables, which
+-- are exactly what export produces - a format key there would leak into
+-- every exported file).
+local DB_FORMAT = 1
+
+-- MIGRATIONS[n] upgrades stored data from format n-1 to format n. Steps run
+-- in order, so any old version passes through every intermediate shape. Each
+-- step must be idempotent (WoW only flushes SavedVariables on logout/reload,
+-- so a crash can re-run a step against already-migrated data) and must cover
+-- every stored copy of the shape it changes: ParchmentSystemDB,
+-- ParchmentCharDB.characters, db.global.systemLibrary (full system copies),
+-- and db.global.sharedCache (full character copies).
+local MIGRATIONS = {
+    -- [2] = function(db) ... end,
+}
+
 -- Slash subcommand -> module id (nil routing falls through to help).
 local MODULE_COMMANDS = {
     init = "initiative",
@@ -377,6 +398,22 @@ local function HandleSlash(input)
     end
 end
 
+-- Runs pending data-format migrations, then stamps the current format. Data
+-- from a NEWER Parchment (downgrade) is left untouched with a warning - we
+-- cannot know how to read it, and wiping would destroy good data.
+local function MigrateData(db)
+    local from = db.global.dataFormat or 1
+    if from > DB_FORMAT then
+        Print(C_YELLOW .. "your saved data is from a newer Parchment (data format " .. from
+            .. ", this addon reads " .. DB_FORMAT .. "). Update the addon; the data is untouched." .. "|r")
+        return
+    end
+    for v = from + 1, DB_FORMAT do
+        if MIGRATIONS[v] then MIGRATIONS[v](db) end
+    end
+    db.global.dataFormat = DB_FORMAT
+end
+
 -- AceAddon lifecycle.
 
 function Parchment:OnInitialize()
@@ -387,6 +424,9 @@ function Parchment:OnInitialize()
     -- No ruleset ships with Parchment: the system stays empty until the user
     -- imports one (/pmt import) or adopts a DM-shared one.
     ParchmentSystemDB = ParchmentSystemDB or {}
+
+    -- Upgrade stored data written by older releases (see MIGRATIONS above).
+    MigrateData(self.db)
 
     if not g.activeCharacter then
         g.activeCharacter = next(ns.GetCharacters())
