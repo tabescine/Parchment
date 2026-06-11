@@ -7,6 +7,7 @@
 --
 -- Reads from: ns.InitiativeTracker, ns.GetActiveCharacter, ns.GetSystem,
 --   ns.CharacterSheet.Compute, ns.UI (shared window + palette).
+-- Exposes on ns.InitiativeUI: Open, Toggle, RefreshIfShown.
 -- Registers the "initiative" module opener with Core.
 
 local ADDON, ns = ...

@@ -1,11 +1,13 @@
 -- Parchment - Import / Export (UI)
 --
 -- The import/export modal: a large multi-line text box plus buttons to export
--- the active character or the system as JSON, and to import pasted JSON or Lua.
+-- the active character or the system (a toggle picks JSON or TOML) and to
+-- import pasted JSON, TOML, or Lua.
 -- Import results (success or the reason for failure) show in a status line; a
 -- successful import refreshes the character sheet if it is open.
 --
 -- Reads from: ns.ImportExport, ns.UI, ns.CharacterSheetUI.
+-- Exposes on ns.ImportExportUI: Open, Toggle.
 -- Registers the "import" module opener with Core.
 
 local ADDON, ns = ...

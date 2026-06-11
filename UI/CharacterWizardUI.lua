@@ -8,6 +8,8 @@
 --
 -- Reads from: ns.CharacterEditor, ns.CharacterSheet.Compute, ns.GetSystem,
 --   ns.Widgets, ns.Dialogs, ns.UI, ns.CharacterEditorUI.
+-- Exposes on ns.CharacterWizardUI: Open, RefreshIfShown (Finish is the
+--   wizard's own final step).
 -- Registers the "new" module opener with Core.
 
 local ADDON, ns = ...

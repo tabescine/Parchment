@@ -11,6 +11,8 @@
 --
 -- Reads from: ns.CharacterEditor, ns.CharacterSheet.Compute, ns.GetSystem,
 --   ns.GetActiveCharacter, ns.GetCharacters, ns.Dialogs, ns.Widgets, ns.UI.
+-- Exposes on ns.CharacterEditorUI: Open, Toggle, RefreshIfShown (the rest of
+--   the table is the panel's own button handlers).
 -- Registers the "edit" module opener with Core.
 
 local ADDON, ns = ...

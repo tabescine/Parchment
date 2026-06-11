@@ -10,6 +10,8 @@
 -- any specific ruleset, so whatever system the user imports renders too.
 --
 -- Reads from: ns.GetActiveCharacter, ns.GetSystem, ns.CharacterSheet.Compute.
+-- Exposes on ns.CharacterSheetUI: Open, Toggle, RefreshIfShown, and
+--   ShowCharacter (read-only view of a received/cached character).
 -- Registers the "sheet" module opener with Core.
 
 local ADDON, ns = ...

@@ -10,6 +10,8 @@
 --
 -- Reads from: ns.GetSystem, ns.GetActiveCharacter, ns.CharacterSheet.Compute,
 --   ns.GetAttribute, ns.PerkTree, ns.UI.
+-- Exposes on ns.PerkTreeUI: Open, Toggle, and .frame (checked by callers that
+--   re-render the viewer only when it is already shown).
 -- Registers the "perks" module opener with Core.
 
 local ADDON, ns = ...
