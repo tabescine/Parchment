@@ -1,11 +1,13 @@
 -- Parchment - Sharing
 --
 -- Character-sheet sharing, TRP3-style: request another player's active
--- character on demand and view it read-only. A "View Parchment Sheet" entry is
--- added to player right-click menus; it whispers a request, the target's addon
--- replies with their active character, and we open the sheet in view mode.
+-- character on demand and view it read-only. A "View sheet" entry is added
+-- to player right-click menus under the addon's own "Parchment" section; it
+-- whispers a request, the target's addon replies with their active
+-- character, and we open the sheet in view mode.
 --
--- Reads from: ns.Comm, ns.GetActiveCharacter, ns.CharacterSheetUI, ns.Print.
+-- Reads from: ns.Comm, ns.Addon (event registration), ns.GetActiveCharacter,
+--   ns.CharacterSheetUI, ns.Print.
 -- Exposes on ns.Sharing: Request, OpenCache, ClearCache.
 
 local ADDON, ns = ...
@@ -190,7 +192,8 @@ function S.ClearCache()
 end
 
 -- Adds "View Parchment Sheet" to player right-click menus (modern Menu API,
--- retail 11.0+). Covers self, target, focus, unit frames, chat names, and lists.
+-- retail 11.0+), under the addon's own "Parchment" section. Covers self,
+-- target, focus, unit frames, chat names, and lists.
 local UNIT_MENUS = {
     "MENU_UNIT_SELF", "MENU_UNIT_PLAYER", "MENU_UNIT_TARGET", "MENU_UNIT_FOCUS",
     "MENU_UNIT_PARTY", "MENU_UNIT_RAID_PLAYER", "MENU_UNIT_RAID",
@@ -213,12 +216,35 @@ local function ResolveName(contextData)
     return FullName(name, server)
 end
 
+-- Appends our entries under their own "Parchment" section (Menu-API menus
+-- are flat; a divider + title opens a section that runs until the next one).
+-- Deliberately NOT merged into TRP3's "Roleplay options" section: that
+-- placement depends on callback registration order, breaks silently when a
+-- TRP3 user disables its menu entries, and makes our button look like a
+-- TRP3 feature. An own section behaves identically with or without TRP3.
+local function AddMenuEntry(root, contextData)
+    local full = ResolveName(contextData)
+    if not full then return end
+    root:CreateDivider()
+    root:CreateTitle("Parchment")
+    root:CreateButton("View sheet", function() S.Request(full) end)
+end
+
+-- Registration is deferred to PLAYER_ENTERING_WORLD purely for stable menu
+-- ordering: ModifyMenu callbacks run in registration order, and registering
+-- after other addons' login-time hooks keeps the Parchment section at the
+-- bottom (after e.g. TRP3's "Roleplay options") instead of moving around
+-- with addon load order. Nothing breaks if another addon registers later.
 if Menu and Menu.ModifyMenu then
-    for _, tag in ipairs(UNIT_MENUS) do
-        Menu.ModifyMenu(tag, function(owner, root, contextData)
-            local full = ResolveName(contextData)
-            if not full then return end
-            root:CreateButton("View Parchment Sheet", function() S.Request(full) end)
-        end)
-    end
+    ns.Addon:RegisterEvent("PLAYER_ENTERING_WORLD", function()
+        ns.Addon:UnregisterEvent("PLAYER_ENTERING_WORLD")
+        for _, tag in ipairs(UNIT_MENUS) do
+            -- The closure must be fresh per registration: ModifyMenu keys
+            -- its registry on it, so a shared one would replace earlier
+            -- registrations.
+            Menu.ModifyMenu(tag, function(owner, root, contextData)
+                AddMenuEntry(root, contextData)
+            end)
+        end
+    end)
 end
