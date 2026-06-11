@@ -123,7 +123,11 @@ local function CreateRow(content)
     hpBtn:SetSize(78, ROW_H)
     hpBtn:SetScript("OnClick", function()
         if not (CanEdit() and row.npcName) then return end
-        StaticPopup_Show("PARCHMENT_SET_NPC_HP", row.npcName, nil, row.index)
+        -- The popup carries the combatant TABLE, not the row index: rows can
+        -- shift while the dialog is open (e.g. a player submission inserts),
+        -- and the input must land on this combatant, not this position.
+        local c = IT.GetState().combatants[row.index]
+        if c then StaticPopup_Show("PARCHMENT_SET_NPC_HP", row.npcName, nil, c) end
     end)
     hpBtn:SetScript("OnEnter", function(self)
         if not row.npcName then return end
@@ -323,6 +327,8 @@ function Refresh(self)
     local editable = CanEdit()
     self.addBtn:SetEnabled(editable)
     self.rollBtn:SetEnabled(editable)
+    self.npcCheck:SetEnabled(editable)
+    self.startBtn:SetEnabled(editable and #state.combatants > 0)
     self.nextBtn:SetEnabled(editable or IsMyTurn())
     self.nextBtn:SetText(editable and "Next" or "End turn")
     self.resetBtn:SetEnabled(editable)
@@ -335,22 +341,30 @@ function Refresh(self)
 end
 
 -- Commits the name/value inputs as a combatant. rolled=true treats the value as
--- a d20 modifier; otherwise it is the initiative total.
+-- a d20 modifier; otherwise it is the initiative total. The NPC checkbox
+-- decides the kind: NPCs get DM-tracked HP, unticked adds a player row (for
+-- group members without the addon) whose HP comes from their vitals.
 local function CommitInput(self, rolled)
     if not CanEdit() then return end
     local name = self.nameBox:GetText()
     local value = tonumber(self.modBox:GetText()) or 0
+    local isNPC = self.npcCheck:GetChecked() and true or false
     self.nameBox:SetText("")
     self.modBox:SetText("")
     self.nameBox:ClearFocus()
     self.modBox:ClearFocus()
     if rolled then
         -- May resolve asynchronously (public rolls); refresh in the callback.
-        IT.AddRolled(name, value, false, nil, function() Refresh(self); Sync() end)
+        IT.AddRolled(name, value, isNPC, nil, function(combatant, _, _, err)
+            if err then ns.Print(err) end
+            Refresh(self)
+            if combatant then Sync() end
+        end)
     else
-        IT.Add(name, value)
+        local combatant, err = IT.Add(name, value, isNPC)
+        if err then ns.Print(err) end
         Refresh(self)
-        Sync()
+        if combatant then Sync() end
     end
 end
 
@@ -365,9 +379,21 @@ local function AddActiveCharacter(self)
     if not char then return end
     local sheet = ns.CharacterSheet.Compute(char, ns.GetSystem())
     if not sheet then return end
+    -- One entry per character: re-rolling means asking the DM to remove the
+    -- old entry first. The local state mirrors the DM's last sync, so this
+    -- also stops a player double-submitting; the DM-side INITSUBMIT guard
+    -- stays authoritative for the race window before the sync lands.
+    if IT.HasPlayer(sheet.name) then
+        ns.Print(sheet.name .. " is already in the turn order.")
+        return
+    end
     local tb = MyTiebreak(sheet)
     if CanEdit() then
-        IT.AddRolled(sheet.name, sheet.derived.initiative, false, tb, function() Refresh(self); Sync() end)
+        IT.AddRolled(sheet.name, sheet.derived.initiative, false, tb, function(combatant, _, _, err)
+            if err then ns.Print(err) end
+            Refresh(self)
+            if combatant then Sync() end
+        end)
     else
         IT.RequestRoll(sheet.derived.initiative, function(total)
             local ok, err = ns.Comm.Send("INITSUBMIT", { name = sheet.name, init = total, tb = tb })
@@ -380,8 +406,10 @@ end
 local function BuildFrame()
     local f = UI.CreateWindow("ParchmentInitFrame", {
         title = "Combat", width = 340, height = 440,
-        minW = 280, minH = 260, maxW = 560, maxH = 900, dbKey = "initiativeWindow",
+        minW = 320, minH = 260, maxW = 560, maxH = 900, dbKey = "initiativeWindow",
     })
+    -- Restored geometry may predate the wider input row (NPC checkbox).
+    if f:GetWidth() < 320 then f:SetWidth(320) end
 
     -- Turn/round stopwatch (shown once combat has a current turn).
     local timerBtn = CreateFrame("Button", nil, f)
@@ -446,15 +474,39 @@ local function BuildFrame()
     f.rollBtn = MakeButton(f, "Roll", 42, "Add a combatant, rolling d20 + the value as a modifier.")
     f.rollBtn:SetPoint("BOTTOMLEFT", 214, 41)
 
-    -- Action row: Me/Submit, Next, Reset, round.
+    -- Typed combatants default to NPCs (red name, DM-tracked HP). Untick to
+    -- hand-add a player - e.g. a group member without the addon - whose HP
+    -- cell reads from vitals instead.
+    f.npcCheck = CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
+    f.npcCheck:SetSize(22, 22)
+    f.npcCheck:SetPoint("BOTTOMLEFT", 256, 41)
+    f.npcCheck:SetChecked(true)
+    f.npcLabel = f.npcCheck:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    f.npcLabel:SetPoint("LEFT", f.npcCheck, "RIGHT", 0, 0)
+    f.npcLabel:SetText("NPC")
+    f.npcCheck:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Add as NPC", 1, 1, 1)
+        GameTooltip:AddLine("NPCs get DM-tracked hit points (click their HP cell; "
+            .. "players never see the numbers). Untick to add a player by name - "
+            .. "their HP cell shows their shared vitals instead.", 0.9, 0.9, 0.9, true)
+        GameTooltip:Show()
+    end)
+    f.npcCheck:SetScript("OnLeave", GameTooltip_Hide)
+
+    -- Action row: Me/Submit, Start, Next, Reset.
     f.meBtn = MakeButton(f, "Me", 42, "DM/solo: add your active character (rolled). Player: submit your initiative to the DM.")
     f.meBtn:SetPoint("BOTTOMLEFT", 18, 14)
+    f.startBtn = MakeButton(f, "Start", 50,
+        "Start combat: round 1 begins at the top of the order. Add everyone "
+        .. "first - nothing runs (no round, no timers) until combat starts.")
+    f.startBtn:SetPoint("BOTTOMLEFT", 64, 14)
     f.nextBtn = MakeButton(f, "Next", 54,
         "DM/solo: advance to the next turn. Player: end your own turn "
         .. "(enabled only while it is your character's turn).")
-    f.nextBtn:SetPoint("BOTTOMLEFT", 64, 14)
-    f.resetBtn = MakeButton(f, "Reset", 54, "Clear all combatants.")
-    f.resetBtn:SetPoint("BOTTOMLEFT", 122, 14)
+    f.nextBtn:SetPoint("BOTTOMLEFT", 118, 14)
+    f.resetBtn = MakeButton(f, "Reset", 54, "Clear all combatants and end combat (asks for confirmation).")
+    f.resetBtn:SetPoint("BOTTOMLEFT", 176, 14)
 
     -- Public-roll toggle: route Roll/Me through the in-game dice roller so the
     -- whole party sees the result, instead of a hidden local d20.
@@ -483,6 +535,7 @@ local function BuildFrame()
     f.addBtn:SetScript("OnClick", function() CommitInput(f, false) end)
     f.rollBtn:SetScript("OnClick", function() CommitInput(f, true) end)
     f.meBtn:SetScript("OnClick", function() AddActiveCharacter(f) end)
+    f.startBtn:SetScript("OnClick", function() if CanEdit() then IT.Start(); Refresh(f); Sync() end end)
     f.nextBtn:SetScript("OnClick", function()
         if CanEdit() then
             IT.Next()
@@ -497,7 +550,12 @@ local function BuildFrame()
             ns.Print(ok and "ending your turn..." or (err or "could not reach the DM."))
         end
     end)
-    f.resetBtn:SetScript("OnClick", function() if CanEdit() then IT.Reset(); Refresh(f); Sync() end end)
+    f.resetBtn:SetScript("OnClick", function()
+        if not CanEdit() then return end
+        local n = #IT.GetState().combatants
+        if n == 0 then return end
+        StaticPopup_Show("PARCHMENT_RESET_COMBAT", n .. (n == 1 and " combatant" or " combatants"))
+    end)
     f.nameBox:SetScript("OnEnterPressed", function() CommitInput(f, false) end)
     f.modBox:SetScript("OnEnterPressed", function() CommitInput(f, false) end)
 
@@ -530,26 +588,57 @@ local function RefreshIfShown()
 end
 InitiativeUI.RefreshIfShown = RefreshIfShown
 
+-- The popup's edit box: "EditBox" since the 12.x GameDialog rework,
+-- "editBox" on older clients - accept either.
+local function PopupEditBox(popup)
+    return popup.EditBox or popup.editBox
+end
+
+-- Applies set-HP input to a combatant by resolving its CURRENT index - the
+-- order may have shifted while the dialog was open.
+local function ApplyHPInput(combatant, text)
+    for i, c in ipairs(IT.GetState().combatants) do
+        if c == combatant then return IT.AdjustHP(i, text) end
+    end
+    return false, "that combatant is no longer in the order."
+end
+
 -- Set-HP popup for NPC rows (DM only; opened from a row's HP cell). The
--- index travels as popup data; AdjustHP validates and parses the input.
+-- combatant table travels as popup data; AdjustHP validates and parses.
 StaticPopupDialogs["PARCHMENT_SET_NPC_HP"] = {
     text = "Hit points for %s\n|cff888888number = set current (and max while unset),\n+N / -N = adjust, current/max = set both|r",
     button1 = ACCEPT,
     button2 = CANCEL,
     hasEditBox = 1,
-    OnAccept = function(self, index)
-        local ok, err = IT.AdjustHP(index, self.editBox:GetText())
+    OnAccept = function(self, combatant)
+        local ok, err = ApplyHPInput(combatant, PopupEditBox(self):GetText())
         if not ok then ns.Print(err) end
         RefreshIfShown()
     end,
-    EditBoxOnEnterPressed = function(self, index)
+    EditBoxOnEnterPressed = function(self, combatant)
         local popup = self:GetParent()
-        local ok, err = IT.AdjustHP(index, popup.editBox:GetText())
+        local ok, err = ApplyHPInput(combatant, PopupEditBox(popup):GetText())
         if not ok then ns.Print(err) end
         RefreshIfShown()
         popup:Hide()
     end,
     EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
+-- Reset confirmation: the button sits next to Next, and a mid-fight misclick
+-- must not wipe a painstakingly assembled order.
+StaticPopupDialogs["PARCHMENT_RESET_COMBAT"] = {
+    text = "Clear the combat tracker?\n\nThis removes %s and ends combat.",
+    button1 = "Clear",
+    button2 = CANCEL,
+    OnAccept = function()
+        -- Re-checked: the role may have changed while the dialog was open.
+        if not CanEdit() then return end
+        IT.Reset()
+        RefreshIfShown()
+        Sync()
+    end,
     timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
 }
 
@@ -568,10 +657,15 @@ if ns.Comm then
         if not ns.Comm.IsDM() then return end
         if type(payload) ~= "table" or type(payload.name) ~= "string" then return end
         local init = tonumber(payload.init) or 0
-        if IT.Add(payload.name, init, false, tonumber(payload.tb)) then
+        local combatant, err = IT.Add(payload.name, init, false, tonumber(payload.tb))
+        if combatant then
             ns.Print((sender or "a player") .. " submitted initiative " .. init .. ".")
             RefreshIfShown()
             Sync()
+        elseif err then
+            -- Duplicate player submission (double-click, or a race with the
+            -- last sync): authoritative refusal, DM-side notice only.
+            ns.Print((sender or "a player") .. " re-submitted initiative; ignored - " .. err)
         end
     end)
     -- A player ended their own turn: verify the named combatant really is

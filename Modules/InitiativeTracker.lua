@@ -15,9 +15,9 @@
 -- only name/init/isNPC, so remote data cannot smuggle fields in either.
 --
 -- Reads from: ns.Addon.db.global.initiative, ns.Dice (shared d20 roller).
--- Exposes on ns.InitiativeTracker: GetState, SetState, WireState, Add,
---   AddRolled, Remove, Move, SetCurrent, Next, Prev, Start, Reset, AdjustHP,
---   RollD20, RequestRoll.
+-- Exposes on ns.InitiativeTracker: GetState, SetState, WireState, HasPlayer,
+--   Add, AddRolled, Remove, Move, SetCurrent, Next, Prev, Start, Reset,
+--   AdjustHP, RollD20, RequestRoll.
 
 local ADDON, ns = ...
 
@@ -134,14 +134,30 @@ function IT.RequestRoll(modifier, onComplete)
     return ns.Dice.Request(modifier, onComplete)
 end
 
+-- True when a non-NPC combatant with this name is already in the order
+-- (case-insensitive). A player character may appear only once; NPC names may
+-- repeat (three "Wolf"s are a normal encounter).
+function IT.HasPlayer(name)
+    if type(name) ~= "string" then return false end
+    name = name:lower()
+    for _, c in ipairs(State().combatants) do
+        if not c.isNPC and (c.name or ""):lower() == name then return true end
+    end
+    return false
+end
+
 -- Adds a combatant with an explicit initiative total at its ordered position.
--- Returns the combatant table. Ignores blank or non-string names; init and tb
+-- Returns the combatant table, or nil, err. Ignores blank or non-string
+-- names; a duplicate PLAYER entry is refused (see HasPlayer); init and tb
 -- (the tiebreaker stat value, see Outranks) are coerced - both may arrive
 -- over the wire via INITSUBMIT.
 function IT.Add(name, init, isNPC, tb)
     if type(name) ~= "string" then return nil end
     name = strtrim(name)
     if name == "" then return nil end
+    if not isNPC and IT.HasPlayer(name) then
+        return nil, name .. " is already in the turn order."
+    end
     local state = State()
     local combatant = {
         name = name, init = tonumber(init) or 0,
@@ -149,14 +165,15 @@ function IT.Add(name, init, isNPC, tb)
     }
 
     -- Insertion shifts indices; keep the active turn on the same combatant.
+    -- Before combat starts (current == 0) adding sets no pointer - Start (or
+    -- a first Next) begins round 1, so the round count and the turn timers
+    -- only run once the DM actually opens combat.
     local active = state.combatants[state.current]
     InsertOrdered(state, combatant)
     if active then
         for i, c in ipairs(state.combatants) do
             if c == active then state.current = i break end
         end
-    elseif state.current == 0 then
-        state.current = 1
     end
     return combatant
 end
@@ -167,9 +184,15 @@ end
 function IT.AddRolled(name, modifier, isNPC, tb, onAdded)
     name = name and strtrim(name) or ""
     if name == "" then if onAdded then onAdded(nil) end return end
+    -- Refuse duplicate players BEFORE rolling - a public roll the group can
+    -- see must not happen for an add that will be rejected.
+    if not isNPC and IT.HasPlayer(name) then
+        if onAdded then onAdded(nil, nil, nil, name .. " is already in the turn order.") end
+        return
+    end
     IT.RequestRoll(modifier, function(total, raw)
-        local combatant = IT.Add(name, total, isNPC, tb)
-        if onAdded then onAdded(combatant, total, raw) end
+        local combatant, err = IT.Add(name, total, isNPC, tb)
+        if onAdded then onAdded(combatant, total, raw, err) end
     end)
 end
 

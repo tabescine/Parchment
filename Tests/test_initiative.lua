@@ -18,6 +18,14 @@ assert(s.combatants[1].name == "Fast" and s.combatants[2].name == "Mid" and s.co
 assert(s.combatants[1].isNPC and not s.combatants[2].isNPC)
 assert(IT.Add("  ") == nil and IT.Add(nil) == nil, "blank names must be refused")
 
+-- Adding must NOT start combat: no current turn, no round (so the timers
+-- stay off and the round count starts at 1 only when the DM starts).
+assert(s.current == 0 and s.round == 0, "adding combatants must not start combat")
+
+-- A first Next acts as a start too.
+IT.Next()
+assert(s.current == 1 and s.round == 1, "first Next must begin round 1")
+
 IT.Start()
 assert(s.current == 1 and s.round == 1)
 IT.SetCurrent(3)
@@ -84,6 +92,23 @@ assert(s.current == 1 and s.round == 0, "pointers not clamped")
 
 IT.Reset()
 assert(#IT.GetState().combatants == 0 and IT.GetState().current == 0)
+
+-- Duplicate guard: a player may appear only once (case-insensitive); NPC
+-- names may repeat freely.
+assert(IT.Add("Wren", 12))
+assert(IT.HasPlayer("Wren") and IT.HasPlayer("wREN"))
+assert(not IT.HasPlayer("Other") and not IT.HasPlayer(nil))
+local dup, dupErr = IT.Add("wren", 15)
+assert(dup == nil and dupErr:find("already in the turn order"), tostring(dupErr))
+assert(IT.Add("Wolf", 8, true) and IT.Add("Wolf", 11, true), "NPC duplicates must be allowed")
+assert(not IT.HasPlayer("Wolf"), "NPCs must not count as player entries")
+assert(IT.Add("Wolf", 9), "a player may share a name with NPCs")
+assert(#IT.GetState().combatants == 4)
+-- AddRolled refuses a duplicate player BEFORE rolling, via the callback.
+local gotErr
+IT.AddRolled("Wren", 0, false, nil, function(c, _, _, err) gotErr = (c == nil) and err end)
+assert(gotErr and gotErr:find("already in the turn order"), tostring(gotErr))
+IT.Reset()
 
 -- Tie-breaking: equal initiative orders by the tb value (the system's
 -- initiative_tiebreaker stat, captured on add); absent tb sorts last; equal
