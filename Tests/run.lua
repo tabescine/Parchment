@@ -16,6 +16,7 @@ local MANIFEST = {
     "test_initiative.lua",
     "test_widgets.lua",
     "test_comm.lua",
+    "test_comm_compress.lua",
     "test_party.lua",
     "test_menu.lua",
     "test_samples.lua",

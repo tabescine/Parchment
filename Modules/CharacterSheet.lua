@@ -14,10 +14,14 @@
 --   modifier          = system modifier_table[final]
 --   skill / save total= attribute modifier + (accomplished and accomplishment)
 --   AC                = ac_base + AC-attribute modifier + trait AC bonuses
+--                       (AC/init attribute: the character's pick, constrained
+--                       to derived_stats.ac_attributes/init_attributes when
+--                       declared; no/invalid pick = best candidate)
 --   hit die           = band for the hit_die_attribute's modifier
 --   mana (max)        = mana_multiplier x spell-source modifier
 --   movement          = movement_base + per_step per positive movement modifier
 --   save DC (primary) = save_dc_base + primary modifier + accomplishment bonus
+--                       (casters only; non-casters carry no save DC)
 --   spell attack      = primary modifier + accomplishment (casters; per-school
 --                       rows fold school-targeted effects)
 -- Which attribute fills each role is configured per system (see ns.DerivedConfig);
@@ -345,8 +349,26 @@ function CharacterSheet.Compute(char, system)
     local spellMod = isCaster and (modifier[primary] or 0)
         or (cfg.mana_attribute and (modifier[cfg.mana_attribute] or 0)) or 0
 
-    local acMod = modifier[char.ac_attribute] or 0
-    local initMod = modifier[char.init_attribute] or 0
+    -- AC / initiative attributes. A system may constrain them to candidate
+    -- lists (derived_stats.ac_attributes / init_attributes, e.g. "Agility,
+    -- Sense or Luck"): an explicit character pick is honored when it is one
+    -- of the candidates, anything else (including no pick at all) falls to
+    -- the best candidate modifier - a fresh character is correct without
+    -- choosing. Without a list, the character's pick alone rules.
+    local function EffectiveAttr(pick, candidates)
+        if not candidates or #candidates == 0 then return pick end
+        local bestId, bestMod
+        for _, id in ipairs(candidates) do
+            if id == pick then return pick end
+            local m = modifier[id]
+            if m and (not bestMod or m > bestMod) then bestId, bestMod = id, m end
+        end
+        return bestId
+    end
+    local acAttr = EffectiveAttr(char.ac_attribute, cfg.ac_attributes)
+    local initAttr = EffectiveAttr(char.init_attribute, cfg.init_attributes)
+    local acMod = modifier[acAttr] or 0
+    local initMod = modifier[initAttr] or 0
     local moveMod = cfg.movement_attribute and (modifier[cfg.movement_attribute] or 0) or 0
     local hitDieMod = cfg.hit_die_attribute and (modifier[cfg.hit_die_attribute] or 0) or 0
 
@@ -357,12 +379,14 @@ function CharacterSheet.Compute(char, system)
         hp = { current = char.current_hp, max = (char.max_hp or 0) + fx.maxHP, temp = char.temp_hp },
         mana = { current = char.current_mana, max = (char.max_mana or math.max(0, cfg.mana_multiplier * spellMod)) + fx.maxMana },
         ac = cfg.ac_base + acMod + fx.ac,
-        ac_attribute = char.ac_attribute,
+        ac_attribute = acAttr,       -- the EFFECTIVE attribute (pick or best candidate)
         initiative = initMod + fx.initiative,
-        init_attribute = char.init_attribute,
+        init_attribute = initAttr,   -- ditto
         movement = cfg.movement_base + math.max(0, moveMod) * cfg.movement_per_step + fx.movement,
         actions = cfg.actions_base + fx.actions,
-        save_dc = cfg.save_dc_base + (modifier[primary] or 0) + accomplishment + fx.saveDC,
+        -- The save DC is a spellcasting number: non-casters carry none (the
+        -- sheet hides the row), so a martial's primary cannot fake one.
+        save_dc = isCaster and (cfg.save_dc_base + (modifier[primary] or 0) + accomplishment + fx.saveDC) or nil,
         attack_modifier = fx.attack,
     }
     -- Level-granted extra actions (and any other level_bonuses.actions).

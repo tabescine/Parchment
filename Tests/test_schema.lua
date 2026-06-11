@@ -54,13 +54,26 @@ sys.perk_trees[2].perks[1] = { id = "p2", name = "P2", choice = { kind = "hat" }
 ok, issues = Schema.ValidateSystem(sys)
 assert(not ok and findIssue(issues, "choice.kind invalid"))
 
--- derived_stats attribute couplings must resolve (incl. the tiebreaker).
+-- derived_stats attribute couplings must resolve (incl. the tiebreaker and
+-- the AC/init candidate lists).
 sys = MinimalSystem()
 sys.derived_stats = { initiative_tiebreaker = "ghost" }
 ok, issues = Schema.ValidateSystem(sys)
 assert(not ok and findIssue(issues, "initiative_tiebreaker"))
-sys.derived_stats = { initiative_tiebreaker = "a" }
+sys.derived_stats = { initiative_tiebreaker = "a", ac_attributes = { "a", "ghost" } }
+ok, issues = Schema.ValidateSystem(sys)
+assert(not ok and findIssue(issues, "in ac_attributes"))
+sys.derived_stats = { ac_attributes = { "a" }, init_attributes = { "a", "b" } }
 assert(Schema.ValidateSystem(sys))
+
+-- A character pick outside the system's candidate list is reported.
+local pickSys = MinimalSystem()
+pickSys.derived_stats = { init_attributes = { "a" } }
+local pickChar = { name = "C", level = 1, attributes = {}, init_attribute = "b" }
+ok, issues = Schema.ValidateCharacter(pickChar, pickSys)
+assert(not ok and findIssue(issues, "not one of the system's init_attributes"))
+pickChar.init_attribute = "a"
+assert(Schema.ValidateCharacter(pickChar, pickSys))
 
 -- Races: cross-checked only when the system declares a races list.
 sys = MinimalSystem()

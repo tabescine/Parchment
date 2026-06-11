@@ -16,8 +16,13 @@
 -- Incompatible messages are dropped with a one-time notice per sender, so a
 -- mixed-version group degrades to "no sync" instead of undefined behaviour.
 --
+-- Large payloads are DEFLATE-compressed on the wire (LibDeflate, optional - the
+-- comm degrades to uncompressed when it is absent) and big bodies ride at BULK
+-- priority so a system share cannot stall vitals/sheet traffic. See Encode.
+--
 -- Reads from: ns.Addon (the AceAddon object with Comm/Serializer mixins), its
---   db, ns.Print, ns.Party (guarded; vitals push on role change).
+--   db, ns.Print, ns.Party (guarded; vitals push on role change), and
+--   LibDeflate via LibStub (optional).
 -- Exposes on ns.Comm: IsDM, IsSelf, SetDM, Send, Whisper, On, Init.
 
 local ADDON, ns = ...
@@ -102,20 +107,69 @@ local function GroupChannel()
     return nil
 end
 
+-- Wire encoding. AceSerializer produces a printable string the addon channel
+-- accepts as-is; a big system (the aias ruleset serializes to ~100 KB) then
+-- chunks into hundreds of throttled packets and takes minutes to arrive,
+-- stalling every other message behind it. So we DEFLATE-compress the payload
+-- (LibDeflate, ~5x on this data) when it is large enough to pay for itself.
+--
+-- A one-byte marker tags the body so the receiver knows how to read it:
+--   "0" = raw serialized       (already addon-channel safe)
+--   "1" = deflated, then EncodeForWoWAddonChannel (binary made channel-safe)
+-- Compression is skipped (marker "0") when LibDeflate is absent or the packed
+-- form is not actually smaller, so small/odd messages never pay for it.
+local Deflate = LibStub and LibStub("LibDeflate", true)
+local COMPRESS_MIN = 600   -- below this, deflate + encode rarely nets a saving
+local BULK_MIN = 2000      -- encoded bodies larger than this go out at BULK prio
+
+-- Serializes and (when worthwhile) compresses an envelope. Returns the wire
+-- string and the AceComm priority to send it at: a large body uses "BULK" so
+-- it cannot starve the small, latency-sensitive traffic (vitals, sheet
+-- requests) that shares ChatThrottleLib's single outbound queue.
+local function Encode(env)
+    local raw = ns.Addon:Serialize(env)
+    if Deflate and type(raw) == "string" and #raw >= COMPRESS_MIN then
+        local packed = Deflate:EncodeForWoWAddonChannel(Deflate:CompressDeflate(raw))
+        if packed and #packed < #raw then
+            return "1" .. packed, (#packed >= BULK_MIN) and "BULK" or "NORMAL"
+        end
+    end
+    local body = "0" .. tostring(raw)
+    return body, (#body >= BULK_MIN) and "BULK" or "NORMAL"
+end
+
+-- Reverses Encode. Returns ok, envelope (ok=false on any malformed/foreign or
+-- undecodable input, so the receiver drops it quietly).
+local function Decode(text)
+    if type(text) ~= "string" or #text < 1 then return false end
+    local marker, body = text:sub(1, 1), text:sub(2)
+    if marker == "1" then
+        if not Deflate then return false end
+        local packed = Deflate:DecodeForWoWAddonChannel(body)
+        if not packed then return false end
+        local raw = Deflate:DecompressDeflate(packed)
+        if not raw then return false end
+        return ns.Addon:Deserialize(raw)
+    elseif marker == "0" then
+        return ns.Addon:Deserialize(body)
+    end
+    return false
+end
+
 -- Broadcasts a typed message to the group. Returns ok, reason.
 function Comm.Send(msgType, payload)
     local channel = GroupChannel()
     if not channel then return false, "you are not in a party or raid." end
-    local data = ns.Addon:Serialize({ t = msgType, v = payload, ver = VERSION })
-    ns.Addon:SendCommMessage(PREFIX, data, channel)
+    local data, prio = Encode({ t = msgType, v = payload, ver = VERSION })
+    ns.Addon:SendCommMessage(PREFIX, data, channel, nil, prio)
     return true
 end
 
 -- Sends a typed message directly to one player (addon whisper).
 function Comm.Whisper(msgType, payload, target)
     if not target or target == "" then return false, "no target." end
-    local data = ns.Addon:Serialize({ t = msgType, v = payload, ver = VERSION })
-    ns.Addon:SendCommMessage(PREFIX, data, "WHISPER", target)
+    local data, prio = Encode({ t = msgType, v = payload, ver = VERSION })
+    ns.Addon:SendCommMessage(PREFIX, data, "WHISPER", target, prio)
     return true
 end
 
@@ -124,10 +178,10 @@ function Comm.On(msgType, fn)
     handlers[msgType] = fn
 end
 
--- AceComm receive callback: deserialize, gate on version, dispatch by type.
+-- AceComm receive callback: decode, gate on version, dispatch by type.
 local function OnReceive(prefix, text, distribution, sender)
     if prefix ~= PREFIX then return end
-    local ok, env = ns.Addon:Deserialize(text)
+    local ok, env = Decode(text)
     if not ok or type(env) ~= "table" then return end
     if not Compatible(env.ver) then
         if not Comm.IsSelf(sender) then WarnMismatch(sender, env.ver) end

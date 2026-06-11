@@ -225,6 +225,8 @@ function ns.DerivedConfig()
         initiative_tiebreaker = d.initiative_tiebreaker, -- attr deciding equal initiative rolls
         mana_multiplier    = d.mana_multiplier or 2,
         movement_attribute = d.movement_attribute,       -- +per_step per positive modifier
+        ac_attributes      = d.ac_attributes,            -- candidate attrs for AC (pick or best)
+        init_attributes    = d.init_attributes,          -- candidate attrs for initiative
         movement_base      = d.movement_base or 12,
         movement_per_step  = d.movement_per_step or 0.5,
         ac_base            = d.ac_base or 10,

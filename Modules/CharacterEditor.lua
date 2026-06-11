@@ -48,15 +48,20 @@ function CE.NewBlank()
     -- One entry per system attribute, each starting at the point-buy baseline.
     local attributes = {}
     for _, attr in ipairs(system.attributes or {}) do attributes[attr.id] = base end
-    -- Default the primary/AC/initiative attributes to the first one; the player
-    -- changes them in the wizard/editor.
+    -- Default the primary attribute to the first one (the player changes it
+    -- in the wizard/editor). AC/initiative stay UNSET when the system
+    -- declares candidate lists - the sheet then uses the best candidate
+    -- automatically until the player explicitly picks one.
+    local ds = system.derived_stats or {}
     local first = system.attributes and system.attributes[1] and system.attributes[1].id or nil
+    local acDefault = (ds.ac_attributes and #ds.ac_attributes > 0) and nil or first
+    local initDefault = (ds.init_attributes and #ds.init_attributes > 0) and nil or first
 
     return {
         name = "New Character", player = "", race = "", quote = "", level = 1,
         attributes = attributes,
         racial_trait = nil, origin_traits = {},
-        primary_attribute = first, ac_attribute = first, init_attribute = first,
+        primary_attribute = first, ac_attribute = acDefault, init_attribute = initDefault,
         accomplished_skills = {}, accomplished_weapons = {}, accomplished_saves = {},
         perks = {}, custom_perks = {}, perk_choices = {},
         -- HP/Mana are left unset until the build is finished (InitResources),

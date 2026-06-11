@@ -150,9 +150,11 @@ function Schema.ValidateSystem(system)
                 Report(issues, "derived_stats", "unknown attribute '" .. tostring(ds[field]) .. "' in " .. field)
             end
         end
-        for _, id in ipairs(ds.spell_attributes or {}) do
-            if not attrIds[id] then
-                Report(issues, "derived_stats", "unknown attribute '" .. tostring(id) .. "' in spell_attributes")
+        for _, field in ipairs({ "spell_attributes", "ac_attributes", "init_attributes" }) do
+            for _, id in ipairs(ds[field] or {}) do
+                if not attrIds[id] then
+                    Report(issues, "derived_stats", "unknown attribute '" .. tostring(id) .. "' in " .. field)
+                end
             end
         end
     end
@@ -273,6 +275,27 @@ function Schema.ValidateCharacter(char, system)
     end
     if char.ac_attribute and not attrIds[char.ac_attribute] then
         Report(issues, "character", "unknown ac_attribute '" .. tostring(char.ac_attribute) .. "'")
+    end
+
+    -- When the system constrains AC/initiative to candidate attributes, an
+    -- out-of-list pick is reported (the engine would ignore it for the best
+    -- candidate, which is probably not what the author meant).
+    local ds = system.derived_stats
+    if type(ds) == "table" then
+        for _, pair in ipairs({ { "ac_attribute", "ac_attributes" }, { "init_attribute", "init_attributes" } }) do
+            local pick, listKey = char[pair[1]], pair[2]
+            local list = ds[listKey]
+            if pick and type(list) == "table" and #list > 0 then
+                local ok = false
+                for _, id in ipairs(list) do
+                    if id == pick then ok = true end
+                end
+                if not ok then
+                    Report(issues, "character", pair[1] .. " '" .. tostring(pick)
+                        .. "' is not one of the system's " .. listKey)
+                end
+            end
+        end
     end
 
     -- Accomplished skills and saves reference real ids.

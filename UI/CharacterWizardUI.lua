@@ -193,14 +193,18 @@ local function BuildFrame()
         Pick(f, "Primary Attribute", "Choose the primary attribute", AttrItems(ns.GetSystem()), 1,
             { f.draft.primary_attribute }, function(ids) if f.draft then f.draft.primary_attribute = ids[1] end end)
     end)
+    -- AC/init pickers are restricted to the system's candidate lists when
+    -- declared; without one, any attribute.
     f.acBtn:SetScript("OnClick", function()
         if not f.draft then return end
-        Pick(f, "AC Attribute", "Choose the attribute that governs AC", AttrItems(ns.GetSystem()), 1,
+        local allow = W.CandidateSet(ns.DerivedConfig().ac_attributes)
+        Pick(f, "AC Attribute", "Choose the attribute that governs AC", AttrItems(ns.GetSystem(), allow), 1,
             { f.draft.ac_attribute }, function(ids) if f.draft then f.draft.ac_attribute = ids[1] end end)
     end)
     f.initBtn:SetScript("OnClick", function()
         if not f.draft then return end
-        Pick(f, "Initiative Attribute", "Choose the attribute that governs initiative", AttrItems(ns.GetSystem()), 1,
+        local allow = W.CandidateSet(ns.DerivedConfig().init_attributes)
+        Pick(f, "Initiative Attribute", "Choose the attribute that governs initiative", AttrItems(ns.GetSystem(), allow), 1,
             { f.draft.init_attribute }, function(ids) if f.draft then f.draft.init_attribute = ids[1] end end)
     end)
     f.skillsBtn:SetScript("OnClick", function()
@@ -271,8 +275,8 @@ Refresh = function(self)
     for _, id in ipairs(d.origin_traits or {}) do origins[#origins + 1] = TraitName(system, "origin_traits", id) end
     self.originBtn:SetText(#origins > 0 and table.concat(origins, ", ") or "(none)")
     self.primaryBtn:SetText(ns.AttrName(d.primary_attribute))
-    self.acBtn:SetText(ns.AttrName(d.ac_attribute))
-    self.initBtn:SetText(ns.AttrName(d.init_attribute))
+    self.acBtn:SetText(W.AttrPickText(d.ac_attribute, sheet.derived.ac_attribute))
+    self.initBtn:SetText(W.AttrPickText(d.init_attribute, sheet.derived.init_attribute))
 
     local tg = CE.AccomplishTargets(sheet)
     self.skillsBtn:SetText(string.format("%d / %d", #(d.accomplished_skills or {}), tg.skills))

@@ -2,7 +2,7 @@
 ## Title: Parchment
 ## Notes: System-agnostic TTRPG toolkit - character sheets, initiative, and perk trees.
 ## Author: Parchment
-## Version: 0.1.0
+## Version: 0.2.0
 ## SavedVariables: ParchmentSystemDB, ParchmentCharDB, ParchmentDB
 
 # Embedded libraries (load first so LibStub and the Ace3 modules exist).

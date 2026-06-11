@@ -276,10 +276,12 @@ local function RenderBody(self)
         "base " .. cfg.actions_base
         .. (d.actions ~= cfg.actions_base
             and (" " .. Signed(d.actions - cfg.actions_base) .. " from level bonuses / effects") or "")))
-    Row(content, "Save DC", tostring(d.save_dc), 0, C_GOLD, Tip("Save DC",
-        "base " .. cfg.save_dc_base .. " + " .. aName(d.primary_attribute) .. " modifier "
-        .. Signed(aMod(d.primary_attribute)) .. " + accomplished " .. Signed(d.accomplishment)
-        .. fxTerm(d.save_dc - cfg.save_dc_base - aMod(d.primary_attribute) - d.accomplishment)))
+    if d.save_dc then   -- casters only; non-casters carry no save DC
+        Row(content, "Save DC", tostring(d.save_dc), 0, C_GOLD, Tip("Save DC",
+            "base " .. cfg.save_dc_base .. " + " .. aName(d.primary_attribute) .. " modifier "
+            .. Signed(aMod(d.primary_attribute)) .. " + accomplished " .. Signed(d.accomplishment)
+            .. fxTerm(d.save_dc - cfg.save_dc_base - aMod(d.primary_attribute) - d.accomplishment)))
+    end
     Row(content, "Accomplishment Bonus", Signed(d.accomplishment), 0, nil, Tip("Accomplishment Bonus",
         "From the system's accomplishment table at level " .. sheet.level .. "."))
     Row(content, "Primary Attribute", d.primary_attribute or "-")

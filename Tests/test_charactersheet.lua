@@ -17,6 +17,8 @@ ParchmentSystemDB = {
         spell_attributes = { "c" }, mana_attribute = "c", mana_multiplier = 3,
         movement_attribute = "b", movement_base = 10, movement_per_step = 1,
         ac_base = 12, save_dc_base = 8, actions_base = 2,
+        ac_attributes = { "a", "b" },        -- candidates: pick honored, else best
+        init_attributes = { "b", "c" },
     },
     skills = {
         { id = "s1", name = "Skill One", attribute = "a" },
@@ -109,7 +111,9 @@ assert(d.hit_dice == "2d6")                                 -- a's mod 0 -> d6, 
 assert(d.hp.max == 12 and d.hp.current == 7 and d.hp.temp == 1)  -- 10 + 2x Sturdy
 assert(d.mana.max == 6)                                     -- caster: 3 x c's mod 2
 assert(d.ac == 13)                                          -- 12 + b's mod 1
-assert(d.initiative == 1)
+-- The explicit init pick "b" is in the candidate list, so it is honored even
+-- though candidate "c" has the better modifier (a choice, not auto-best).
+assert(d.initiative == 1 and d.init_attribute == "b")
 assert(d.movement == 11)                                    -- 10 + max(0,1) x 1
 assert(d.actions == 3)                                      -- 2 + level-2 bonus
 assert(d.save_dc == 13)                                     -- 8 + c's mod 2 + 3
@@ -131,9 +135,20 @@ assert(spell.schools[1].id == "ev" and spell.schools[1].attack == 8 and spell.sc
 assert(spell.schools[2].id == "wd" and spell.schools[2].attack == 6 and spell.schools[2].dc == 13)
 
 -- Non-caster fallback: primary outside spell_attributes uses mana_attribute,
--- and there is no spell block at all.
+-- and there is no spell block and NO save DC (it is a spellcasting number).
 local char2 = { name = "N", level = 1, attributes = { a = 1, b = 3, c = 4 }, primary_attribute = "b" }
 local sheet2 = ns.CharacterSheet.Compute(char2, system)
 assert(sheet2.derived.mana.max == 6, "fallback mana attribute (c) should drive mana")
-assert(sheet2.derived.save_dc == 8 + 1 + 2)                 -- base + b's mod + level-1 acc 2
+assert(sheet2.derived.save_dc == nil, "non-casters must not carry a save DC")
 assert(sheet2.derived.spell == nil, "non-casters must not get a spell block")
+
+-- No AC/init picks at all: the best candidate decides automatically.
+assert(sheet2.derived.ac == 13 and sheet2.derived.ac_attribute == "b")     -- best of a(0)/b(1)
+assert(sheet2.derived.initiative == 2 and sheet2.derived.init_attribute == "c")  -- best of b(1)/c(2)
+
+-- An out-of-list pick is ignored in favour of the best candidate.
+local char3 = { name = "O", level = 1, attributes = { a = 1, b = 3, c = 4 },
+    primary_attribute = "b", ac_attribute = "c", init_attribute = "a" }
+local sheet3 = ns.CharacterSheet.Compute(char3, system)
+assert(sheet3.derived.ac_attribute == "b", "out-of-list AC pick must fall to the best candidate")
+assert(sheet3.derived.init_attribute == "c", "out-of-list init pick must fall to the best candidate")

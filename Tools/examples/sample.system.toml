@@ -89,6 +89,12 @@ movement_attribute = "wits"     # each positive modifier point adds movement_per
 initiative_tiebreaker = "wits"  # equal initiative rolls: higher value of this
                                 # stat acts first (the DM breaks remaining ties
                                 # by reordering in the combat tracker)
+init_attributes = ["wits", "spirit"]  # CANDIDATE list: initiative may come from
+                                # either of these - an explicit character pick
+                                # (from this list) is honored, no pick = the
+                                # best candidate automatically. ac_attributes
+                                # works the same for AC; omitted here, so AC
+                                # stays a free per-character attribute pick.
 movement_base = 12              # default 12
 movement_per_step = 0.5         # default 0.5
 ac_base = 10                    # AC = ac_base + AC-attribute modifier + effects

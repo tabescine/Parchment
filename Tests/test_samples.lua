@@ -56,7 +56,9 @@ local d = sheet.derived
 assert(d.hp.max == 32 and d.hp.current == 24 and d.hp.temp == 2)  -- 26 +2 Hardened +4 Toughness
 assert(d.mana.max == 8 and d.hit_dice == "5d6")
 assert(d.ac == 11 and d.initiative == 2 and d.movement == 12.5)
-assert(d.actions == 3 and d.save_dc == 14 and d.accomplishment == 3)
+assert(d.actions == 3 and d.accomplishment == 3)
+assert(d.save_dc == nil, "Wren is no caster - no save DC")
+assert(d.init_attribute == "wits", "explicit in-list init pick must be honored")
 local sphere = {}
 for _, p in ipairs(sheet.sphere_perks) do sphere[p.name] = p end
 assert(sphere.Toughness.rank == 2)

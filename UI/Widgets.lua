@@ -7,7 +7,7 @@
 --
 -- Reads from: ns.UI (palette), ns.FindById.
 -- Exposes on ns.Widgets: .Stepper, .ListItems, .AttrItems, .TraitItems,
---   .RacialItems, .SaveItems, .TraitName
+--   .RacialItems, .SaveItems, .TraitName, .CandidateSet, .AttrPickText
 
 local ADDON, ns = ...
 
@@ -81,6 +81,23 @@ end
 function Widgets.TraitName(system, listKey, id)
     local t = ns.FindById(system[listKey], id)
     return t and t.name or id
+end
+
+-- The { id = true } allow-set for a derived_stats candidate list
+-- (ac_attributes / init_attributes), or nil when absent (= no restriction).
+function Widgets.CandidateSet(list)
+    if not (list and #list > 0) then return nil end
+    local set = {}
+    for _, id in ipairs(list) do set[id] = true end
+    return set
+end
+
+-- Button text for an AC/initiative attribute: the explicit pick, or the
+-- sheet's effective attribute tagged "(auto)" when the system's candidate
+-- list decides (no pick = best candidate wins).
+function Widgets.AttrPickText(pick, effective)
+    if pick then return ns.AttrName(pick) end
+    return ns.AttrName(effective) .. " |cff9e998c(auto)|r"
 end
 
 -- Creates a [-] value [+] stepper. Call f:OnStep(fn) where fn(delta) applies the
