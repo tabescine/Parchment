@@ -9,7 +9,8 @@
 -- Reads from: ns.Addon.db.global (systemLibrary, systemSource), ns.Comm,
 --   ns.Dialogs, ns.Print, ns.DeepCopy, ns.CharacterSheetUI, ns.PerkTreeUI.
 --   Owns ParchmentSystemDB swaps.
--- Exposes on ns.Systems: Store, SetActive, OpenPicker.
+-- Exposes on ns.Systems: Store, SetActive, OpenPicker, OpenDeletePicker,
+--   Delete, RefreshAll.
 
 local ADDON, ns = ...
 

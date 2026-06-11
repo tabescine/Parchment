@@ -9,8 +9,9 @@
 --
 -- Reads from: ns.CharacterSheet.Compute, ns.Schema, ns.PerkTree, ns.GetModifier,
 --   ns.GetHitDie, ns.SetActiveCharacter, ParchmentCharDB.
--- Exposes on ns.CharacterEditor: NewBlank, AttributePoints, AccomplishTargets,
---   LevelUp, Warnings, Races, SaveNew, Delete.
+-- Exposes on ns.CharacterEditor: NewBlank, InitResources, Races,
+--   AttributePoints, AccomplishTargets, AccomplishTargetDesc, LevelUp,
+--   LevelDown, Warnings, SaveNew, Delete.
 
 local ADDON, ns = ...
 

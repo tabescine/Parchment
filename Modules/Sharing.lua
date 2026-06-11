@@ -6,7 +6,7 @@
 -- replies with their active character, and we open the sheet in view mode.
 --
 -- Reads from: ns.Comm, ns.GetActiveCharacter, ns.CharacterSheetUI, ns.Print.
--- Exposes on ns.Sharing: Request.
+-- Exposes on ns.Sharing: Request, OpenCache, ClearCache.
 
 local ADDON, ns = ...
 

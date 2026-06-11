@@ -9,7 +9,7 @@
 -- handler per type via Comm.On.
 --
 -- Reads from: ns.Addon (the AceAddon object with Comm/Serializer mixins), its db.
--- Exposes on ns.Comm: IsDM, SetDM, Send, On, Init.
+-- Exposes on ns.Comm: IsDM, IsSelf, SetDM, Send, Whisper, On, Init.
 
 local ADDON, ns = ...
 

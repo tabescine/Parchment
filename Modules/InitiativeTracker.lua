@@ -5,12 +5,12 @@
 -- addon DB so it survives a /reload mid-session. Pure state manipulation here;
 -- the UI reads GetState and calls these mutators.
 --
--- DM/player roles and AceComm sync are a later work item; for now this is a
--- single local turn order the DM drives.
+-- Sync is handled by the UI layer: the DM broadcasts state (INIT) and players
+-- submit their own rolls back (INITSUBMIT); SetState applies a received state.
 --
 -- Reads from: ns.Addon.db.global.initiative, ns.Dice (shared d20 roller).
--- Exposes on ns.InitiativeTracker: GetState, Add, AddRolled, Remove, SetCurrent,
---   Next, Prev, Start, Reset, RollD20, RequestRoll.
+-- Exposes on ns.InitiativeTracker: GetState, SetState, Add, AddRolled, Remove,
+--   SetCurrent, Next, Prev, Start, Reset, RollD20, RequestRoll.
 
 local ADDON, ns = ...
 

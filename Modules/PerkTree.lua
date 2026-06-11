@@ -10,7 +10,8 @@
 --
 -- Reads from: ns.GetAttribute (for requirement messages). The caller passes the
 --   computed sheet so attribute requirements check final (post-trait) values.
--- Exposes on ns.PerkTree: Status, CanAddRank, Select, Deselect, Points, Rank.
+-- Exposes on ns.PerkTree: Status, CanAddRank, Select, Deselect, Points, Rank,
+--   ReplacedBy, ChoiceMax, SetChoices.
 
 local ADDON, ns = ...
 

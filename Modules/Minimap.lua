@@ -5,7 +5,7 @@
 -- actions. The button's shown/hidden state persists in db.profile.minimap.
 --
 -- Reads from: ns.OpenModule, ns.Sharing, ns.SaveToDisk, ns.Comm, ns.Addon.db.
--- Exposes on ns.Minimap: Init, Toggle.
+-- Exposes on ns.Minimap: Init, SetShown, Toggle.
 
 local ADDON, ns = ...
 

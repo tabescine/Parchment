@@ -50,7 +50,7 @@ local Parchment = LibStub("AceAddon-3.0"):NewAddon(ADDON, "AceConsole-3.0", "Ace
 ns.Addon = Parchment
 
 -- Module registry: id -> opener function, filled by RegisterModule as each
--- module loads. Empty until the module files are added (later work items).
+-- module loads.
 ns.modules = {}
 
 -- Clamps n into [lo, hi].
