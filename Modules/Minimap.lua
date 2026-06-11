@@ -17,11 +17,13 @@ local ICON = "Interface\\Icons\\inv_scroll_05"
 -- Builds the right-click menu (modern Menu API).
 local function BuildMenu(owner)
     if not MenuUtil then
-        ns.OpenModule("sheet")
+        ns.OpenModule("hub")
         return
     end
     MenuUtil.CreateContextMenu(owner, function(_, root)
         root:CreateTitle("Parchment")
+        root:CreateButton("Menu (characters, settings, ...)", function() ns.OpenModule("hub") end)
+        root:CreateDivider()
         root:CreateButton("Character Sheet", function() ns.OpenModule("sheet") end)
         root:CreateButton("Combat", function() ns.OpenModule("initiative") end)
         root:CreateButton("Perks", function() ns.OpenModule("perks") end)
@@ -49,13 +51,13 @@ local dataObject = {
         if button == "RightButton" then
             BuildMenu(self)
         else
-            ns.OpenModule("sheet")
+            ns.OpenModule("hub")
         end
     end,
     OnTooltipShow = function(tooltip)
         tooltip:AddLine("Parchment")
-        tooltip:AddLine("|cffeeeeeeLeft-click|r  character sheet", 0.9, 0.9, 0.9)
-        tooltip:AddLine("|cffeeeeeeRight-click|r  menu", 0.9, 0.9, 0.9)
+        tooltip:AddLine("|cffeeeeeeLeft-click|r  Parchment menu", 0.9, 0.9, 0.9)
+        tooltip:AddLine("|cffeeeeeeRight-click|r  quick access", 0.9, 0.9, 0.9)
     end,
 }
 

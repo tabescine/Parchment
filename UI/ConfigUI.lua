@@ -1,14 +1,16 @@
 -- Parchment - Config (UI)
 --
--- The settings window (/pmt config): checkboxes for the profile toggles
--- (DM mode, public initiative rolls, vitals sharing, minimap button), plus
--- shortcuts to the system library and saving.
--- Pure UI over db.profile - it owns no state of its own, so the slash
--- commands and the minimap menu stay equally valid ways to flip the same
--- settings (they refresh this window when it is open, and vice versa).
+-- The Settings panel of the hub window (/pmt config opens the hub there):
+-- checkboxes for the profile toggles (DM mode, public initiative rolls,
+-- vitals sharing, minimap button), plus shortcuts to the system library and
+-- saving. Pure UI over db.profile - it owns no state of its own, so the
+-- slash commands and the minimap menu stay equally valid ways to flip the
+-- same settings (they refresh this panel when it shows, and vice versa).
 --
--- Reads from: ns.Addon.db.profile, ns.Comm, ns.Minimap, ns.Systems, ns.UI.
--- Exposes on ns.ConfigUI: Open, Toggle, RefreshIfShown.
+-- Reads from: ns.Addon.db.profile, ns.Comm, ns.Minimap, ns.Systems, ns.UI,
+--   ns.HubUI (panel registration and open/refresh).
+-- Exposes on ns.ConfigUI: Open, Toggle, RefreshIfShown (thin wrappers over
+--   the hub's settings panel, kept so callers need not know where it lives).
 -- Registers the "config" module opener with Core.
 
 local ADDON, ns = ...
@@ -64,17 +66,10 @@ local function Header(f, y, text)
     fs:SetText(text)
 end
 
--- Builds the window once. Refresh fills the checkbox states.
-local function BuildFrame()
-    local f = UI.CreateWindow("ParchmentConfigFrame", {
-        title = "Settings", width = 320, height = 410,
-        minW = 300, minH = 410, maxW = 460, maxH = 550, dbKey = "configWindow",
-    })
-    -- Restored geometry may predate a taller layout; programmatic SetSize is
-    -- not clamped by the resize bounds, so enforce the minimum here.
-    if f:GetHeight() < 410 then f:SetHeight(410) end
-
-    local y = -48
+-- Builds the panel widgets once into the hub-provided frame. Refresh fills
+-- the checkbox states.
+local function BuildContent(f)
+    local y = -8
     Header(f, y, "GENERAL"); y = y - 24
 
     f.dmCheck = Checkbox(f, y, "DM mode",
@@ -138,8 +133,6 @@ local function BuildFrame()
         GameTooltip:Show()
     end)
     save:SetScript("OnLeave", GameTooltip_Hide)
-
-    return f
 end
 
 -- Fills the checkbox states from the live profile.
@@ -151,27 +144,23 @@ Refresh = function(self)
     self.minimapCheck:SetChecked(not (p.minimap and p.minimap.hide))
 end
 
--- Returns the singleton frame, building it on first use.
-local function GetFrame()
-    if not ConfigUI.frame then ConfigUI.frame = BuildFrame() end
-    return ConfigUI.frame
-end
+ns.HubUI.RegisterPanel({
+    id = "settings", label = "Settings", order = 90,
+    Build = BuildContent, Refresh = Refresh,
+})
 
 function ConfigUI.Open()
-    local f = GetFrame()
-    Refresh(f)
-    f:Show()
+    ns.HubUI.Open("settings")
 end
 
 function ConfigUI.Toggle()
-    local f = GetFrame()
-    if f:IsShown() then f:Hide() else ConfigUI.Open() end
+    ns.HubUI.Toggle("settings")
 end
 
 -- Re-syncs the checkboxes when a setting changes elsewhere (slash command,
--- minimap menu) while the window is open.
+-- minimap menu) while the panel shows.
 function ConfigUI.RefreshIfShown()
-    if ConfigUI.frame and ConfigUI.frame:IsShown() then Refresh(ConfigUI.frame) end
+    ns.HubUI.RefreshIfShown("settings")
 end
 
 ns.RegisterModule("config", ConfigUI.Toggle)

@@ -57,6 +57,8 @@ local MIGRATIONS = {
 
 -- Slash subcommand -> module id (nil routing falls through to help).
 local MODULE_COMMANDS = {
+    hub = "hub",
+    characters = "characters",
     combat = "initiative",
     init = "initiative",   -- legacy alias for /pmt combat
     sheet = "sheet",
@@ -288,6 +290,8 @@ end
 
 local function PrintHelp()
     Print(C_GOLD .. "Adventures await. Commands:|r")
+    Print("  " .. C_GOLD .. "/pmt hub|r     - the Parchment menu (characters, settings, ...)")
+    Print("  " .. C_GOLD .. "/pmt characters|r - manage characters (select / delete)")
     Print("  " .. C_GOLD .. "/pmt sheet|r   - open the character sheet")
     Print("  " .. C_GOLD .. "/pmt combat|r  - open the combat tracker (initiative, HP, timer)")
     Print("  " .. C_GOLD .. "/pmt perks|r   - open the perk tree viewer")

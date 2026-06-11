@@ -30,6 +30,7 @@ StaticPopupDialogs["PARCHMENT_DELETE_CHAR"] = {
         ns.CharacterEditor.Delete(key)
         if ns.CharacterEditorUI.frame and ns.CharacterEditorUI.frame:IsShown() then ns.CharacterEditorUI.Open() end
         if ns.CharacterSheetUI then ns.CharacterSheetUI.RefreshIfShown() end
+        if ns.HubUI then ns.HubUI.RefreshIfShown("characters") end
     end,
     timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
 }
