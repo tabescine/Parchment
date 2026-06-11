@@ -11,9 +11,10 @@
 -- player still sees members who do share.
 --
 -- Reads from: ns.Comm, ns.Addon.db.profile.shareVitals, ns.GetActiveCharacter,
---   ns.CharacterSheet.Compute, ns.GetSystem, ns.HasSystem, ns.PartyUI
---   (refresh notification).
--- Exposes on ns.Party: GetRoster, RequestAll, OnVitalsChanged, Clear.
+--   ns.CharacterSheet.Compute, ns.GetSystem, ns.HasSystem, ns.PartyUI and
+--   ns.InitiativeUI (refresh notifications; the tracker renders vitals inline).
+-- Exposes on ns.Party: GetRoster, OwnSnapshot, RequestAll, OnVitalsChanged,
+--   Clear.
 
 local ADDON, ns = ...
 
@@ -57,8 +58,10 @@ local function Broadcast()
     if snap then ns.Comm.Send("VITALS", snap) end
 end
 
--- Pushes a vitals update to the group, throttled.
+-- Pushes a vitals update to the group, throttled. The local windows that
+-- render own vitals (initiative tracker) refresh immediately regardless.
 function Party.OnVitalsChanged()
+    if ns.InitiativeUI and ns.InitiativeUI.RefreshIfShown then ns.InitiativeUI.RefreshIfShown() end
     if not (IsInGroup and IsInGroup()) then return end
     if sendQueued then return end
     sendQueued = true
@@ -80,6 +83,12 @@ end
 -- The received vitals keyed by sender. Treat as read-only.
 function Party.GetRoster()
     return vitals
+end
+
+-- This client's own live snapshot (own broadcasts echo back but are ignored,
+-- so the roster never contains us; the initiative tracker shows it inline).
+function Party.OwnSnapshot()
+    return Snapshot()
 end
 
 -- Drops all received vitals.
@@ -111,5 +120,7 @@ if ns.Comm then
             time = GetTime and GetTime() or 0,
         }
         if ns.PartyUI then ns.PartyUI.RefreshIfShown() end
+        -- The initiative tracker renders these vitals inline (combat dashboard).
+        if ns.InitiativeUI and ns.InitiativeUI.RefreshIfShown then ns.InitiativeUI.RefreshIfShown() end
     end)
 end

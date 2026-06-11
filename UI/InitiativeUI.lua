@@ -1,12 +1,24 @@
 -- Parchment - Initiative Tracker (UI)
 --
--- The initiative window: a scrolling, click-to-select turn order driven by
--- InitiativeTracker, with controls to add combatants (by total or by rolling
--- d20 + modifier), add the active character, advance the turn, and reset. The
--- current turn is highlighted; the round shows in the title.
+-- The initiative window - the combat dashboard: a scrolling, click-to-select
+-- turn order driven by InitiativeTracker, with controls to add combatants (by
+-- total or by rolling d20 + modifier), add the active character, advance the
+-- turn, and reset. The current turn is highlighted; the round shows in the
+-- title.
 --
--- Reads from: ns.InitiativeTracker, ns.GetActiveCharacter, ns.GetSystem,
---   ns.CharacterSheet.Compute, ns.UI (shared window + palette).
+-- Each row also shows hit points. Player rows render the live vitals their
+-- owner broadcasts (current+temp/max; respects the share-vitals opt-out and
+-- updates as edits arrive). NPC rows show the DM's private HP bookkeeping:
+-- the DM clicks the cell to set/adjust it, and the values are stripped from
+-- the INIT broadcast (IT.WireState) - players only ever see the NPC's name.
+--
+-- A turn/round stopwatch sits under the title: it restarts when the active
+-- combatant / round changes (also via the DM's sync), click pauses/resumes,
+-- right-click restarts. Purely local; nothing crosses the wire.
+--
+-- Reads from: ns.InitiativeTracker, ns.Party (vitals for player rows),
+--   ns.GetActiveCharacter, ns.GetSystem, ns.CharacterSheet.Compute, ns.UI
+--   (shared window + palette).
 -- Exposes on ns.InitiativeUI: Open, Toggle, RefreshIfShown.
 -- Registers the "initiative" module opener with Core.
 
@@ -66,12 +78,38 @@ local function CreateRow(content)
 
     row.name = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     row.name:SetPoint("LEFT", row.num, "RIGHT", 8, 0)
+    row.name:SetPoint("RIGHT", row, "RIGHT", -126, 0)
     row.name:SetJustifyH("LEFT")
 
     row.init = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     row.init:SetPoint("RIGHT", -26, 0)
     row.init:SetJustifyH("RIGHT")
     row.init:SetTextColor(UI.GOLD[1], UI.GOLD[2], UI.GOLD[3])
+
+    -- Hit points: live vitals on player rows, DM bookkeeping on NPC rows.
+    -- The overlay button (DM, NPC rows only) opens the set-HP popup.
+    row.hp = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    row.hp:SetPoint("RIGHT", -52, 0)
+    row.hp:SetWidth(70)
+    row.hp:SetJustifyH("RIGHT")
+    local hpBtn = CreateFrame("Button", nil, row)
+    hpBtn:SetPoint("RIGHT", -48, 0)
+    hpBtn:SetSize(78, ROW_H)
+    hpBtn:SetScript("OnClick", function()
+        if not (CanEdit() and row.npcName) then return end
+        StaticPopup_Show("PARCHMENT_SET_NPC_HP", row.npcName, nil, row.index)
+    end)
+    hpBtn:SetScript("OnEnter", function(self)
+        if not row.npcName then return end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Set hit points", 1, 1, 1)
+        GameTooltip:AddLine("A number sets current HP (and max while unset), "
+            .. "+N / -N adjusts, current/max sets both. Players never see NPC HP.",
+            0.9, 0.9, 0.9, true)
+        GameTooltip:Show()
+    end)
+    hpBtn:SetScript("OnLeave", GameTooltip_Hide)
+    row.hpBtn = hpBtn
 
     local rm = CreateFrame("Button", nil, row)
     rm:SetSize(16, 16)
@@ -95,6 +133,25 @@ local function CreateRow(content)
     return row
 end
 
+-- Live vitals by lower-cased character name: the party roster plus our own
+-- snapshot (own broadcasts echo back but are ignored, so we are never in it).
+local function VitalsByName()
+    local map = {}
+    if not ns.Party then return map end
+    for _, v in pairs(ns.Party.GetRoster()) do
+        if v.name then map[v.name:lower()] = v end
+    end
+    local own = ns.Party.OwnSnapshot()
+    if own and own.name then map[own.name:lower()] = own end
+    return map
+end
+
+-- "7+2/12" (temp HP rides on top of current) or "7/12" without a buffer.
+local function FormatHP(cur, max, temp)
+    local t = (temp and temp > 0) and ("+" .. temp) or ""
+    return tostring(cur) .. t .. "/" .. tostring(max)
+end
+
 -- Rebuilds the combatant list from current state.
 local function RenderList(self)
     local state = IT.GetState()
@@ -102,6 +159,8 @@ local function RenderList(self)
     content.rows = content.rows or {}
     for _, r in ipairs(content.rows) do r:Hide() end
 
+    local vitals = VitalsByName()
+    local editable = CanEdit()
     local y = -2
     for i, c in ipairs(state.combatants) do
         local row = content.rows[i] or CreateRow(content)
@@ -121,6 +180,33 @@ local function RenderList(self)
             row.name:SetTextColor(UI.TEXT[1], UI.TEXT[2], UI.TEXT[3])
         end
         row.init:SetText(tostring(c.init))
+
+        -- Hit points. NPC rows: the DM's bookkeeping (absent on players'
+        -- clients - WireState strips it). Player rows: live vitals, with
+        -- temp HP counting toward the effective total.
+        local hpText, hpColor = "", UI.DIM
+        row.npcName = c.isNPC and c.name or nil
+        if c.isNPC then
+            if c.hp then
+                local max = c.hpmax or c.hp
+                hpText = FormatHP(c.hp, max)
+                hpColor = (max > 0 and c.hp / max < 0.35) and UI.RED or UI.TEXT
+            elseif editable then
+                hpText = "set hp"
+            end
+        else
+            local v = vitals[c.name:lower()]
+            if v and (v.hpmax or 0) > 0 then
+                hpText = FormatHP(v.hp or 0, v.hpmax, v.temp)
+                hpColor = ((v.hp or 0) + (v.temp or 0)) / v.hpmax < 0.35 and UI.RED or UI.TEXT
+            else
+                hpText = "-"   -- not shared (opt-out), not in group, or unknown
+            end
+        end
+        row.hp:SetText(hpText)
+        row.hp:SetTextColor(hpColor[1], hpColor[2], hpColor[3])
+        row.hpBtn:SetShown(c.isNPC and editable)
+
         row.hl:SetShown(isCurrent)
         row:Show()
         y = y - ROW_H
@@ -135,9 +221,46 @@ CanEdit = function()
     return (not ns.Comm) or ns.Comm.IsDM() or not IsInGroup()
 end
 
--- Broadcasts the current order to the group when acting as DM.
+-- Broadcasts the current order to the group when acting as DM. WireState
+-- strips the NPC hit points - they never leave this client.
 Sync = function()
-    if ns.Comm and ns.Comm.IsDM() then ns.Comm.Send("INIT", IT.GetState()) end
+    if ns.Comm and ns.Comm.IsDM() then ns.Comm.Send("INIT", IT.WireState()) end
+end
+
+-- Turn/round stopwatch -------------------------------------------------------
+
+-- "m:ss" for a number of elapsed seconds.
+local function Clock(seconds)
+    seconds = math.max(0, math.floor(seconds or 0))
+    return string.format("%d:%02d", math.floor(seconds / 60), seconds % 60)
+end
+
+local function UpdateTimerText(self)
+    if not (self.timerBtn and self.timerBtn:IsShown()) then return end
+    local now = self.timerPausedAt or GetTime()
+    local text = "Turn " .. Clock(now - (self.turnStart or now))
+        .. "    Round " .. Clock(now - (self.roundStart or now))
+    if self.timerPausedAt then text = text .. "  |cffffcc00(paused)|r" end
+    self.timerText:SetText(text)
+end
+
+-- Restarts the stopwatches when the active combatant / round changes (which
+-- also happens when a player applies the DM's sync). A turn change resumes a
+-- paused timer - the pause was about the previous turn.
+local function TickoverTimers(self, state)
+    local sig = (state.round or 0) .. ":" .. (state.current or 0)
+    if sig ~= self.timerSig then
+        self.timerSig = sig
+        local now = GetTime()
+        self.turnStart = now
+        if (state.round or 0) ~= self.timerRound then
+            self.timerRound = state.round or 0
+            self.roundStart = now
+        end
+        self.timerPausedAt = nil
+    end
+    self.timerBtn:SetShown((state.current or 0) > 0)
+    UpdateTimerText(self)
 end
 
 -- Updates the title (round) and the list, and reflects the current role on the
@@ -158,6 +281,7 @@ function Refresh(self)
     if self.publicCheck and ns.Addon and ns.Addon.db then
         self.publicCheck:SetChecked(ns.Addon.db.profile.publicRolls)
     end
+    TickoverTimers(self, state)
     RenderList(self)
 end
 
@@ -208,6 +332,48 @@ local function BuildFrame()
         title = "Initiative", width = 340, height = 440,
         minW = 280, minH = 260, maxW = 560, maxH = 900, dbKey = "initiativeWindow",
     })
+
+    -- Turn/round stopwatch (shown once combat has a current turn).
+    local timerBtn = CreateFrame("Button", nil, f)
+    timerBtn:SetPoint("TOPLEFT", 16, -28)
+    timerBtn:SetSize(190, 14)
+    timerBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    f.timerText = timerBtn:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    f.timerText:SetPoint("LEFT")
+    f.timerText:SetJustifyH("LEFT")
+    f.timerText:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
+    timerBtn:SetScript("OnClick", function(_, button)
+        local now = GetTime()
+        if button == "RightButton" then
+            f.turnStart, f.roundStart, f.timerPausedAt = now, now, nil
+        elseif f.timerPausedAt then
+            local shift = now - f.timerPausedAt
+            f.turnStart = (f.turnStart or now) + shift
+            f.roundStart = (f.roundStart or now) + shift
+            f.timerPausedAt = nil
+        else
+            f.timerPausedAt = now
+        end
+        UpdateTimerText(f)
+    end)
+    timerBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
+        GameTooltip:SetText("Turn & round stopwatch", 1, 1, 1)
+        GameTooltip:AddLine("Restarts on turn/round changes. Click to pause or "
+            .. "resume, right-click to restart. Local only.", 0.9, 0.9, 0.9, true)
+        GameTooltip:Show()
+    end)
+    timerBtn:SetScript("OnLeave", GameTooltip_Hide)
+    f.timerBtn = timerBtn
+
+    -- Tick the stopwatch display (~4x/s; OnUpdate stops while hidden).
+    f.timerAccum = 0
+    f:SetScript("OnUpdate", function(self, dt)
+        self.timerAccum = self.timerAccum + dt
+        if self.timerAccum < 0.25 then return end
+        self.timerAccum = 0
+        UpdateTimerText(self)
+    end)
 
     -- Scrolling combatant list.
     local scroll = CreateFrame("ScrollFrame", "ParchmentInitScroll", f, "UIPanelScrollFrameTemplate")
@@ -298,6 +464,29 @@ local function RefreshIfShown()
     if InitiativeUI.frame and InitiativeUI.frame:IsShown() then Refresh(InitiativeUI.frame) end
 end
 InitiativeUI.RefreshIfShown = RefreshIfShown
+
+-- Set-HP popup for NPC rows (DM only; opened from a row's HP cell). The
+-- index travels as popup data; AdjustHP validates and parses the input.
+StaticPopupDialogs["PARCHMENT_SET_NPC_HP"] = {
+    text = "Hit points for %s\n|cff888888number = set current (and max while unset),\n+N / -N = adjust, current/max = set both|r",
+    button1 = ACCEPT,
+    button2 = CANCEL,
+    hasEditBox = 1,
+    OnAccept = function(self, index)
+        local ok, err = IT.AdjustHP(index, self.editBox:GetText())
+        if not ok then ns.Print(err) end
+        RefreshIfShown()
+    end,
+    EditBoxOnEnterPressed = function(self, index)
+        local popup = self:GetParent()
+        local ok, err = IT.AdjustHP(index, popup.editBox:GetText())
+        if not ok then ns.Print(err) end
+        RefreshIfShown()
+        popup:Hide()
+    end,
+    EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
 
 -- Sync handlers: players adopt the DM's broadcast order; the DM accepts player
 -- initiative submissions, adds them, and rebroadcasts.

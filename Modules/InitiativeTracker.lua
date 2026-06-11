@@ -1,16 +1,20 @@
 -- Parchment - Initiative Tracker (logic)
 --
 -- Owns the combat turn order: a list of combatants (name + initiative value),
--- the current turn index, and the round counter. State is persisted in the
--- addon DB so it survives a /reload mid-session. Pure state manipulation here;
--- the UI reads GetState and calls these mutators.
+-- the current turn index, and the round counter. NPC combatants may also
+-- carry DM-tracked hit points (hp/hpmax) - the DM's private bookkeeping.
+-- State is persisted in the addon DB so it survives a /reload mid-session.
+-- Pure state manipulation here; the UI reads GetState and calls the mutators.
 --
--- Sync is handled by the UI layer: the DM broadcasts state (INIT) and players
--- submit their own rolls back (INITSUBMIT); SetState applies a received state.
+-- Sync is handled by the UI layer: the DM broadcasts state (INIT, via
+-- WireState so NPC hit points never cross the wire) and players submit their
+-- own rolls back (INITSUBMIT); SetState applies a received state and accepts
+-- only name/init/isNPC, so remote data cannot smuggle fields in either.
 --
 -- Reads from: ns.Addon.db.global.initiative, ns.Dice (shared d20 roller).
--- Exposes on ns.InitiativeTracker: GetState, SetState, Add, AddRolled, Remove,
---   SetCurrent, Next, Prev, Start, Reset, RollD20, RequestRoll.
+-- Exposes on ns.InitiativeTracker: GetState, SetState, WireState, Add,
+--   AddRolled, Remove, SetCurrent, Next, Prev, Start, Reset, AdjustHP,
+--   RollD20, RequestRoll.
 
 local ADDON, ns = ...
 
@@ -59,6 +63,49 @@ function IT.SetState(incoming)
     local current = math.floor(tonumber(incoming.current) or 0)
     state.current = math.max(0, math.min(current, #combatants))
     state.round = math.max(0, math.floor(tonumber(incoming.round) or 0))
+end
+
+-- The state as broadcast to players: combatants reduced to name/init/isNPC.
+-- NPC hit points are the DM's private bookkeeping and are stripped here, so
+-- players never receive them at all.
+function IT.WireState()
+    local state = State()
+    local out = { current = state.current, round = state.round, combatants = {} }
+    for i, c in ipairs(state.combatants) do
+        out.combatants[i] = { name = c.name, init = c.init, isNPC = c.isNPC and true or false }
+    end
+    return out
+end
+
+-- Sets or adjusts an NPC combatant's hit points from a user-typed string:
+--   "12"      sets current HP (and max HP too, while max is unset)
+--   "12/40"   sets current and max
+--   "+5"/"-7" adjusts current HP (clamped at 0; may exceed max - DM's call)
+-- Player rows are refused: their HP comes from their own live vitals.
+-- Returns ok, err.
+function IT.AdjustHP(index, text)
+    local c = State().combatants[index]
+    if not c then return false, "no combatant at that position." end
+    if not c.isNPC then return false, "player HP comes from their own sheet (live vitals)." end
+    text = strtrim(tostring(text or ""))
+    local cur, max = text:match("^(%d+)%s*/%s*(%d+)$")
+    if cur then
+        c.hp, c.hpmax = tonumber(cur), tonumber(max)
+        return true
+    end
+    local sign, n = text:match("^([+%-])(%d+)$")
+    if sign then
+        local delta = tonumber(n) * (sign == "-" and -1 or 1)
+        c.hp = math.max(0, (c.hp or 0) + delta)
+        return true
+    end
+    n = text:match("^(%d+)$")
+    if n then
+        c.hp = tonumber(n)
+        c.hpmax = c.hpmax or c.hp
+        return true
+    end
+    return false, "use a number, +N / -N, or current/max."
 end
 
 -- Rolls a d20 locally and adds a modifier (hidden from the group).

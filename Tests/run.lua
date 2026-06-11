@@ -13,6 +13,7 @@ local MANIFEST = {
     "test_codecs.lua",
     "test_charactersheet.lua",
     "test_perktree.lua",
+    "test_initiative.lua",
     "test_widgets.lua",
     "test_comm.lua",
     "test_party.lua",
