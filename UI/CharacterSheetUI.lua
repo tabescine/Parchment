@@ -75,13 +75,19 @@ local function AcquireBtn(content)
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             if self.tip then self.tip(GameTooltip) end
             if self.roll then
-                GameTooltip:AddLine("Click: roll d20 " .. Signed(self.roll.modifier), 0.56, 0.78, 1)
+                GameTooltip:AddLine(self.roll.hint or ("Click: roll d20 " .. Signed(self.roll.modifier)),
+                    0.56, 0.78, 1)
             end
             GameTooltip:Show()
         end)
         b:SetScript("OnLeave", GameTooltip_Hide)
         b:SetScript("OnClick", function(self)
-            if self.roll then
+            if not self.roll then return end
+            -- A spec may carry a custom click (e.g. the Initiative row joins
+            -- combat) instead of the default d20 check.
+            if self.roll.click then
+                self.roll.click()
+            else
                 ns.Dice.Check(self.roll.label, self.roll.modifier, self.roll.who)
             end
         end)
@@ -222,44 +228,99 @@ local function RenderBody(self)
         return { label = label, modifier = mod or 0, who = sheet.name }
     end
 
+    -- Derivation tooltips for the overview. The effect shares fall out as
+    -- differences from the structural parts, so the tooltips are arithmetic
+    -- on the displayed numbers and cannot drift from them.
+    local d = sheet.derived
+    local cfg = ns.DerivedConfig()
+    local ovById = {}
+    for _, a in ipairs(sheet.attributes) do ovById[a.id] = a end
+    local function aName(id) return id and ovById[id] and ovById[id].name or id or "(none)" end
+    local function aMod(id) return id and ovById[id] and ovById[id].modifier or 0 end
+    local function fxTerm(x) return x ~= 0 and (" " .. Signed(x) .. " effects") or "" end
+    local function Tip(title, line)
+        return function(tt)
+            tt:AddLine(title, C_GOLD[1], C_GOLD[2], C_GOLD[3])
+            tt:AddLine(line, 0.9, 0.9, 0.9, true)
+        end
+    end
+
     -- Derived stats, two readable rows of pairs.
     Header(content, "OVERVIEW")
     Row(content, "Level", tostring(sheet.level))
-    Row(content, "Hit Dice", sheet.derived.hit_dice)
-    Row(content, "Armor Class", tostring(sheet.derived.ac), 0, C_GOLD)
-    Row(content, "Initiative", Signed(sheet.derived.initiative), 0, nil, nil,
-        rollSpec("Initiative", sheet.derived.initiative))
-    Row(content, "Movement", Num(sheet.derived.movement) .. "m")
-    Row(content, "Actions", tostring(sheet.derived.actions))
-    Row(content, "Save DC", tostring(sheet.derived.save_dc), 0, C_GOLD)
-    Row(content, "Accomplishment Bonus", Signed(sheet.derived.accomplishment))
-    Row(content, "Primary Attribute", sheet.derived.primary_attribute or "-")
-    if sheet.derived.attack_modifier ~= 0 then
-        Row(content, "Global Attack Modifier", Signed(sheet.derived.attack_modifier), 0, C_DIM)
+    Row(content, "Hit Dice", sheet.derived.hit_dice, 0, nil,
+        cfg.hit_die_attribute and Tip("Hit Dice",
+            "Level " .. sheet.level .. " x the die for the " .. aName(cfg.hit_die_attribute)
+            .. " modifier (" .. Signed(aMod(cfg.hit_die_attribute)) .. ").") or nil)
+    Row(content, "Armor Class", tostring(d.ac), 0, C_GOLD, Tip("Armor Class",
+        "base " .. cfg.ac_base .. " + " .. aName(d.ac_attribute) .. " modifier "
+        .. Signed(aMod(d.ac_attribute)) .. fxTerm(d.ac - cfg.ac_base - aMod(d.ac_attribute))))
+    -- Initiative is gold (interactive): clicking rolls it and joins combat,
+    -- via the same path as the combat window's Me/Submit button.
+    Row(content, "Initiative", Signed(d.initiative), 0, C_GOLD, Tip("Initiative",
+        aName(d.init_attribute) .. " modifier " .. Signed(aMod(d.init_attribute))
+        .. fxTerm(d.initiative - aMod(d.init_attribute))),
+        (not self.viewChar) and {
+            label = "Initiative", modifier = d.initiative, who = sheet.name,
+            hint = "Click: roll initiative and join the combat tracker",
+            click = function() if ns.InitiativeUI then ns.InitiativeUI.AddSelf() end end,
+        } or nil)
+    local moveSteps = cfg.movement_attribute and math.max(0, aMod(cfg.movement_attribute)) or 0
+    local moveStruct = cfg.movement_base + moveSteps * cfg.movement_per_step
+    Row(content, "Movement", Num(d.movement) .. "m", 0, nil, Tip("Movement",
+        "base " .. Num(cfg.movement_base)
+        .. (cfg.movement_attribute and (" + " .. Num(cfg.movement_per_step) .. "m per positive "
+            .. aName(cfg.movement_attribute) .. " modifier (" .. moveSteps .. ")") or "")
+        .. fxTerm(d.movement - moveStruct)))
+    Row(content, "Actions", tostring(d.actions), 0, nil, Tip("Actions",
+        "base " .. cfg.actions_base
+        .. (d.actions ~= cfg.actions_base
+            and (" " .. Signed(d.actions - cfg.actions_base) .. " from level bonuses / effects") or "")))
+    Row(content, "Save DC", tostring(d.save_dc), 0, C_GOLD, Tip("Save DC",
+        "base " .. cfg.save_dc_base .. " + " .. aName(d.primary_attribute) .. " modifier "
+        .. Signed(aMod(d.primary_attribute)) .. " + accomplished " .. Signed(d.accomplishment)
+        .. fxTerm(d.save_dc - cfg.save_dc_base - aMod(d.primary_attribute) - d.accomplishment)))
+    Row(content, "Accomplishment Bonus", Signed(d.accomplishment), 0, nil, Tip("Accomplishment Bonus",
+        "From the system's accomplishment table at level " .. sheet.level .. "."))
+    Row(content, "Primary Attribute", d.primary_attribute or "-")
+    if d.attack_modifier ~= 0 then
+        Row(content, "Global Attack Modifier", Signed(d.attack_modifier), 0, C_DIM)
     end
 
     -- Attributes.
+    -- Attributes render as two right-aligned columns (total | mod) under dim
+    -- column heads, so the numbers line up down the sheet. The total keeps
+    -- its trait breakdown inline, dimmed ("8 +1 =  9"); the modifier is gold
+    -- because it is the number a row click rolls with.
     Header(content, "ATTRIBUTES")
+    local MOD_X, TOTAL_X = PAD, PAD + 48   -- column right edges, from the right
+    local totalHead = Acquire(content, "GameFontHighlightSmall")
+    totalHead:SetPoint("TOPRIGHT", content, "TOPRIGHT", -TOTAL_X, content.y)
+    totalHead:SetTextColor(C_DIM[1], C_DIM[2], C_DIM[3])
+    totalHead:SetText("total")
+    local modHead = Acquire(content, "GameFontHighlightSmall")
+    modHead:SetPoint("TOPRIGHT", content, "TOPRIGHT", -MOD_X, content.y)
+    modHead:SetTextColor(C_DIM[1], C_DIM[2], C_DIM[3])
+    modHead:SetText("mod")
+    content.y = content.y - 14
     for _, a in ipairs(sheet.attributes) do
-        local value
-        if a.bonus ~= 0 then
-            value = string.format("%d %s = %d    %s", a.base, Signed(a.bonus), a.final, Signed(a.modifier))
-        else
-            value = string.format("%d    %s", a.final, Signed(a.modifier))
-        end
-        Row(content, a.name, value, 0, nil, nil, rollSpec(a.name .. " check", a.modifier))
+        local rowY = content.y
+        Row(content, a.name, "", 0, nil, nil, rollSpec(a.name .. " check", a.modifier))
+        local total = Acquire(content, "GameFontHighlightSmall")
+        total:SetPoint("TOPRIGHT", content, "TOPRIGHT", -TOTAL_X, rowY)
+        total:SetTextColor(C_TEXT[1], C_TEXT[2], C_TEXT[3])
+        total:SetText(a.bonus ~= 0
+            and string.format("|cff9e998c%d %s =|r  %d", a.base, Signed(a.bonus), a.final)
+            or tostring(a.final))
+        local mod = Acquire(content, "GameFontHighlightSmall")
+        mod:SetPoint("TOPRIGHT", content, "TOPRIGHT", -MOD_X, rowY)
+        mod:SetTextColor(C_GOLD[1], C_GOLD[2], C_GOLD[3])
+        mod:SetText(Signed(a.modifier))
         if #a.sources > 0 then
             Row(content, "", table.concat(a.sources, ", "), INDENT, C_DIM)
         end
     end
 
-    -- Attacks (as recorded on the sheet).
-    if #sheet.attack_lines > 0 then
-        Header(content, "ATTACKS")
-        for _, al in ipairs(sheet.attack_lines) do
-            Row(content, al.name, (al.die or "") .. " " .. Signed(al.modifier or 0))
-        end
-    end
 
     -- Skills and saves, grouped under each attribute's saving throw. Each row
     -- carries a hover tooltip breaking down how its total is reached.
@@ -306,17 +367,25 @@ local function RenderBody(self)
         end
     end
 
-    -- Weapon proficiencies (hover for damage and properties).
+    -- Weapon proficiencies as aligned columns (atk | damage); atk is gold -
+    -- clicking the row rolls the attack. Versatile/properties detail hovers.
     if #sheet.weapons > 0 then
         Header(content, "WEAPON SKILLS (accomplished)")
+        local W_ATK_X, W_DMG_X = PAD + 60, PAD   -- column right edges
+        local atkHead = Acquire(content, "GameFontHighlightSmall")
+        atkHead:SetPoint("TOPRIGHT", content, "TOPRIGHT", -W_ATK_X, content.y)
+        atkHead:SetTextColor(C_DIM[1], C_DIM[2], C_DIM[3])
+        atkHead:SetText("atk")
+        local dmgHead = Acquire(content, "GameFontHighlightSmall")
+        dmgHead:SetPoint("TOPRIGHT", content, "TOPRIGHT", -W_DMG_X, content.y)
+        dmgHead:SetTextColor(C_DIM[1], C_DIM[2], C_DIM[3])
+        dmgHead:SetText("damage")
+        content.y = content.y - 14
         for _, w in ipairs(sheet.weapons) do
+            local rowY = content.y
             local props = #w.properties > 0 and ("  [" .. table.concat(w.properties, ", ") .. "]") or ""
             local weapon = w
-            local value = w.damage or ""
-            if w.attack_total then
-                value = Signed(w.attack_total) .. (w.damage and ("    " .. w.damage) or "")
-            end
-            Row(content, w.name .. props, value, 0, nil, function(tt)
+            Row(content, w.name .. props, "", 0, nil, function(tt)
                 tt:AddLine(weapon.name, C_GOLD[1], C_GOLD[2], C_GOLD[3])
                 tt:AddLine("Damage: " .. (weapon.damage or "-")
                     .. (weapon.versatile and ("  (two-handed " .. weapon.versatile .. ")") or ""), 0.9, 0.9, 0.9)
@@ -336,6 +405,87 @@ local function RenderBody(self)
                     tt:AddLine("Accomplished: adds " .. Signed(accomplishment) .. " to attack rolls", 0.56, 0.78, 1)
                 end
             end, w.attack_total and rollSpec(w.name .. " attack", w.attack_total) or nil)
+            local atk = Acquire(content, "GameFontHighlightSmall")
+            atk:SetPoint("TOPRIGHT", content, "TOPRIGHT", -W_ATK_X, rowY)
+            if w.attack_total then
+                atk:SetTextColor(C_GOLD[1], C_GOLD[2], C_GOLD[3])
+                atk:SetText(Signed(w.attack_total))
+            else
+                atk:SetTextColor(C_DIM[1], C_DIM[2], C_DIM[3])
+                atk:SetText("-")
+            end
+            local dmg = Acquire(content, "GameFontHighlightSmall")
+            dmg:SetPoint("TOPRIGHT", content, "TOPRIGHT", -W_DMG_X, rowY)
+            dmg:SetTextColor(C_TEXT[1], C_TEXT[2], C_TEXT[3])
+            dmg:SetText(w.damage or "-")
+        end
+    end
+
+    -- Spellcasting (casters): per-school spell attack and save DC columns;
+    -- atk is gold - clicking a row rolls that spell attack.
+    if sheet.derived.spell then
+        local spell = sheet.derived.spell
+        Header(content, "SPELLCASTING")
+        local S_ATK_X, S_DC_X = PAD + 44, PAD   -- column right edges
+        local sAtkHead = Acquire(content, "GameFontHighlightSmall")
+        sAtkHead:SetPoint("TOPRIGHT", content, "TOPRIGHT", -S_ATK_X, content.y)
+        sAtkHead:SetTextColor(C_DIM[1], C_DIM[2], C_DIM[3])
+        sAtkHead:SetText("atk")
+        local dcHead = Acquire(content, "GameFontHighlightSmall")
+        dcHead:SetPoint("TOPRIGHT", content, "TOPRIGHT", -S_DC_X, content.y)
+        dcHead:SetTextColor(C_DIM[1], C_DIM[2], C_DIM[3])
+        dcHead:SetText("DC")
+        content.y = content.y - 14
+        -- Hover breakdown, mirroring the weapon-attack tooltip: the effect
+        -- shares fall out as differences from the structural parts (primary
+        -- modifier + accomplishment, DC additionally save_dc_base).
+        local primaryAttr = modById[sheet.derived.primary_attribute]
+        local primaryMod = primaryAttr and primaryAttr.modifier or 0
+        local primaryName = primaryAttr and primaryAttr.name or "primary"
+        local dcBase = ns.DerivedConfig().save_dc_base
+        local function SpellTip(label, school)
+            return function(tt)
+                tt:AddLine(label, C_GOLD[1], C_GOLD[2], C_GOLD[3])
+                local atkFx = spell.attack - primaryMod - accomplishment
+                local atkLine = "Spell attack: " .. Signed(school and school.attack or spell.attack)
+                    .. " (" .. primaryName .. " modifier " .. Signed(primaryMod)
+                    .. " + accomplished " .. Signed(accomplishment)
+                    .. (atkFx ~= 0 and (" " .. Signed(atkFx) .. " effects") or "")
+                    .. (school and school.attack ~= spell.attack
+                        and (" " .. Signed(school.attack - spell.attack) .. " " .. school.name) or "")
+                    .. ")"
+                tt:AddLine(atkLine, 0.9, 0.9, 0.9, true)
+                local dcFx = spell.dc - dcBase - primaryMod - accomplishment
+                local dcLine = "Save DC: " .. (school and school.dc or spell.dc)
+                    .. " (base " .. dcBase
+                    .. " + " .. primaryName .. " modifier " .. Signed(primaryMod)
+                    .. " + accomplished " .. Signed(accomplishment)
+                    .. (dcFx ~= 0 and (" " .. Signed(dcFx) .. " effects") or "")
+                    .. (school and school.dc ~= spell.dc
+                        and (" " .. Signed(school.dc - spell.dc) .. " " .. school.name) or "")
+                    .. ")"
+                tt:AddLine(dcLine, 0.9, 0.9, 0.9, true)
+            end
+        end
+        local function SpellRow(label, atkValue, dcValue, school)
+            local rowY = content.y
+            Row(content, label, "", 0, nil, SpellTip(label, school),
+                rollSpec(label .. " spell attack", atkValue))
+            local atk = Acquire(content, "GameFontHighlightSmall")
+            atk:SetPoint("TOPRIGHT", content, "TOPRIGHT", -S_ATK_X, rowY)
+            atk:SetTextColor(C_GOLD[1], C_GOLD[2], C_GOLD[3])
+            atk:SetText(Signed(atkValue))
+            local dc = Acquire(content, "GameFontHighlightSmall")
+            dc:SetPoint("TOPRIGHT", content, "TOPRIGHT", -S_DC_X, rowY)
+            dc:SetTextColor(C_TEXT[1], C_TEXT[2], C_TEXT[3])
+            dc:SetText(tostring(dcValue))
+        end
+        if #spell.schools == 0 then
+            SpellRow("Spell attack", spell.attack, spell.dc)
+        else
+            for _, school in ipairs(spell.schools) do
+                SpellRow(school.name, school.attack, school.dc, school)
+            end
         end
     end
 

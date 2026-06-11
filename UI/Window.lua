@@ -7,7 +7,8 @@
 -- behaviours common to every Parchment window.
 --
 -- Reads from: ns.Addon.db (for geometry persistence, keyed by opts.dbKey).
--- Exposes on ns.UI: .CreateWindow, .Signed, and the shared palette constants.
+-- Exposes on ns.UI: .CreateWindow, .Signed, .SetPlaceholder, and the shared
+--   palette constants.
 
 local ADDON, ns = ...
 
@@ -26,6 +27,39 @@ UI.HILITE = { 0.85, 0.72, 0.45, 0.18 }
 -- Formats a number with an explicit sign ("+2", "-1", "+0").
 function UI.Signed(n)
     return (n >= 0 and "+" or "") .. n
+end
+
+-- Adds grey placeholder text to an EditBox, shown while it is empty and
+-- unfocused. anchor defaults to "LEFT" (single-line boxes); pass "TOPLEFT"
+-- for multi-line ones (the hint then wraps to the box width). Uses
+-- HookScript so the box's own handlers keep running - call this AFTER all
+-- SetScript wiring on the box (SetScript replaces hooked chains).
+function UI.SetPlaceholder(editBox, text, anchor)
+    -- Multi-line boxes from InputScrollFrameTemplate ship a managed
+    -- placeholder (EditBox.Instructions, toggled by the template) - and the
+    -- template sizes the box after creation, which collapses a hand-anchored
+    -- hint to zero width. Prefer the native one there.
+    if editBox.Instructions and editBox.IsMultiLine and editBox:IsMultiLine() then
+        editBox.Instructions:SetText(text)
+        return editBox.Instructions
+    end
+    local hint = editBox:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+    if anchor == "TOPLEFT" then
+        hint:SetPoint("TOPLEFT", 2, -2)
+        hint:SetPoint("RIGHT", -2, 0)
+        hint:SetJustifyH("LEFT")
+    else
+        hint:SetPoint("LEFT", 2, 0)
+    end
+    hint:SetText(text)
+    local function Update()
+        hint:SetShown(editBox:GetText() == "" and not editBox:HasFocus())
+    end
+    editBox:HookScript("OnEditFocusGained", Update)
+    editBox:HookScript("OnEditFocusLost", Update)
+    editBox:HookScript("OnTextChanged", Update)
+    Update()
+    return hint
 end
 
 local BACKDROP = {

@@ -23,7 +23,8 @@
 -- Reads from: ns.InitiativeTracker, ns.Party (vitals for player rows),
 --   ns.GetActiveCharacter, ns.GetSystem, ns.CharacterSheet.Compute, ns.UI
 --   (shared window + palette).
--- Exposes on ns.InitiativeUI: Open, Toggle, RefreshIfShown.
+-- Exposes on ns.InitiativeUI: Open, Toggle, RefreshIfShown, AddSelf (roll
+--   initiative and join combat; the sheet's Initiative row uses it).
 -- Registers the "initiative" module opener with Core.
 
 local ADDON, ns = ...
@@ -35,8 +36,8 @@ local IT = ns.InitiativeTracker
 local InitiativeUI = {}
 ns.InitiativeUI = InitiativeUI
 
--- Forward declaration so row/button scripts can refresh the window.
-local Refresh, CanEdit, Sync
+-- Forward declarations so row/button scripts can refresh the window.
+local Refresh, CanEdit, Sync, RefreshIfShown
 
 -- Creates a small text button using the standard panel button look.
 local function MakeButton(parent, text, width, tooltip)
@@ -368,9 +369,10 @@ local function CommitInput(self, rolled)
     end
 end
 
--- "Me": as DM/solo, adds the active character (rolled). As a player in a group,
--- submits the rolled initiative to the DM instead.
-local function AddActiveCharacter(self)
+-- Rolls the active character's initiative and joins combat: as DM/solo the
+-- combatant is added locally (and synced); as a player in a group the roll
+-- is submitted to the DM. Public - the sheet's Initiative row uses it too.
+function InitiativeUI.AddSelf()
     if not ns.HasSystem() then
         ns.Print("no system loaded - import one with /pmt import to add your character.")
         return
@@ -391,7 +393,7 @@ local function AddActiveCharacter(self)
     if CanEdit() then
         IT.AddRolled(sheet.name, sheet.derived.initiative, false, tb, function(combatant, _, _, err)
             if err then ns.Print(err) end
-            Refresh(self)
+            RefreshIfShown()
             if combatant then Sync() end
         end)
     else
@@ -534,7 +536,7 @@ local function BuildFrame()
     -- Wire actions.
     f.addBtn:SetScript("OnClick", function() CommitInput(f, false) end)
     f.rollBtn:SetScript("OnClick", function() CommitInput(f, true) end)
-    f.meBtn:SetScript("OnClick", function() AddActiveCharacter(f) end)
+    f.meBtn:SetScript("OnClick", InitiativeUI.AddSelf)
     f.startBtn:SetScript("OnClick", function() if CanEdit() then IT.Start(); Refresh(f); Sync() end end)
     f.nextBtn:SetScript("OnClick", function()
         if CanEdit() then
@@ -558,6 +560,25 @@ local function BuildFrame()
     end)
     f.nameBox:SetScript("OnEnterPressed", function() CommitInput(f, false) end)
     f.modBox:SetScript("OnEnterPressed", function() CommitInput(f, false) end)
+
+    -- Input hints. The value's meaning depends on the button, so both boxes
+    -- also explain themselves on hover. (Placeholders last: they HookScript.)
+    local function InputTooltip(box, title, body)
+        box:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOP")
+            GameTooltip:SetText(title, 1, 1, 1)
+            GameTooltip:AddLine(body, 0.9, 0.9, 0.9, true)
+            GameTooltip:Show()
+        end)
+        box:SetScript("OnLeave", GameTooltip_Hide)
+    end
+    InputTooltip(f.nameBox, "Combatant name",
+        "Who joins the order; the NPC checkbox decides the kind.")
+    InputTooltip(f.modBox, "Initiative value",
+        "Add uses it as the initiative TOTAL. Roll uses it as the d20 MODIFIER "
+        .. "and rolls d20 + value.")
+    UI.SetPlaceholder(f.nameBox, "name")
+    UI.SetPlaceholder(f.modBox, "init")
 
     f.OnResize = function(self) RenderList(self) end
     return f
@@ -583,7 +604,7 @@ end
 ns.RegisterModule("initiative", InitiativeUI.Toggle)
 
 -- Refreshes the tracker window if it is open.
-local function RefreshIfShown()
+RefreshIfShown = function()
     if InitiativeUI.frame and InitiativeUI.frame:IsShown() then Refresh(InitiativeUI.frame) end
 end
 InitiativeUI.RefreshIfShown = RefreshIfShown

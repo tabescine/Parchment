@@ -166,6 +166,9 @@ local function BuildFrame()
         -- because pasteData is only set on the next frame.
         if userInput then f.pasteData = nil end
     end)
+    UI.SetPlaceholder(editBox,
+        "Paste a system or character here (JSON, TOML, or Lua - comments are fine), "
+        .. "or use the Export buttons below.", "TOPLEFT")
 
     -- Status line.
     f.status = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")

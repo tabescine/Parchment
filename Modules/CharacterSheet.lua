@@ -18,6 +18,8 @@
 --   mana (max)        = mana_multiplier x spell-source modifier
 --   movement          = movement_base + per_step per positive movement modifier
 --   save DC (primary) = save_dc_base + primary modifier + accomplishment bonus
+--   spell attack      = primary modifier + accomplishment (casters; per-school
+--                       rows fold school-targeted effects)
 -- Which attribute fills each role is configured per system (see ns.DerivedConfig);
 -- an unset role contributes 0, so no specific attribute id is ever assumed.
 --
@@ -52,7 +54,9 @@ end
 --   attribute(id)          all_attributes
 --   skill(skill|id)        skill(skill|id, add_modifier = attrId)   all_skills
 --   save(id)               save(id, add_modifier = attrId)
---   ac  attack_rolls  initiative  movement  actions  save_dc  max_hp  max_mana
+--   ac  attack_rolls  initiative  movement  actions  max_hp  max_mana
+--   spell_attack(school?)  save_dc(school?)  - a school-targeted entry
+--   adjusts only that school's spellcasting row
 -- add_modifier adds a copy of an attribute's modifier to that skill/save, which
 -- is how "twice your X modifier on skill Y" is expressed. Any other type
 -- (attribute_points, damage_reduction, ...) is informational and ignored here.
@@ -62,7 +66,8 @@ local function NewAccumulator()
     return {
         attr = {}, attrSources = {}, allAttr = 0,
         ac = 0, attack = 0, initiative = 0, movement = 0, actions = 0,
-        saveDC = 0, maxHP = 0, maxMana = 0,
+        saveDC = 0, saveDCSchool = {}, spellAttack = 0, spellAttackSchool = {},
+        maxHP = 0, maxMana = 0,
         skill = {}, allSkill = 0, skillAddMod = {}, skillSources = {},
         save = {}, saveAddMod = {}, saveSources = {},
     }
@@ -91,7 +96,18 @@ local function ApplyEffect(acc, e, source)
     elseif t == "initiative" then acc.initiative = acc.initiative + v
     elseif t == "movement" then acc.movement = acc.movement + v
     elseif t == "actions" then acc.actions = acc.actions + v
-    elseif t == "save_dc" then acc.saveDC = acc.saveDC + v
+    elseif t == "save_dc" then
+        if e.school then
+            acc.saveDCSchool[e.school] = (acc.saveDCSchool[e.school] or 0) + v
+        else
+            acc.saveDC = acc.saveDC + v
+        end
+    elseif t == "spell_attack" then
+        if e.school then
+            acc.spellAttackSchool[e.school] = (acc.spellAttackSchool[e.school] or 0) + v
+        else
+            acc.spellAttack = acc.spellAttack + v
+        end
     elseif t == "max_hp" then acc.maxHP = acc.maxHP + v
     elseif t == "max_mana" then acc.maxMana = acc.maxMana + v
     elseif t == "all_skills" then acc.allSkill = acc.allSkill + v
@@ -354,6 +370,30 @@ function CharacterSheet.Compute(char, system)
         if lvl <= level and bonus.actions then derived.actions = derived.actions + bonus.actions end
     end
 
+    -- Spellcasting (casters only): spell attack = primary modifier +
+    -- accomplishment + spell_attack effects. When the system declares
+    -- spell_schools (records or plain strings), one row per school folds in
+    -- the school-targeted spell_attack / save_dc effects.
+    if isCaster then
+        local spell = {
+            attack = (modifier[primary] or 0) + accomplishment + fx.spellAttack,
+            dc = derived.save_dc,
+            schools = {},
+        }
+        for _, s in ipairs(system.spell_schools or {}) do
+            local id = type(s) == "table" and s.id or s
+            local name = (type(s) == "table" and s.name) or tostring(s)
+            if id then
+                spell.schools[#spell.schools + 1] = {
+                    id = id, name = name,
+                    attack = spell.attack + (fx.spellAttackSchool[id] or 0),
+                    dc = spell.dc + (fx.saveDCSchool[id] or 0),
+                }
+            end
+        end
+        derived.spell = spell
+    end
+
     return {
         name = char.name, player = char.player, race = char.race,
         level = level, quote = char.quote, notes = char.notes,
@@ -365,6 +405,5 @@ function CharacterSheet.Compute(char, system)
         traits = traits,
         sphere_perks = spherePerks,
         custom_perks = char.custom_perks or {},
-        attack_lines = char.attack_lines or {},
     }
 end

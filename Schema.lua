@@ -132,6 +132,15 @@ function Schema.ValidateSystem(system)
         end
     end
 
+    -- Spell schools: plain strings or { id, name } records.
+    for i, school in ipairs(system.spell_schools or {}) do
+        if type(school) == "table" then
+            CheckRequired(school, { id = "string", name = "string" }, "spell_school[" .. i .. "]", issues)
+        elseif type(school) ~= "string" then
+            Report(issues, "spell_school[" .. i .. "]", "should be a string or { id, name }, got " .. type(school))
+        end
+    end
+
     -- Derived-stat config: any attribute it names must exist.
     local ds = system.derived_stats
     if type(ds) == "table" then

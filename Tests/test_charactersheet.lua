@@ -27,6 +27,7 @@ ParchmentSystemDB = {
         { id = "w2", name = "Knife", attribute = { "a", "b" }, damage = "1d4", properties = {} },
         { id = "w3", name = "Unused", attribute = "a", damage = "1d8", properties = {} },
     },
+    spell_schools = { { id = "ev", name = "Evocation" }, { id = "wd", name = "Warding" } },
     racial_traits = {
         { id = "r1", name = "Race One",
           bonuses = { { type = "attribute", id = "a", value = 1 } },
@@ -61,10 +62,12 @@ local char = {
         effects = {
             { type = "skill", skill = "s1", add_modifier = "c" },  -- +copy of c's mod (2)
             { type = "save", id = "b", value = 1 },
+            { type = "spell_attack", value = 1 },                  -- all schools
+            { type = "spell_attack", school = "ev", value = 2 },   -- one school
+            { type = "save_dc", school = "ev", value = 1 },        -- one school's DC
             { type = "made_up_informational", value = 5 },          -- must be ignored
         },
     } },
-    attack_lines = { { name = "Bomb", die = "2d6", modifier = 1 } },
 }
 
 local sheet = ns.CharacterSheet.Compute(char, system)
@@ -117,11 +120,20 @@ for _, p in ipairs(sheet.sphere_perks) do perks[p.name] = p end
 assert(perks.Sturdy.rank == 2)
 assert(perks.Chooser.choices and perks.Chooser.choices[1] == "Skill One")
 
--- attack_lines pass through untouched.
-assert(sheet.attack_lines[1].name == "Bomb")
+-- Spellcasting (the char's primary c IS a spell attribute): spell attack =
+-- c's mod (2) + accomplishment (3) + global effect (1) = 6; the targeted
+-- effects raise only Evocation's row (+2 atk, +1 DC).
+local spell = sheet.derived.spell
+assert(spell, "caster must get a spell block")
+assert(spell.attack == 6 and spell.dc == 13)
+assert(#spell.schools == 2)
+assert(spell.schools[1].id == "ev" and spell.schools[1].attack == 8 and spell.schools[1].dc == 14)
+assert(spell.schools[2].id == "wd" and spell.schools[2].attack == 6 and spell.schools[2].dc == 13)
 
--- Non-caster fallback: primary outside spell_attributes uses mana_attribute.
+-- Non-caster fallback: primary outside spell_attributes uses mana_attribute,
+-- and there is no spell block at all.
 local char2 = { name = "N", level = 1, attributes = { a = 1, b = 3, c = 4 }, primary_attribute = "b" }
 local sheet2 = ns.CharacterSheet.Compute(char2, system)
 assert(sheet2.derived.mana.max == 6, "fallback mana attribute (c) should drive mana")
 assert(sheet2.derived.save_dc == 8 + 1 + 2)                 -- base + b's mod + level-1 acc 2
+assert(sheet2.derived.spell == nil, "non-casters must not get a spell block")

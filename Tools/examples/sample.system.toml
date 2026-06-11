@@ -229,6 +229,23 @@ damage = "1d4"
 properties = ["light", "thrown"]
 
 # -----------------------------------------------------------------------------
+# spell_schools (optional): casters (primary attribute in spell_attributes)
+# get a SPELLCASTING sheet section with a spell-attack / save-DC row per
+# school. Effects may target one school to adjust only its row:
+#   { type = "spell_attack", school = "evocation", value = 1 }
+#   { type = "save_dc",      school = "evocation", value = 1 }
+# Without a school those effect types apply to every row. Omit spell_schools
+# for a single generic "Spell attack" row.
+# -----------------------------------------------------------------------------
+[[spell_schools]]
+id = "evocation"
+name = "Evocation"
+
+[[spell_schools]]
+id = "warding"
+name = "Warding"
+
+# -----------------------------------------------------------------------------
 # racial_traits / origin_traits: a character picks one racial trait and any
 # number of origin traits. Mechanics go in `bonuses` and `penalties` - both
 # are lists of EFFECTS (the same vocabulary perks use, documented at the
@@ -410,15 +427,21 @@ apply = "accomplished"
 prompt = "Choose two skills to become accomplished in."
 
 # req_attribute overrides the governing attribute: this Wanderer perk is
-# gated by Spirit instead of Wits. save_dc / max_mana effects demoed here.
+# gated by Spirit instead of Wits. Demos spellcasting effects: a global
+# spell-attack bonus, a SCHOOL-targeted save-DC bonus (only the Evocation
+# row rises - the "diabolism +X" pattern), and max_mana.
 [[perk_trees.perks]]
 id = "arcane_focus"
 name = "Arcane Focus"
-description = "Requires Spirit 7. +1 save DC and +2 max mana."
+description = "Requires Spirit 7. +1 spell attack, +1 Evocation save DC, +2 max mana."
 req_attribute = "spirit"
 attribute_req = 7
 [[perk_trees.perks.effects]]
+type = "spell_attack"
+value = 1
+[[perk_trees.perks.effects]]
 type = "save_dc"
+school = "evocation"
 value = 1
 [[perk_trees.perks.effects]]
 type = "max_mana"
@@ -530,7 +553,11 @@ value = 1
 #   { type = "save",       id = <attr>,  value = N }   +N to that saving throw
 #   { type = "save",       id = <attr>, add_modifier = <attr> }   as for skills
 #   { type = "ac" | "attack_rolls" | "initiative" | "movement" | "actions"
-#          | "save_dc" | "max_hp" | "max_mana",  value = N }
+#          | "max_hp" | "max_mana",  value = N }
+#   { type = "spell_attack", value = N, school = <school>? }
+#   { type = "save_dc",      value = N, school = <school>? }
+#                                  with a school: adjusts only that school's
+#                                  spellcasting row; without: applies broadly
 #   { type = "attribute_points", value = N }   extra editor budget (not sheet math)
 #
 # Any OTHER type (e.g. "damage_reduction") is informational: validated,

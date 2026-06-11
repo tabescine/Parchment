@@ -70,12 +70,5 @@
         }
       ]
     }
-  ],
-  "attack_lines": [
-    {
-      "name": "Thrown lantern oil",
-      "die": "1d4",
-      "modifier": 1
-    }
   ]
 }

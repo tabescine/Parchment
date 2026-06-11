@@ -188,6 +188,16 @@
       ]
     }
   ],
+  "spell_schools": [
+    {
+      "id": "evocation",
+      "name": "Evocation"
+    },
+    {
+      "id": "warding",
+      "name": "Warding"
+    }
+  ],
   "racial_traits": [
     {
       "id": "human",
@@ -386,12 +396,17 @@
         {
           "id": "arcane_focus",
           "name": "Arcane Focus",
-          "description": "Requires Spirit 7. +1 save DC and +2 max mana.",
+          "description": "Requires Spirit 7. +1 spell attack, +1 Evocation save DC, +2 max mana.",
           "req_attribute": "spirit",
           "attribute_req": 7,
           "effects": [
             {
+              "type": "spell_attack",
+              "value": 1
+            },
+            {
               "type": "save_dc",
+              "school": "evocation",
               "value": 1
             },
             {

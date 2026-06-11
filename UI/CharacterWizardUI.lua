@@ -258,7 +258,7 @@ Refresh = function(self)
         if st then
             st:SetText(tostring((d.attributes or {})[attr.id] or 1))
             local a = modById[attr.id]
-            self.modText[attr.id]:SetText(a and Signed(a.modifier) or "")
+            self.modText[attr.id]:SetText(a and ("|cff9e998cmod|r " .. Signed(a.modifier)) or "")
         end
     end
     local used, avail = CE.AttributePoints(d, system)

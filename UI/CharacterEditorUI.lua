@@ -553,7 +553,9 @@ Refresh = function(self)
         if st then
             st:SetText(tostring((char.attributes or {})[attr.id] or 1))
             local a = modById[attr.id]
-            self.modText[attr.id]:SetText(a and (Signed(a.modifier) .. (a.bonus ~= 0 and "  (" .. a.final .. ")" or "")) or "")
+            -- Labelled so modifier and (trait-adjusted) total read apart.
+            self.modText[attr.id]:SetText(a and ("|cff9e998cmod|r " .. Signed(a.modifier)
+                .. (a.bonus ~= 0 and ("   |cff9e998ctotal|r " .. a.final) or "")) or "")
         end
     end
 
