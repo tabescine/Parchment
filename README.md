@@ -15,8 +15,8 @@ every window - sheet math included - adapts to it.
   modifiers, skills, saves, weapons, AC, HP/Mana, movement. Hover any total
   for a breakdown of where each bonus comes from. Editable current HP/Mana
   and Temp HP.
-- **Character creation** - a guided wizard (`/pmt new`: Identity →
-  Attributes → Traits → Proficiencies → Review) and a freeform point-buy
+- **Character creation** - a guided wizard (`/pmt new`: Identity → Traits →
+  Attributes → Proficiencies → Review) and a freeform point-buy
   editor (`/pmt edit`) with live warnings, plus level-up support.
 - **Perk trees** - a viewer/builder for your system's perk spheres with
   prerequisites, exclusivity, ranks, perk-driven choices, and homebrew perks.

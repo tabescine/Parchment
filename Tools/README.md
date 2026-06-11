@@ -38,8 +38,8 @@ it top to bottom, and replace the contents.
 **Getting data into the game: use `/pmt import`.** Paste the whole file -
 comments included - system first, then the character. The dialog
 auto-detects JSON/TOML/Lua, validates against the schema, and only commits
-on success; `/pmt export` produces the same formats back. No external
-tooling is needed.
+on success; the same dialog's Export buttons produce the formats back. No
+external tooling is needed.
 
 ## parchment_converter.py (optional)
 

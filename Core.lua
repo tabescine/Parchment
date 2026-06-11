@@ -8,9 +8,10 @@
 -- no active system until the user imports one (/pmt import) or adopts a
 -- DM-shared one. Windows that need a system show an empty state until then.
 --
--- This is the only file that knows about the live SavedVariables globals. The
--- modules never touch ParchmentSystemDB / ParchmentCharDB directly; they call
--- the ns.Get* helpers here so the data source can change without touching them.
+-- Core owns the live SavedVariables globals: modules read and write them only
+-- through the ns data API (Get*/Set*) so the data source can change without
+-- touching them. One sanctioned exception: Modules/Systems.lua owns
+-- ParchmentSystemDB swaps (activating systems from the library).
 --
 -- Reads from: ns.Schema.
 -- Exposes on ns: the data API (GetSystem, HasSystem, GetCharacter, ...),

@@ -191,7 +191,7 @@ function S.ClearCache()
     ns.Print("cleared " .. n .. " cached sheet(s).")
 end
 
--- Adds "View Parchment Sheet" to player right-click menus (modern Menu API,
+-- Adds a "View sheet" entry to player right-click menus (modern Menu API,
 -- retail 11.0+), under the addon's own "Parchment" section. Covers self,
 -- target, focus, unit frames, chat names, and lists.
 local UNIT_MENUS = {

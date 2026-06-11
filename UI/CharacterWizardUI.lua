@@ -1,7 +1,7 @@
 -- Parchment - Character Wizard (UI)
 --
--- A guided, stepped creator for a brand-new character: Identity -> Attributes ->
--- Traits -> Proficiencies -> Review. It edits a draft (not the active
+-- A guided, stepped creator for a brand-new character: Identity -> Traits ->
+-- Attributes -> Proficiencies -> Review. It edits a draft (not the active
 -- character); Finish saves the draft, makes it active, and opens the editor for
 -- any further tweaks. Reuses ns.Widgets.Stepper, ns.Dialogs.Pick and the
 -- ns.CharacterEditor budgets/warnings; validation is soft (shown, never blocks).
