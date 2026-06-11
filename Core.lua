@@ -14,7 +14,8 @@
 --
 -- Reads from: ns.Schema.
 -- Exposes on ns: the data API (GetSystem, HasSystem, GetCharacter, ...),
---   the module registry (RegisterModule, OpenModule), and ns.Addon.
+--   the module registry (RegisterModule, OpenModule), shared helpers
+--   (Print, DeepCopy, SaveToDisk, ShareSystem), and ns.Addon.
 
 local ADDON, ns = ...
 
@@ -67,12 +68,13 @@ end
 -- Exposed so other modules can print prefixed chat lines.
 ns.Print = Print
 
--- Returns a deep copy of a value (used when seeding SavedVariables from the
--- bundled defaults so later edits don't mutate the shared default tables).
-local function CopyDeep(value)
+-- Returns a deep copy of a value (tables copied recursively; non-tables pass
+-- through). Used wherever stored data must not alias a live table, e.g. the
+-- system library and adopt-prompt snapshots in Modules/Systems.lua.
+function ns.DeepCopy(value)
     if type(value) ~= "table" then return value end
     local out = {}
-    for k, v in pairs(value) do out[k] = CopyDeep(v) end
+    for k, v in pairs(value) do out[k] = ns.DeepCopy(v) end
     return out
 end
 

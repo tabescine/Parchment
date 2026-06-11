@@ -205,7 +205,7 @@ function CharacterSheet.Compute(char, system)
         end
     end
 
-    -- Perk-driven choices (Scholar, Jack of All Trades, Weaponmaster, ...): build
+    -- Perk-driven choices: build
     -- the extra effects/accomplishments they grant and tag the chosen values onto
     -- the display entry for that perk.
     local choiceEffects, extraSkills, extraWeapons = {}, {}, {}

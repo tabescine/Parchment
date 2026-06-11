@@ -7,21 +7,14 @@
 -- library. Parchment ships no system, so the library starts empty.
 --
 -- Reads from: ns.Addon.db.global (systemLibrary, systemSource), ns.Comm,
---   ns.Dialogs, ns.Print, ns.CharacterSheetUI, ns.PerkTreeUI. Owns
---   ParchmentSystemDB swaps.
+--   ns.Dialogs, ns.Print, ns.DeepCopy, ns.CharacterSheetUI, ns.PerkTreeUI.
+--   Owns ParchmentSystemDB swaps.
 -- Exposes on ns.Systems: Store, SetActive, OpenPicker.
 
 local ADDON, ns = ...
 
 ns.Systems = ns.Systems or {}
 local Sys = ns.Systems
-
-local function deepcopy(t)
-    if type(t) ~= "table" then return t end
-    local o = {}
-    for k, v in pairs(t) do o[k] = deepcopy(v) end
-    return o
-end
 
 -- The cache of known systems, keyed by system_name.
 local function Library()
@@ -44,7 +37,7 @@ Sys.RefreshAll = RefreshAll
 function Sys.Store(system, from)
     if type(system) ~= "table" or not system.system_name then return end
     Library()[system.system_name] = {
-        name = system.system_name, system = deepcopy(system),
+        name = system.system_name, system = ns.DeepCopy(system),
         from = from, time = (time and time()) or 0,
     }
 end
@@ -58,7 +51,7 @@ function Sys.SetActive(system, from)
         and not Library()[ParchmentSystemDB.system_name] then
         Sys.Store(ParchmentSystemDB, "yours")
     end
-    ParchmentSystemDB = deepcopy(system)
+    ParchmentSystemDB = ns.DeepCopy(system)
     g.systemSource = "imported"
     Sys.Store(ParchmentSystemDB, from)
     RefreshAll()
@@ -184,6 +177,6 @@ if ns.Comm then
         Sys.Store(system, sender)
         ns.Print((sender or "a DM") .. " shared system '" .. system.system_name .. "'.")
         StaticPopup_Show("PARCHMENT_ADOPT_SYSTEM", tostring(sender), system.system_name,
-            { system = deepcopy(system), from = sender, name = system.system_name })
+            { system = ns.DeepCopy(system), from = sender, name = system.system_name })
     end)
 end
