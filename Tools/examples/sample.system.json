@@ -11,6 +11,11 @@
     "frost",
     "arcane"
   ],
+  "races": [
+    "human",
+    "orc",
+    "sylvan"
+  ],
   "modifier_table": {
     "1": -3,
     "2": -2,
@@ -187,6 +192,9 @@
       "id": "human",
       "name": "Human",
       "description": "Versatile folk. +1 Wits.",
+      "allowed_races": [
+        "human"
+      ],
       "bonuses": [
         {
           "type": "attribute",
@@ -214,6 +222,21 @@
           "type": "skill",
           "skill": "persuasion",
           "value": -1
+        }
+      ]
+    },
+    {
+      "id": "wayfarer",
+      "name": "Wayfarer's Blood",
+      "description": "Restless heritage, found among all folk but orcs. +1 Athletics.",
+      "disallowed_races": [
+        "orc"
+      ],
+      "bonuses": [
+        {
+          "type": "skill",
+          "skill": "athletics",
+          "value": 1
         }
       ]
     }

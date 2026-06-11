@@ -327,6 +327,10 @@ local function BuildFrame()
         if not f.char then return end
         local items = {}
         for _, r in ipairs(CE.Races(ns.GetSystem())) do items[#items + 1] = { id = r, name = r } end
+        if #items == 0 then
+            ns.Print("the loaded system defines no races - add a top-level `races` list or race lists on its racial traits.")
+            return
+        end
         Pick(f, "Race", "Choose a race", items, 1, { f.char.race },
             function(ids) if f.char then f.char.race = ids[1] end end)
     end)

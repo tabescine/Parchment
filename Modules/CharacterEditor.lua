@@ -80,14 +80,20 @@ function CE.InitResources(char, system)
     char.current_mana = char.max_mana
 end
 
--- Returns the list of races a character may be (union of racial-trait
--- allowed_races, plus human), excluding the "all_but_human" wildcard token.
+-- Returns the race list for the race picker: system.races verbatim when the
+-- system declares it, otherwise (sorted) every race named by a racial trait's
+-- allowed_races / disallowed_races. No race is ever assumed; an empty result
+-- means the system defines none.
 function CE.Races(system)
-    local set = { human = true }
+    if type(system.races) == "table" and #system.races > 0 then
+        local list = {}
+        for _, r in ipairs(system.races) do list[#list + 1] = r end
+        return list
+    end
+    local set = {}
     for _, t in ipairs(system.racial_traits or {}) do
-        for _, r in ipairs(t.allowed_races or {}) do
-            if r ~= "all_but_human" then set[r] = true end
-        end
+        for _, r in ipairs(t.allowed_races or {}) do set[r] = true end
+        for _, r in ipairs(t.disallowed_races or {}) do set[r] = true end
     end
     local list = {}
     for r in pairs(set) do list[#list + 1] = r end

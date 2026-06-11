@@ -23,6 +23,11 @@ max_level = 10                     # level-up cap in the editor (default 30)
 # elemental_brand below) - the chosen value is recorded and displayed.
 damage_types = ["slashing", "piercing", "blunt", "fire", "frost", "arcane"]
 
+# The race list offered by the editor/wizard, in this order. Optional: without
+# it the list is derived from the races the racial traits name below. Race
+# names are free-form system data - the engine assumes none of them exist.
+races = ["human", "orc", "sylvan"]
+
 # -----------------------------------------------------------------------------
 # modifier_table: attribute score -> modifier. THE core lookup: position N
 # holds the modifier for a final attribute value of N (values are clamped into
@@ -227,14 +232,15 @@ properties = ["light", "thrown"]
 # bottom of this file). Penalties are ordinary effects with NEGATIVE values,
 # kept in their own list so the UI can present them as drawbacks.
 #
-# allowed_races: which races (beyond the always-available "human") may take
-# the trait; these names also populate the editor's race list. The special
-# token "all_but_human" is understood by the editor.
+# Racial traits may restrict who can take them:
+#   allowed_races    - only these races (omit = open to EVERY race)
+#   disallowed_races - except these races ("any race but X")
 # -----------------------------------------------------------------------------
 [[racial_traits]]
 id = "human"
 name = "Human"
 description = "Versatile folk. +1 Wits."
+allowed_races = ["human"]
 [[racial_traits.bonuses]]
 type = "attribute"
 id = "wits"
@@ -253,6 +259,18 @@ value = 1
 type = "skill"          # penalties use the same effect shapes ...
 skill = "persuasion"
 value = -1              # ... with negative values
+
+# No allowed_races = open to every race; disallowed_races carves out the
+# exceptions ("any race but orcs").
+[[racial_traits]]
+id = "wayfarer"
+name = "Wayfarer's Blood"
+description = "Restless heritage, found among all folk but orcs. +1 Athletics."
+disallowed_races = ["orc"]
+[[racial_traits.bonuses]]
+type = "skill"
+skill = "athletics"
+value = 1
 
 [[origin_traits]]
 id = "scholarly"

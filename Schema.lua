@@ -106,6 +106,32 @@ function Schema.ValidateSystem(system)
         end
     end
 
+    -- Races are free-form strings, but when the system declares a top-level
+    -- `races` list, the racial traits' allowed/disallowed lists must use them
+    -- (typo catcher; without the list any race name goes).
+    if type(system.races) == "table" then
+        local raceSet = {}
+        for i, r in ipairs(system.races) do
+            if type(r) ~= "string" then
+                Report(issues, "races[" .. i .. "]", "should be a string, got " .. type(r))
+            else
+                raceSet[r] = true
+            end
+        end
+        for i, t in ipairs(system.racial_traits or {}) do
+            if type(t) == "table" then
+                for _, field in ipairs({ "allowed_races", "disallowed_races" }) do
+                    for _, r in ipairs(t[field] or {}) do
+                        if not raceSet[r] then
+                            Report(issues, "racial_trait[" .. i .. "]",
+                                "unknown race '" .. tostring(r) .. "' in " .. field)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
     -- Derived-stat config: any attribute it names must exist.
     local ds = system.derived_stats
     if type(ds) == "table" then

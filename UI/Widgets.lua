@@ -42,14 +42,22 @@ function Widgets.TraitItems(list)
     return out
 end
 
--- Racial traits available to a race (allowed_races match, or the all-but-human
--- wildcard for any non-human), plus a "(none)" entry. Descriptions as tooltips.
+-- Racial traits available to a race, plus a "(none)" entry; descriptions as
+-- tooltips. A trait with allowed_races is limited to those races, one without
+-- is open to every race, and disallowed_races excludes races ("any but X").
+-- No race name means anything to the engine - all are system data.
 function Widgets.RacialItems(system, race)
     local out = { { id = "__none", name = "(none)" } }
     for _, t in ipairs(system.racial_traits or {}) do
-        local ok = false
-        for _, r in ipairs(t.allowed_races or {}) do
-            if r == race or (r == "all_but_human" and race ~= "human" and race ~= "") then ok = true end
+        local ok = true
+        if t.allowed_races and #t.allowed_races > 0 then
+            ok = false
+            for _, r in ipairs(t.allowed_races) do
+                if r == race then ok = true end
+            end
+        end
+        for _, r in ipairs(t.disallowed_races or {}) do
+            if r == race then ok = false end
         end
         if ok then out[#out + 1] = { id = t.id, name = t.name, tooltip = t.description } end
     end
