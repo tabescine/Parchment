@@ -20,8 +20,11 @@ every window - sheet math included - adapts to it.
   editor (`/pmt edit`) with live warnings, plus level-up support.
 - **Perk trees** - a viewer/builder for your system's perk spheres with
   prerequisites, exclusivity, ranks, perk-driven choices, and homebrew perks.
-- **Initiative tracker** - sort, rounds, turn pointer, roll-or-add; the DM
-  can sync the order to the group and players can submit their own rolls.
+- **Combat tracker** - turn order with automatic tie-breaking (via the
+  system's `initiative_tiebreaker` stat) and manual DM reordering, rounds,
+  a turn/round stopwatch, and per-row HP: players' live vitals inline,
+  DM-private HP for NPCs. The DM syncs the order to the group; players
+  submit their own rolls and can end their own turn.
 - **Party tools** - live party overview (HP/Mana/AC), view another player's
   sheet on demand, dice rolls that are either private or party-visible.
 - **DM sharing with consent** - a DM can broadcast the active system to the
@@ -54,7 +57,7 @@ Type `/pmt` (or `/parchment`) for the full command list:
 | Command | Action |
 |---|---|
 | `/pmt sheet` | Open the character sheet |
-| `/pmt init` | Open the initiative tracker |
+| `/pmt combat` | Open the combat tracker (`/pmt init` still works) |
 | `/pmt perks` | Open the perk tree viewer |
 | `/pmt new` | Create a character (guided wizard) |
 | `/pmt edit` | Open the character editor |

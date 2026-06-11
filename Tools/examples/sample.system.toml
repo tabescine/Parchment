@@ -86,6 +86,9 @@ spell_attributes = ["spirit"]   # primary attribute in this list => spellcaster
 mana_attribute = "spirit"       # mana source for non-casters (omit for none)
 mana_multiplier = 2             # max mana = multiplier x spell-source modifier
 movement_attribute = "wits"     # each positive modifier point adds movement_per_step
+initiative_tiebreaker = "wits"  # equal initiative rolls: higher value of this
+                                # stat acts first (the DM breaks remaining ties
+                                # by reordering in the combat tracker)
 movement_base = 12              # default 12
 movement_per_step = 0.5         # default 0.5
 ac_base = 10                    # AC = ac_base + AC-attribute modifier + effects

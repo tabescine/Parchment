@@ -54,6 +54,14 @@ sys.perk_trees[2].perks[1] = { id = "p2", name = "P2", choice = { kind = "hat" }
 ok, issues = Schema.ValidateSystem(sys)
 assert(not ok and findIssue(issues, "choice.kind invalid"))
 
+-- derived_stats attribute couplings must resolve (incl. the tiebreaker).
+sys = MinimalSystem()
+sys.derived_stats = { initiative_tiebreaker = "ghost" }
+ok, issues = Schema.ValidateSystem(sys)
+assert(not ok and findIssue(issues, "initiative_tiebreaker"))
+sys.derived_stats = { initiative_tiebreaker = "a" }
+assert(Schema.ValidateSystem(sys))
+
 -- Races: cross-checked only when the system declares a races list.
 sys = MinimalSystem()
 sys.racial_traits = { { id = "t", name = "T", allowed_races = { "elf" } } }

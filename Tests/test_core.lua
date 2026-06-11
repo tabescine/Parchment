@@ -48,6 +48,10 @@ local cfg = ns.DerivedConfig()
 assert(cfg.ac_base == 10 and cfg.save_dc_base == 10 and cfg.actions_base == 2)
 assert(cfg.movement_base == 12 and cfg.movement_per_step == 0.5 and cfg.mana_multiplier == 2)
 assert(cfg.hit_die_attribute == nil and #cfg.spell_attributes == 0)
+assert(cfg.initiative_tiebreaker == nil, "tiebreaker must default to none")
+ParchmentSystemDB.derived_stats = { initiative_tiebreaker = "a" }
+assert(ns.DerivedConfig().initiative_tiebreaker == "a")
+ParchmentSystemDB.derived_stats = nil
 
 -- Character data API.
 ParchmentCharDB = {}

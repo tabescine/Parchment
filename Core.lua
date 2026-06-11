@@ -57,7 +57,8 @@ local MIGRATIONS = {
 
 -- Slash subcommand -> module id (nil routing falls through to help).
 local MODULE_COMMANDS = {
-    init = "initiative",
+    combat = "initiative",
+    init = "initiative",   -- legacy alias for /pmt combat
     sheet = "sheet",
     perks = "perks",
     import = "import",
@@ -219,6 +220,7 @@ function ns.DerivedConfig()
         retroactive_hp     = d.retroactive_hp and true or false, -- changing hp_attribute re-grants HP for past levels
         spell_attributes   = d.spell_attributes or {},   -- primary among these => spellcaster
         mana_attribute     = d.mana_attribute,           -- mana source for non-casters
+        initiative_tiebreaker = d.initiative_tiebreaker, -- attr deciding equal initiative rolls
         mana_multiplier    = d.mana_multiplier or 2,
         movement_attribute = d.movement_attribute,       -- +per_step per positive modifier
         movement_base      = d.movement_base or 12,
@@ -287,7 +289,7 @@ end
 local function PrintHelp()
     Print(C_GOLD .. "Adventures await. Commands:|r")
     Print("  " .. C_GOLD .. "/pmt sheet|r   - open the character sheet")
-    Print("  " .. C_GOLD .. "/pmt init|r    - open the initiative tracker")
+    Print("  " .. C_GOLD .. "/pmt combat|r  - open the combat tracker (initiative, HP, timer)")
     Print("  " .. C_GOLD .. "/pmt perks|r   - open the perk tree viewer")
     Print("  " .. C_GOLD .. "/pmt new|r     - create a character (guided wizard)")
     Print("  " .. C_GOLD .. "/pmt edit|r    - open the character editor")

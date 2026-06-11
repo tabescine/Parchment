@@ -1,8 +1,11 @@
 -- Parchment - Initiative Tracker (logic)
 --
--- Owns the combat turn order: a list of combatants (name + initiative value),
--- the current turn index, and the round counter. NPC combatants may also
--- carry DM-tracked hit points (hp/hpmax) - the DM's private bookkeeping.
+-- Owns the combat turn order: a list of combatants (name + initiative value
+-- + optional tiebreaker stat value), the current turn index, and the round
+-- counter. NPC combatants may also carry DM-tracked hit points (hp/hpmax) -
+-- the DM's private bookkeeping. Combatants are inserted at their ordered
+-- position (initiative desc, then the system's initiative_tiebreaker stat)
+-- and never re-sorted, so the DM's manual reordering (Move) sticks.
 -- State is persisted in the addon DB so it survives a /reload mid-session.
 -- Pure state manipulation here; the UI reads GetState and calls the mutators.
 --
@@ -13,7 +16,7 @@
 --
 -- Reads from: ns.Addon.db.global.initiative, ns.Dice (shared d20 roller).
 -- Exposes on ns.InitiativeTracker: GetState, SetState, WireState, Add,
---   AddRolled, Remove, SetCurrent, Next, Prev, Start, Reset, AdjustHP,
+--   AddRolled, Remove, Move, SetCurrent, Next, Prev, Start, Reset, AdjustHP,
 --   RollD20, RequestRoll.
 
 local ADDON, ns = ...
@@ -28,15 +31,27 @@ local function State()
     return db.global.initiative
 end
 
--- Sorts combatants by initiative descending, breaking ties by name. Coerces
--- init defensively so a corrupt entry (e.g. persisted before sanitizing was
--- added) cannot make the comparator throw.
-local function SortDescending(state)
-    table.sort(state.combatants, function(a, b)
-        local ai, bi = tonumber(a.init) or 0, tonumber(b.init) or 0
-        if ai ~= bi then return ai > bi end
-        return tostring(a.name or "") < tostring(b.name or "")
-    end)
+-- True when combatant a outranks b in turn order: higher initiative first,
+-- ties broken by the system's initiative tiebreaker stat (the `tb` value
+-- captured when the combatant was added; absent counts lowest). Equal on
+-- both = no opinion - the DM resolves those by reordering (IT.Move).
+-- Fields are coerced defensively so corrupt entries cannot throw.
+local function Outranks(a, b)
+    local ai, bi = tonumber(a.init) or 0, tonumber(b.init) or 0
+    if ai ~= bi then return ai > bi end
+    return (tonumber(a.tb) or -math.huge) > (tonumber(b.tb) or -math.huge)
+end
+
+-- Inserts a combatant at its ordered position WITHOUT re-sorting the rest:
+-- existing rows keep their order, so a DM's manual tie-break reordering is
+-- never undone by a later add. Returns the insertion index.
+local function InsertOrdered(state, combatant)
+    local pos = #state.combatants + 1
+    for i, c in ipairs(state.combatants) do
+        if Outranks(combatant, c) then pos = i break end
+    end
+    table.insert(state.combatants, pos, combatant)
+    return pos
 end
 
 function IT.GetState()
@@ -119,20 +134,23 @@ function IT.RequestRoll(modifier, onComplete)
     return ns.Dice.Request(modifier, onComplete)
 end
 
--- Adds a combatant with an explicit initiative total, then re-sorts. Returns
--- the combatant table. Ignores blank or non-string names; init is coerced to a
--- number (it may arrive over the wire via INITSUBMIT).
-function IT.Add(name, init, isNPC)
+-- Adds a combatant with an explicit initiative total at its ordered position.
+-- Returns the combatant table. Ignores blank or non-string names; init and tb
+-- (the tiebreaker stat value, see Outranks) are coerced - both may arrive
+-- over the wire via INITSUBMIT.
+function IT.Add(name, init, isNPC, tb)
     if type(name) ~= "string" then return nil end
     name = strtrim(name)
     if name == "" then return nil end
     local state = State()
-    local combatant = { name = name, init = tonumber(init) or 0, isNPC = isNPC and true or false }
+    local combatant = {
+        name = name, init = tonumber(init) or 0,
+        isNPC = isNPC and true or false, tb = tonumber(tb),
+    }
 
-    -- The sort can shift indices; keep the active turn on the same combatant.
+    -- Insertion shifts indices; keep the active turn on the same combatant.
     local active = state.combatants[state.current]
-    table.insert(state.combatants, combatant)
-    SortDescending(state)
+    InsertOrdered(state, combatant)
     if active then
         for i, c in ipairs(state.combatants) do
             if c == active then state.current = i break end
@@ -146,13 +164,28 @@ end
 -- Adds a combatant whose initiative is rolled as d20 + modifier. The roll may be
 -- asynchronous (public rolls), so the combatant is delivered via onAdded(combatant,
 -- total, raw) rather than returned.
-function IT.AddRolled(name, modifier, isNPC, onAdded)
+function IT.AddRolled(name, modifier, isNPC, tb, onAdded)
     name = name and strtrim(name) or ""
     if name == "" then if onAdded then onAdded(nil) end return end
     IT.RequestRoll(modifier, function(total, raw)
-        local combatant = IT.Add(name, total, isNPC)
+        local combatant = IT.Add(name, total, isNPC, tb)
         if onAdded then onAdded(combatant, total, raw) end
     end)
+end
+
+-- Swaps the combatant at index with its neighbour (delta -1 = up, +1 = down),
+-- keeping the active turn on the same combatant. The DM's manual tie-break:
+-- inserts never re-sort existing rows, so the new order sticks. Returns true
+-- when a swap happened.
+function IT.Move(index, delta)
+    local state = State()
+    local other = index + (delta < 0 and -1 or 1)
+    local a, b = state.combatants[index], state.combatants[other]
+    if not (a and b) then return false end
+    state.combatants[index], state.combatants[other] = b, a
+    if state.current == index then state.current = other
+    elseif state.current == other then state.current = index end
+    return true
 end
 
 -- Removes the combatant at index, keeping the current pointer valid. Entries

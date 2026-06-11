@@ -135,7 +135,8 @@ function Schema.ValidateSystem(system)
     -- Derived-stat config: any attribute it names must exist.
     local ds = system.derived_stats
     if type(ds) == "table" then
-        for _, field in ipairs({ "hit_die_attribute", "hp_attribute", "mana_attribute", "movement_attribute" }) do
+        for _, field in ipairs({ "hit_die_attribute", "hp_attribute", "mana_attribute",
+            "movement_attribute", "initiative_tiebreaker" }) do
             if ds[field] and not attrIds[ds[field]] then
                 Report(issues, "derived_stats", "unknown attribute '" .. tostring(ds[field]) .. "' in " .. field)
             end

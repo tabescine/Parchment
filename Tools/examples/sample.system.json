@@ -60,6 +60,7 @@
     "mana_attribute": "spirit",
     "mana_multiplier": 2,
     "movement_attribute": "wits",
+    "initiative_tiebreaker": "wits",
     "movement_base": 12,
     "movement_per_step": 0.5,
     "ac_base": 10,

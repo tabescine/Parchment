@@ -1,10 +1,14 @@
 -- Parchment - Initiative Tracker (UI)
 --
--- The initiative window - the combat dashboard: a scrolling, click-to-select
--- turn order driven by InitiativeTracker, with controls to add combatants (by
--- total or by rolling d20 + modifier), add the active character, advance the
--- turn, and reset. The current turn is highlighted; the round shows in the
--- title.
+-- The combat window (/pmt combat): a scrolling, click-to-select turn order
+-- driven by InitiativeTracker, with controls to add combatants (by total or
+-- by rolling d20 + modifier), add the active character, advance the turn,
+-- and reset. The current turn is highlighted; the round shows in the title.
+-- The DM resolves initiative ties by hand with each row's move-up arrow
+-- (automatic tie-breaking uses the system's initiative_tiebreaker stat,
+-- captured on add). Players may end their OWN turn: their Next button reads
+-- "End turn", is enabled only on their character's turn, and sends TURNEND -
+-- the DM's client verifies and advances (DM-authoritative).
 --
 -- Each row also shows hit points. Player rows render the live vitals their
 -- owner broadcasts (current+temp/max; respects the share-vitals opt-out and
@@ -78,22 +82,44 @@ local function CreateRow(content)
 
     row.name = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     row.name:SetPoint("LEFT", row.num, "RIGHT", 8, 0)
-    row.name:SetPoint("RIGHT", row, "RIGHT", -126, 0)
+    row.name:SetPoint("RIGHT", row, "RIGHT", -140, 0)
     row.name:SetJustifyH("LEFT")
 
+    -- Move-up arrow (DM/solo): manual tie-breaking - swaps with the row
+    -- above; inserts never re-sort, so the new order sticks.
+    local up = CreateFrame("Button", nil, row)
+    up:SetSize(16, 16)
+    up:SetPoint("RIGHT", -20, 0)
+    up:SetNormalTexture("Interface\\Buttons\\Arrow-Up-Up")
+    up:SetPushedTexture("Interface\\Buttons\\Arrow-Up-Down")
+    up:SetScript("OnClick", function()
+        if not CanEdit() then return end
+        if IT.Move(row.index, -1) then
+            Refresh(InitiativeUI.frame)
+            Sync()
+        end
+    end)
+    up:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Move up (resolve ties by hand)", 1, 1, 1)
+        GameTooltip:Show()
+    end)
+    up:SetScript("OnLeave", GameTooltip_Hide)
+    row.moveUp = up
+
     row.init = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-    row.init:SetPoint("RIGHT", -26, 0)
+    row.init:SetPoint("RIGHT", -40, 0)
     row.init:SetJustifyH("RIGHT")
     row.init:SetTextColor(UI.GOLD[1], UI.GOLD[2], UI.GOLD[3])
 
     -- Hit points: live vitals on player rows, DM bookkeeping on NPC rows.
     -- The overlay button (DM, NPC rows only) opens the set-HP popup.
     row.hp = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    row.hp:SetPoint("RIGHT", -52, 0)
+    row.hp:SetPoint("RIGHT", -66, 0)
     row.hp:SetWidth(70)
     row.hp:SetJustifyH("RIGHT")
     local hpBtn = CreateFrame("Button", nil, row)
-    hpBtn:SetPoint("RIGHT", -48, 0)
+    hpBtn:SetPoint("RIGHT", -62, 0)
     hpBtn:SetSize(78, ROW_H)
     hpBtn:SetScript("OnClick", function()
         if not (CanEdit() and row.npcName) then return end
@@ -206,6 +232,7 @@ local function RenderList(self)
         row.hp:SetText(hpText)
         row.hp:SetTextColor(hpColor[1], hpColor[2], hpColor[3])
         row.hpBtn:SetShown(c.isNPC and editable)
+        row.moveUp:SetShown(editable and i > 1)
 
         row.hl:SetShown(isCurrent)
         row:Show()
@@ -219,6 +246,27 @@ end
 -- read-only and submit their initiative to the DM instead.
 CanEdit = function()
     return (not ns.Comm) or ns.Comm.IsDM() or not IsInGroup()
+end
+
+-- True when the current turn belongs to this player's active character (a
+-- non-NPC combatant matching its name). Lets a player end their own turn.
+local function IsMyTurn()
+    local state = IT.GetState()
+    local c = state.combatants[state.current]
+    if not c or c.isNPC then return false end
+    local char = ns.GetActiveCharacter and ns.GetActiveCharacter()
+    return char and char.name and char.name:lower() == c.name:lower() or false
+end
+
+-- The active character's value in the system's initiative-tiebreaker stat
+-- (final, post-trait), or nil when the system declares none. Captured when a
+-- combatant is added; equal initiative rolls are ordered by it.
+local function MyTiebreak(sheet)
+    local attrId = ns.DerivedConfig().initiative_tiebreaker
+    if not (attrId and sheet) then return nil end
+    for _, a in ipairs(sheet.attributes or {}) do
+        if a.id == attrId then return a.final end
+    end
 end
 
 -- Broadcasts the current order to the group when acting as DM. WireState
@@ -268,14 +316,15 @@ end
 function Refresh(self)
     local state = IT.GetState()
     local round = state.round or 0
-    local title = round > 0 and ("Initiative  -  Round " .. round) or "Initiative"
+    local title = round > 0 and ("Combat  -  Round " .. round) or "Combat"
     if ns.Comm and ns.Comm.IsDM() then title = title .. "  |cff8ec6ff(DM)|r" end
     self.titleFS:SetText(title)
 
     local editable = CanEdit()
     self.addBtn:SetEnabled(editable)
     self.rollBtn:SetEnabled(editable)
-    self.nextBtn:SetEnabled(editable)
+    self.nextBtn:SetEnabled(editable or IsMyTurn())
+    self.nextBtn:SetText(editable and "Next" or "End turn")
     self.resetBtn:SetEnabled(editable)
     self.meBtn:SetText(editable and "Me" or "Submit")
     if self.publicCheck and ns.Addon and ns.Addon.db then
@@ -297,7 +346,7 @@ local function CommitInput(self, rolled)
     self.modBox:ClearFocus()
     if rolled then
         -- May resolve asynchronously (public rolls); refresh in the callback.
-        IT.AddRolled(name, value, false, function() Refresh(self); Sync() end)
+        IT.AddRolled(name, value, false, nil, function() Refresh(self); Sync() end)
     else
         IT.Add(name, value)
         Refresh(self)
@@ -316,11 +365,12 @@ local function AddActiveCharacter(self)
     if not char then return end
     local sheet = ns.CharacterSheet.Compute(char, ns.GetSystem())
     if not sheet then return end
+    local tb = MyTiebreak(sheet)
     if CanEdit() then
-        IT.AddRolled(sheet.name, sheet.derived.initiative, false, function() Refresh(self); Sync() end)
+        IT.AddRolled(sheet.name, sheet.derived.initiative, false, tb, function() Refresh(self); Sync() end)
     else
         IT.RequestRoll(sheet.derived.initiative, function(total)
-            local ok, err = ns.Comm.Send("INITSUBMIT", { name = sheet.name, init = total })
+            local ok, err = ns.Comm.Send("INITSUBMIT", { name = sheet.name, init = total, tb = tb })
             ns.Print(ok and ("submitted initiative " .. total .. " to the DM.") or (err or "submit failed."))
         end)
     end
@@ -329,7 +379,7 @@ end
 -- Builds the window and its controls once.
 local function BuildFrame()
     local f = UI.CreateWindow("ParchmentInitFrame", {
-        title = "Initiative", width = 340, height = 440,
+        title = "Combat", width = 340, height = 440,
         minW = 280, minH = 260, maxW = 560, maxH = 900, dbKey = "initiativeWindow",
     })
 
@@ -399,7 +449,9 @@ local function BuildFrame()
     -- Action row: Me/Submit, Next, Reset, round.
     f.meBtn = MakeButton(f, "Me", 42, "DM/solo: add your active character (rolled). Player: submit your initiative to the DM.")
     f.meBtn:SetPoint("BOTTOMLEFT", 18, 14)
-    f.nextBtn = MakeButton(f, "Next", 54, "Advance to the next turn.")
+    f.nextBtn = MakeButton(f, "Next", 54,
+        "DM/solo: advance to the next turn. Player: end your own turn "
+        .. "(enabled only while it is your character's turn).")
     f.nextBtn:SetPoint("BOTTOMLEFT", 64, 14)
     f.resetBtn = MakeButton(f, "Reset", 54, "Clear all combatants.")
     f.resetBtn:SetPoint("BOTTOMLEFT", 122, 14)
@@ -431,7 +483,20 @@ local function BuildFrame()
     f.addBtn:SetScript("OnClick", function() CommitInput(f, false) end)
     f.rollBtn:SetScript("OnClick", function() CommitInput(f, true) end)
     f.meBtn:SetScript("OnClick", function() AddActiveCharacter(f) end)
-    f.nextBtn:SetScript("OnClick", function() if CanEdit() then IT.Next(); Refresh(f); Sync() end end)
+    f.nextBtn:SetScript("OnClick", function()
+        if CanEdit() then
+            IT.Next()
+            Refresh(f)
+            Sync()
+        elseif IsMyTurn() then
+            -- DM-authoritative: ask to end our turn; the DM verifies it is
+            -- actually ours, advances, and rebroadcasts the new order.
+            local state = IT.GetState()
+            local c = state.combatants[state.current]
+            local ok, err = ns.Comm.Send("TURNEND", { name = c and c.name })
+            ns.Print(ok and "ending your turn..." or (err or "could not reach the DM."))
+        end
+    end)
     f.resetBtn:SetScript("OnClick", function() if CanEdit() then IT.Reset(); Refresh(f); Sync() end end)
     f.nameBox:SetScript("OnEnterPressed", function() CommitInput(f, false) end)
     f.modBox:SetScript("OnEnterPressed", function() CommitInput(f, false) end)
@@ -503,10 +568,24 @@ if ns.Comm then
         if not ns.Comm.IsDM() then return end
         if type(payload) ~= "table" or type(payload.name) ~= "string" then return end
         local init = tonumber(payload.init) or 0
-        if IT.Add(payload.name, init, false) then
+        if IT.Add(payload.name, init, false, tonumber(payload.tb)) then
             ns.Print((sender or "a player") .. " submitted initiative " .. init .. ".")
             RefreshIfShown()
             Sync()
         end
+    end)
+    -- A player ended their own turn: verify the named combatant really is
+    -- the current (non-NPC) one - a stale or duplicate request is ignored -
+    -- then advance and rebroadcast.
+    ns.Comm.On("TURNEND", function(payload, sender)
+        if not ns.Comm.IsDM() then return end
+        if type(payload) ~= "table" or type(payload.name) ~= "string" then return end
+        local state = IT.GetState()
+        local c = state.combatants[state.current]
+        if not c or c.isNPC or c.name:lower() ~= payload.name:lower() then return end
+        IT.Next()
+        ns.Print((sender or "a player") .. " ended " .. c.name .. "'s turn.")
+        RefreshIfShown()
+        Sync()
     end)
 end

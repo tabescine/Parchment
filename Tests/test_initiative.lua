@@ -8,8 +8,8 @@ local ns = { Addon = { db = { global = {} } } }
 T.load(ns, "Modules/InitiativeTracker.lua")
 local IT = ns.InitiativeTracker
 
--- Adding sorts descending by initiative (name breaks ties) and keeps the
--- active turn on the same combatant when indices shift.
+-- Adding inserts at the ordered position (initiative descending) and keeps
+-- the active turn on the same combatant when indices shift.
 assert(IT.Add("Slow", 5))
 assert(IT.Add("Fast", 18, true))
 assert(IT.Add("Mid", 10))
@@ -84,3 +84,33 @@ assert(s.current == 1 and s.round == 0, "pointers not clamped")
 
 IT.Reset()
 assert(#IT.GetState().combatants == 0 and IT.GetState().current == 0)
+
+-- Tie-breaking: equal initiative orders by the tb value (the system's
+-- initiative_tiebreaker stat, captured on add); absent tb sorts last; equal
+-- on both keeps insertion order (stable - the DM resolves by hand).
+IT.Add("A", 10, false, 2)
+IT.Add("B", 10, false, 5)            -- same roll, higher tiebreak: goes first
+IT.Add("C", 10, false)               -- no tiebreak value: goes last
+IT.Add("D", 10, false, 2)            -- equal to A on both: after A (stable)
+s = IT.GetState()
+local order = {}
+for _, c in ipairs(s.combatants) do order[#order + 1] = c.name end
+assert(table.concat(order, ",") == "B,A,D,C", table.concat(order, ","))
+
+-- Move: adjacent swap, pointer follows the combatant, bounds respected.
+IT.SetCurrent(3)                     -- D
+assert(IT.Move(3, -1))               -- D above A
+s = IT.GetState()
+assert(s.combatants[2].name == "D" and s.combatants[3].name == "A")
+assert(s.current == 2, "active turn must follow the moved combatant")
+assert(IT.Move(1, 1))                -- B down past D
+assert(IT.GetState().combatants[1].name == "D")
+assert(not IT.Move(1, -1), "moving the top row up must fail")
+assert(not IT.Move(#s.combatants, 1), "moving the bottom row down must fail")
+
+-- A later add must NOT undo the manual ordering of existing rows.
+IT.Add("E", 10, false, 99)           -- outranks all current init-10 rows
+s = IT.GetState()
+order = {}
+for _, c in ipairs(s.combatants) do order[#order + 1] = c.name end
+assert(table.concat(order, ",") == "E,D,B,A,C", table.concat(order, ","))
