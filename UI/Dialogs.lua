@@ -4,8 +4,9 @@
 -- collect perk-driven choices (skills, weapons, damage types) and reusable by
 -- the editor/wizard. One pooled frame is reused across calls.
 --
--- Reads from: ns.UI (shared window + palette).
--- Exposes on ns.Dialogs: .Pick{ title, prompt, items, max, selected, onConfirm }
+-- Reads from: ns.UI (shared window + palette), ns.Comm (DM recognition).
+-- Exposes on ns.Dialogs: .Pick{ title, prompt, items, max, selected, onConfirm },
+--   .ConfirmDMSwitch(current, claimant), .ConfirmDMTakeover(current, onAccept)
 
 local ADDON, ns = ...
 
@@ -153,4 +154,44 @@ function Dialogs.Pick(opts)
     RenderRows(f)
     f:Show()
     f:Raise()
+end
+
+-- DM-clash prompts. Both default to the non-destructive choice (keep the current
+-- DM / cancel) so Escape or a dismissed popup never leaves a client DM-less or
+-- mid-fight: switching or taking over is always an explicit click.
+
+-- Shown on a client when a DIFFERENT player claims DM while one is already
+-- recognized: switch to the claimant, or keep the current DM (the default).
+StaticPopupDialogs["PARCHMENT_DM_SWITCH"] = {
+    text = "%s is claiming DM, but you recognize %s.\n\nSwitch to them?",
+    button1 = "Switch",
+    button2 = "Keep",
+    OnAccept = function(_, data)
+        if data and data.claimant then ns.Comm.SetRecognizedDM(data.claimant) end
+    end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
+-- Shown to a player who runs /pmt dm while already recognizing someone else:
+-- confirm the take-over before claiming, so a stray command cannot silently
+-- fight an existing DM. onAccept performs the claim.
+StaticPopupDialogs["PARCHMENT_DM_TAKEOVER"] = {
+    text = "%s is already DM.\n\nTake over the role?",
+    button1 = "Take over",
+    button2 = CANCEL,
+    OnAccept = function(_, data)
+        if data and data.onAccept then data.onAccept() end
+    end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
+-- Offers to switch this client's recognized DM from `current` to `claimant`.
+function Dialogs.ConfirmDMSwitch(current, claimant)
+    StaticPopup_Show("PARCHMENT_DM_SWITCH", claimant or "Someone", current or "your DM",
+        { claimant = claimant })
+end
+
+-- Confirms taking the DM role over from `current`; onAccept runs on confirm.
+function Dialogs.ConfirmDMTakeover(current, onAccept)
+    StaticPopup_Show("PARCHMENT_DM_TAKEOVER", current or "Someone", nil, { onAccept = onAccept })
 end

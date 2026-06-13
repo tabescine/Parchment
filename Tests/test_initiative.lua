@@ -139,3 +139,47 @@ s = IT.GetState()
 order = {}
 for _, c in ipairs(s.combatants) do order[#order + 1] = c.name end
 assert(table.concat(order, ",") == "E,D,B,A,C", table.concat(order, ","))
+
+-- Player submissions are bound to their sender (the Phase 1 trust model).
+IT.Reset()
+
+-- SubmitFor records the submitter as the combatant's owner and returns the
+-- clamped entry. Owner is realm-qualified as received.
+local c1 = IT.SubmitFor("Bob-Realm", "Gandalf", 15)
+assert(c1 and c1.owner == "Bob-Realm" and c1.init == 15, "submission not bound to its sender")
+
+-- One live submission per player: a resubmit (realm-tolerant match) is refused,
+-- so a player cannot flood the order with extra entries.
+local dup, dupErr = IT.SubmitFor("Bob", "Imposter", 20)
+assert(dup == nil and dupErr, "a second submission from the same player must be refused")
+assert(#IT.GetState().combatants == 1, "the refused resubmit must not add a combatant")
+
+-- Wire-sourced init/tb are floored and bounded on the authoritative side.
+local hi = IT.SubmitFor("Carol", "Big", 1e9, 1e9)
+assert(hi.init == 999 and hi.tb == 999, "init/tb must be clamped to the sane maximum")
+local lo = IT.SubmitFor("Dave", "Neg", -5000, 3.9)
+assert(lo.init == -999 and lo.tb == 3, "init must clamp to the minimum and tb must floor")
+
+-- Owner is DM-private: it never crosses the wire.
+for _, c in ipairs(IT.WireState().combatants) do
+    assert(c.owner == nil, "owner must be stripped from the broadcast state")
+end
+
+-- EndTurnFor advances only for the player who owns the ACTIVE combatant, and
+-- only when the claimed name matches. Order is init-desc: Big, Gandalf, Neg.
+local state = IT.GetState()
+assert(state.combatants[2].name == "Gandalf")
+IT.SetCurrent(2)
+assert(IT.EndTurnFor("Mallory", "Gandalf") == nil, "a non-owner must not end the turn")
+assert(IT.GetState().current == 2, "a refused end-turn must not advance")
+assert(IT.EndTurnFor("Bob", "Wrongname") == nil, "a mismatched name must not end the turn")
+assert(IT.GetState().current == 2)
+local ended = IT.EndTurnFor("Bob-Other", "Gandalf")
+assert(ended and ended.name == "Gandalf", "the owner must be able to end their own turn")
+assert(IT.GetState().current == 3, "ending the turn must advance the order")
+
+-- An NPC's turn is never player-endable (NPC HP/turns are the DM's alone).
+IT.Reset()
+IT.Add("Ogre", 12, true)
+IT.Start()
+assert(IT.EndTurnFor("Bob", "Ogre") == nil, "a player must not end an NPC's turn")

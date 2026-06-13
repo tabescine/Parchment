@@ -14,15 +14,24 @@
 -- own rolls back (INITSUBMIT); SetState applies a received state and accepts
 -- only name/init/isNPC, so remote data cannot smuggle fields in either.
 --
+-- A player submission is bound to its sender: SubmitFor records the submitter
+-- as the combatant's `owner` (DM-private, stripped from WireState) and refuses a
+-- second entry from the same player; EndTurnFor only advances when the active
+-- combatant is the one that sender submitted. So a player can neither submit nor
+-- end-turn for anyone else, and wire-sourced init/tb are floored and bounded.
+--
 -- Reads from: ns.Addon.db.global.initiative, ns.Dice (shared d20 roller).
 -- Exposes on ns.InitiativeTracker: GetState, SetState, WireState, HasPlayer,
---   Add, AddRolled, Remove, Move, SetCurrent, Next, Prev, Start, Reset,
---   AdjustHP, RollD20, RequestRoll.
+--   Add, AddRolled, SubmitFor, EndTurnFor, Remove, Move, SetCurrent, Next,
+--   Prev, Start, Reset, AdjustHP, RollD20, RequestRoll.
 
 local ADDON, ns = ...
 
 ns.InitiativeTracker = ns.InitiativeTracker or {}
 local IT = ns.InitiativeTracker
+
+-- Bounds for wire-sourced player submissions (init and the tiebreaker stat).
+local SUBMIT_MIN, SUBMIT_MAX = -999, 999
 
 -- Returns the persisted initiative state, creating the default on first use.
 local function State()
@@ -52,6 +61,32 @@ local function InsertOrdered(state, combatant)
     end
     table.insert(state.combatants, pos, combatant)
     return pos
+end
+
+-- True when two player names refer to the same player (realm-suffix tolerant).
+-- Kept local so this pure module needs no ns.Comm dependency; mirrors
+-- Comm.SameName (Phase 2 centralizes the normalizer).
+local function SameOwner(a, b)
+    if not a or not b then return false end
+    local ka = tostring(a):match("^[^-]+")
+    local kb = tostring(b):match("^[^-]+")
+    return ka ~= nil and ka:lower() == (kb or ""):lower()
+end
+
+-- Coerce, floor, and bound a wire-sourced init/tiebreaker value. nil stays nil
+-- (no value submitted) so the tiebreaker remains optional.
+local function ClampSubmit(v)
+    v = tonumber(v)
+    if not v then return nil end
+    return math.max(SUBMIT_MIN, math.min(SUBMIT_MAX, math.floor(v)))
+end
+
+-- The index of the combatant `owner` submitted, or nil.
+local function IndexOwnedBy(state, owner)
+    for i, c in ipairs(state.combatants) do
+        if SameOwner(c.owner, owner) then return i end
+    end
+    return nil
 end
 
 function IT.GetState()
@@ -194,6 +229,36 @@ function IT.AddRolled(name, modifier, isNPC, tb, onAdded)
         local combatant, err = IT.Add(name, total, isNPC, tb)
         if onAdded then onAdded(combatant, total, raw, err) end
     end)
+end
+
+-- Applies a player's initiative submission on the DM-authoritative side, bound
+-- to its sender (`owner`, a canonical player name). One live submission per
+-- player: a resubmit from a player already in the order is refused. The
+-- wire-sourced init/tb are floored and bounded. Returns the combatant (with its
+-- clamped .init), or nil, err. The owner is DM-private (WireState strips it).
+function IT.SubmitFor(owner, name, init, tb)
+    if type(owner) ~= "string" or owner == "" then return nil, "unknown sender." end
+    if IndexOwnedBy(State(), owner) then
+        return nil, "you are already in the turn order."
+    end
+    local combatant, err = IT.Add(name, ClampSubmit(init) or 0, false, ClampSubmit(tb))
+    if combatant then combatant.owner = owner end
+    return combatant, err
+end
+
+-- Ends a player's OWN turn on the DM-authoritative side. Honoured only when the
+-- active combatant is the (non-NPC) one this sender submitted and the claimed
+-- name matches - so a player cannot force-advance anyone else. Advances the turn
+-- and returns the combatant whose turn ended, or nil when refused.
+function IT.EndTurnFor(owner, name)
+    if type(owner) ~= "string" or type(name) ~= "string" then return nil end
+    local state = State()
+    local c = state.combatants[state.current]
+    if not c or c.isNPC then return nil end
+    if not SameOwner(c.owner, owner) then return nil end
+    if (c.name or ""):lower() ~= name:lower() then return nil end
+    IT.Next()
+    return c
 end
 
 -- Swaps the combatant at index with its neighbour (delta -1 = up, +1 = down),

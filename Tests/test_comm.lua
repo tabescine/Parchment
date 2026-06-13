@@ -102,7 +102,8 @@ assert(wire.env().t == "DMROLE" and wire.count == prevCount + 1, "no DMROLE anno
 ns.Comm.SetDM(true)
 assert(wire.count == prevCount + 1, "re-claiming the role must not re-announce")
 ns.Comm.SetDM(false)
-assert(wire.count == prevCount + 1, "dropping the role must not announce")
+assert(wire.env().t == "RELEASE" and wire.count == prevCount + 2,
+    "stepping down must broadcast a RELEASE so peers clear recognition")
 
 -- As a non-DM: an announce prints info, no reply goes out.
 prevCount = wire.count

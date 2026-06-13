@@ -667,38 +667,38 @@ StaticPopupDialogs["PARCHMENT_RESET_COMBAT"] = {
 -- initiative submissions, adds them, and rebroadcasts.
 if ns.Comm then
     ns.Comm.On("INIT", function(state)
-        -- The DM's own state is the source of truth; ignore other broadcasts.
+        -- Only the recognized DM's INIT reaches here (Comm gates it centrally);
+        -- an active DM still ignores the echo of its own broadcast.
         if ns.Comm.IsDM() then return end
         if type(state) == "table" then
             IT.SetState(state)
             RefreshIfShown()
         end
     end)
+    -- A player submitted their own initiative. SubmitFor binds the entry to the
+    -- sender (so only they can later end its turn), refuses a second entry from
+    -- the same player, and clamps the wire values - the DM-side notice is the
+    -- only feedback on a refused resubmit.
     ns.Comm.On("INITSUBMIT", function(payload, sender)
         if not ns.Comm.IsDM() then return end
         if type(payload) ~= "table" or type(payload.name) ~= "string" then return end
-        local init = tonumber(payload.init) or 0
-        local combatant, err = IT.Add(payload.name, init, false, tonumber(payload.tb))
+        local combatant, err = IT.SubmitFor(sender, payload.name, payload.init, payload.tb)
         if combatant then
-            ns.Print((sender or "a player") .. " submitted initiative " .. init .. ".")
+            ns.Print((sender or "a player") .. " submitted initiative " .. combatant.init .. ".")
             RefreshIfShown()
             Sync()
         elseif err then
-            -- Duplicate player submission (double-click, or a race with the
-            -- last sync): authoritative refusal, DM-side notice only.
             ns.Print((sender or "a player") .. " re-submitted initiative; ignored - " .. err)
         end
     end)
-    -- A player ended their own turn: verify the named combatant really is
-    -- the current (non-NPC) one - a stale or duplicate request is ignored -
-    -- then advance and rebroadcast.
+    -- A player ended their own turn: EndTurnFor advances only when the active
+    -- combatant is the one this sender submitted (a stale, duplicate, or
+    -- someone-else's request is ignored), then we rebroadcast.
     ns.Comm.On("TURNEND", function(payload, sender)
         if not ns.Comm.IsDM() then return end
         if type(payload) ~= "table" or type(payload.name) ~= "string" then return end
-        local state = IT.GetState()
-        local c = state.combatants[state.current]
-        if not c or c.isNPC or c.name:lower() ~= payload.name:lower() then return end
-        IT.Next()
+        local c = IT.EndTurnFor(sender, payload.name)
+        if not c then return end
         ns.Print((sender or "a player") .. " ended " .. c.name .. "'s turn.")
         RefreshIfShown()
         Sync()

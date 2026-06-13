@@ -301,7 +301,8 @@ local function PrintHelp()
     Print("  " .. C_GOLD .. "/pmt edit|r    - open the character editor")
     Print("  " .. C_GOLD .. "/pmt import|r  - open the import/export dialog")
     Print("  " .. C_GOLD .. "/pmt config|r  - open settings")
-    Print("  " .. C_GOLD .. "/pmt dm|r      - toggle DM mode (broadcast vs receive sync)")
+    Print("  " .. C_GOLD .. "/pmt dm|r      - toggle DM mode; |r" .. C_GOLD .. "dm who|r / |r"
+        .. C_GOLD .. "dm accept <name>|r query or set who you recognize")
     Print("  " .. C_GOLD .. "/pmt share|r   - DM: send your system to the group")
     Print("  " .. C_GOLD .. "/pmt systems|r - manage your system library (activate / delete)")
     Print("  " .. C_GOLD .. "/pmt rolls|r   - toggle public (party-visible) dice rolls")
@@ -352,6 +353,55 @@ local function RunValidation()
     end
 end
 
+-- Prints the DM-role toggle result and refreshes the windows that show it.
+local function AnnounceDMRole()
+    Print((ns.Comm.IsDM() and C_GREEN .. "DM mode ON" or C_YELLOW .. "DM mode OFF")
+        .. "|r - you " .. (ns.Comm.IsDM() and "broadcast" or "receive") .. " system and initiative sync.")
+    if ns.InitiativeUI and ns.InitiativeUI.RefreshIfShown then ns.InitiativeUI.RefreshIfShown() end
+    if ns.ConfigUI then ns.ConfigUI.RefreshIfShown() end
+end
+
+-- Handles /pmt dm [who | accept <name>]: toggle our own role (claim, with a
+-- take-over confirm when we already recognize someone else; or step down), query
+-- the recognized DM, or manually recognize a player (recovery).
+local function HandleDMRole(arg)
+    arg = strtrim(arg or "")
+    local sub = arg:lower():match("^(%S*)")
+
+    if sub == "who" then
+        local rec = ns.Comm.RecognizedDM()
+        if rec then Print("you recognize " .. C_GOLD .. rec .. "|r as DM.")
+        else Print(C_YELLOW .. "no DM recognized yet." .. "|r") end
+        return
+    end
+    if sub == "accept" then
+        local name = strtrim(arg:match("^%S+%s+(.*)$") or "")
+        if name == "" then Print(C_YELLOW .. "usage: /pmt dm accept <player name>" .. "|r"); return end
+        ns.Comm.SetRecognizedDM(name)
+        Print("now recognizing " .. C_GOLD .. name .. "|r as DM.")
+        if ns.InitiativeUI and ns.InitiativeUI.RefreshIfShown then ns.InitiativeUI.RefreshIfShown() end
+        return
+    end
+
+    -- No subcommand: step down if we are the DM, otherwise claim.
+    if ns.Comm.IsDM() then
+        ns.Comm.SetDM(false)
+        AnnounceDMRole()
+        return
+    end
+    -- Claiming while we already recognize a different DM is a take-over: confirm
+    -- first so a stray /pmt dm cannot silently fight an existing DM. Escape keeps
+    -- the current DM (non-destructive default).
+    local rec = ns.Comm.RecognizedDM()
+    if rec and not ns.Comm.SameName(rec, UnitName("player"))
+        and ns.Dialogs and ns.Dialogs.ConfirmDMTakeover then
+        ns.Dialogs.ConfirmDMTakeover(rec, function() ns.Comm.SetDM(true); AnnounceDMRole() end)
+        return
+    end
+    ns.Comm.SetDM(true)
+    AnnounceDMRole()
+end
+
 -- Dispatches a slash command line to the matching action.
 local function HandleSlash(input)
     input = strtrim(input or "")
@@ -371,11 +421,7 @@ local function HandleSlash(input)
     elseif cmd == "validate" then
         RunValidation()
     elseif cmd == "dm" then
-        ns.Comm.SetDM(not ns.Comm.IsDM())
-        Print((ns.Comm.IsDM() and C_GREEN .. "DM mode ON" or C_YELLOW .. "DM mode OFF")
-            .. "|r - you " .. (ns.Comm.IsDM() and "broadcast" or "receive") .. " system and initiative sync.")
-        if ns.InitiativeUI and ns.InitiativeUI.RefreshIfShown then ns.InitiativeUI.RefreshIfShown() end
-        if ns.ConfigUI then ns.ConfigUI.RefreshIfShown() end
+        HandleDMRole(arg)
     elseif cmd == "share" then
         ns.ShareSystem()
     elseif cmd == "systems" then

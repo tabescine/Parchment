@@ -4,11 +4,15 @@
 -- DM broadcasts the system definition and the initiative state to the group;
 -- players receive them read-only and can submit their own initiative back.
 --
--- A single role flag (db.profile.dm) decides whether this client is the DM.
--- Turning it on announces the role to the group (DMROLE) so clashing active
--- DMs warn each other; the flag also rides the party vitals as a "(DM)" tag.
--- Messages are typed envelopes { t = type, v = payload, ver = sender's addon
--- version }; consumers register a handler per type via Comm.On.
+-- A single role flag (db.profile.dm) decides whether this client BROADCASTS as
+-- the DM. Separately, each client records the DM it RECOGNIZES (recognizedDM,
+-- session memory): the first player to claim the role (DMROLE) locks it in, and
+-- thereafter only that sender's DM-authoritative messages (INIT, SYSTEM) are
+-- applied - spoofed broadcasts from any other group member are dropped centrally
+-- in OnReceive. A later claim by a different player is a non-destructive
+-- take-over offer; stepping down broadcasts a RELEASE so everyone clears
+-- recognition. Messages are typed envelopes { t = type, v = payload, ver =
+-- sender's addon version }; consumers register a handler per type via Comm.On.
 --
 -- Version gating: a received message is only dispatched when the sender's
 -- version is sync-compatible with ours (same major; while the major is 0 -
@@ -23,7 +27,8 @@
 -- Reads from: ns.Addon (the AceAddon object with Comm/Serializer mixins), its
 --   db, ns.Print, ns.Party (guarded; vitals push on role change), and
 --   LibDeflate via LibStub (optional).
--- Exposes on ns.Comm: IsDM, IsSelf, SetDM, Send, Whisper, On, Init.
+-- Exposes on ns.Comm: IsDM, IsSelf, SameName, SetDM, RecognizedDM,
+--   SetRecognizedDM, ClearRecognizedDM, IsAuthoritative, Send, Whisper, On, Init.
 
 local ADDON, ns = ...
 
@@ -32,6 +37,19 @@ local Comm = ns.Comm
 
 local PREFIX = "Parchment"
 local handlers = {}
+
+-- Message types whose authority belongs to the DM: applied only from the
+-- recognized DM (see IsAuthoritative). Player-to-DM types (INITSUBMIT, TURNEND,
+-- VITALS, ...) are not gated here; they are bound to the sender by their own
+-- handlers.
+local AUTHORITATIVE = { SYSTEM = true, INIT = true }
+
+-- This client's recognized DM (canonical name; session memory only). Distinct
+-- from db.profile.dm. nil means "no DM recognized yet" - the bootstrap state in
+-- which authoritative messages are accepted from anyone until the first claim
+-- locks one in. Changed only by an explicit claim/take-over/accept, or cleared
+-- by a RELEASE; a roster change never touches it.
+local recognizedDM = nil
 
 -- Our addon version, from the .toc (single source of truth).
 local VERSION = (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(ADDON, "Version"))
@@ -76,26 +94,79 @@ local function WarnMismatch(sender, theirs)
         who, tostring(theirs or "(unknown)"), VERSION, hint))
 end
 
--- True when this client is acting as the DM.
+-- True when this client is broadcasting as the DM. Guarded so a half-built db
+-- (no profile yet) cannot throw.
 function Comm.IsDM()
-    return ns.Addon.db and ns.Addon.db.profile.dm or false
+    local db = ns.Addon and ns.Addon.db
+    return (db and db.profile and db.profile.dm) or false
+end
+
+-- Canonical comparison key for a player name: the name part (before any
+-- "-Realm"), lowercased. Phase 2 will centralize a full Name-Realm normalizer;
+-- for now this matches the existing same-name semantics.
+local function NameKey(name)
+    if not name then return nil end
+    local key = tostring(name):match("^[^-]+")
+    return key and key:lower() or nil
+end
+
+-- This player's own name.
+local function MyName()
+    return (UnitName and UnitName("player")) or ""
+end
+
+-- True when two names refer to the same player (realm-suffix tolerant).
+function Comm.SameName(a, b)
+    local ka = NameKey(a)
+    return ka ~= nil and ka == NameKey(b)
 end
 
 -- True when sender is this player. AceComm echoes our own group broadcasts
 -- back to us; handlers that must not react to themselves check this.
 function Comm.IsSelf(sender)
-    local me = (UnitName and UnitName("player")) or ""
     if not sender then return false end
-    return sender == me or sender:match("^[^-]+") == me
+    return Comm.SameName(sender, MyName())
+end
+
+-- The DM this client currently recognizes (canonical name), or nil.
+function Comm.RecognizedDM()
+    return recognizedDM
+end
+
+-- Records (or clears, with nil/"") the recognized DM. Returns the new value.
+-- Used by an explicit take-over/accept; receiving paths set it directly.
+function Comm.SetRecognizedDM(name)
+    recognizedDM = (type(name) == "string" and name ~= "") and name or nil
+    return recognizedDM
+end
+
+-- Clears the recognized DM (an explicit release/step-down).
+function Comm.ClearRecognizedDM()
+    recognizedDM = nil
+end
+
+-- True when sender may apply DM-authoritative messages: the recognized DM, or
+-- anyone while none is recognized yet (the first DMROLE claim locks it).
+function Comm.IsAuthoritative(sender)
+    if not recognizedDM then return true end
+    return Comm.SameName(sender, recognizedDM)
 end
 
 function Comm.SetDM(on)
     on = on and true or false
     local was = Comm.IsDM()
     ns.Addon.db.profile.dm = on
-    -- Claiming the role announces it to the group (Send no-ops when solo) so
-    -- an already-active DM and this new one both learn of the clash.
-    if on and not was then Comm.Send("DMROLE", {}) end
+    if on and not was then
+        -- Claiming: recognize ourselves and announce to the group (Send no-ops
+        -- when solo) so an already-active DM and this new one learn of the clash.
+        recognizedDM = MyName()
+        Comm.Send("DMROLE", {})
+    elseif not on and was then
+        -- Stepping down: a deliberate release (distinct from a disconnect) so
+        -- everyone clears recognition and the next /pmt dm claims cleanly.
+        if Comm.SameName(MyName(), recognizedDM) then recognizedDM = nil end
+        Comm.Send("RELEASE", {})
+    end
     -- The DM tag rides the vitals snapshot; push an update on any change.
     if ns.Party then ns.Party.OnVitalsChanged() end
 end
@@ -187,6 +258,10 @@ local function OnReceive(prefix, text, distribution, sender)
         if not Comm.IsSelf(sender) then WarnMismatch(sender, env.ver) end
         return
     end
+    -- Trust gate: a DM-authoritative message is applied only from the recognized
+    -- DM. This is the central fix for DM-broadcast spoofing - a non-DM group
+    -- member can no longer push a fake system or initiative state.
+    if AUTHORITATIVE[env.t] and not Comm.IsAuthoritative(sender) then return end
     local fn = handlers[env.t]
     if fn then fn(env.v, sender, distribution) end
 end
@@ -196,17 +271,38 @@ function Comm.Init()
     ns.Addon:RegisterComm(PREFIX, OnReceive)
 end
 
--- Role announcements: prints who took the DM role; when this client is ALSO
--- an active DM, warn - two DMs would both broadcast system/initiative sync -
--- and whisper our own claim back so the newcomer is warned too. The reply is
--- only sent for group announces (never for a whispered one), so two clients
--- cannot ping-pong.
+-- Role announcements drive DM recognition. The FIRST claim this client sees
+-- locks in silently (no popup in the common case); a later claim by a DIFFERENT
+-- player is a non-destructive take-over offer, surfaced as a switch-vs-keep
+-- prompt (default: keep the current DM). When this client is ALSO an active DM,
+-- warn about the clash and whisper our own claim back so the newcomer learns of
+-- it - but never for a whispered announce, so two clients cannot ping-pong.
 Comm.On("DMROLE", function(_, sender, distribution)
     if Comm.IsSelf(sender) then return end
-    ns.Print((sender or "?") .. " enabled DM mode.")
+    if not recognizedDM then
+        recognizedDM = sender
+        ns.Print((sender or "?") .. " is now your recognized DM.")
+    elseif not Comm.SameName(sender, recognizedDM) then
+        ns.Print((sender or "?") .. " is claiming DM; you currently recognize "
+            .. recognizedDM .. ".")
+        if ns.Dialogs and ns.Dialogs.ConfirmDMSwitch then
+            ns.Dialogs.ConfirmDMSwitch(recognizedDM, sender)
+        end
+    end
     if Comm.IsDM() then
         ns.Print("|cffffcc00warning:|r you also have DM mode on - you would both broadcast"
             .. " system and initiative sync. One of you should toggle it off (/pmt dm).")
         if distribution ~= "WHISPER" then Comm.Whisper("DMROLE", {}, sender) end
+    end
+end)
+
+-- A DM stepped down: clear recognition so the next claim locks cleanly. Honoured
+-- only from the DM we actually recognize - a stray release cannot unseat someone
+-- else's DM.
+Comm.On("RELEASE", function(_, sender)
+    if Comm.IsSelf(sender) then return end
+    if Comm.SameName(sender, recognizedDM) then
+        recognizedDM = nil
+        ns.Print((sender or "?") .. " stepped down as DM.")
     end
 end)
