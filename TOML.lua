@@ -9,7 +9,9 @@
 --
 -- Decode keeps object keys as strings (the import layer normalizes integer-like
 -- keys to numbers, matching the JSON path). Encode emits arrays of tables as
--- readable [[...]] blocks and leaf maps as inline tables.
+-- readable [[...]] blocks and leaf maps as inline tables. Numbers round-trip
+-- losslessly (large integers and non-integers via %.17g, not %d/%.14g); decode
+-- caps nesting depth and rejects a malformed \u escape rather than emitting NUL.
 --
 -- Reads from: nothing.
 -- Exposes on ns.TOML: .encode(value) -> string, .decode(str) -> value | nil,err
@@ -18,6 +20,10 @@ local ADDON, ns = ...
 
 ns.TOML = ns.TOML or {}
 local TOML = ns.TOML
+
+-- Hard nesting limit for decode: a pathologically deep array/inline-table would
+-- otherwise run the recursive parser off the C stack.
+local MAX_DEPTH = 200
 
 -- Shared helpers.
 
@@ -63,10 +69,14 @@ local function EncodeScalar(v)
     local t = type(v)
     if t == "string" then return EncodeString(v) end
     if t == "boolean" then return tostring(v) end
-    if v == math.floor(v) and v == v and v ~= math.huge and v ~= -math.huge then
+    -- Integers in the exact-double range print as integers; large integers (which
+    -- "%d" would overflow into garbage) and all non-integers go through "%.17g"
+    -- so decode reproduces the value exactly (tostring is only %.14g here).
+    if v == math.floor(v) and v == v and v ~= math.huge and v ~= -math.huge
+        and math.abs(v) < 2 ^ 53 then
         return string.format("%d", v)
     end
-    return tostring(v)
+    return string.format("%.17g", v)
 end
 
 -- Renders a bare key, or a quoted key when it contains anything unusual.
@@ -184,6 +194,7 @@ function TOML.decode(str)
     local s = str
     local pos = 1
     local n = #s
+    local depth = 0
     local root = {}
     local current = root
     local parseValue
@@ -234,7 +245,10 @@ function TOML.decode(str)
                 elseif e == "u" or e == "U" then
                     local len = (e == "u") and 4 or 8
                     local hex = s:sub(pos + 2, pos + 1 + len)
-                    buf[#buf + 1] = Utf8(tonumber(hex, 16) or 0)
+                    -- Require exactly `len` hex digits; an invalid escape must
+                    -- error, not inject a NUL byte (tonumber(bad,16) was `or 0`).
+                    if #hex ~= len or not hex:match("^%x+$") then err("invalid \\u escape") end
+                    buf[#buf + 1] = Utf8(tonumber(hex, 16))
                     pos = pos + 2 + len
                 elseif triple and (e == "\n" or e == " " or e == "\t" or e == "\r") then
                     -- line-ending backslash: trim following whitespace
@@ -302,6 +316,8 @@ function TOML.decode(str)
 
     local function parseArray()
         pos = pos + 1
+        depth = depth + 1
+        if depth > MAX_DEPTH then err("nesting too deep") end
         local arr = {}
         while true do
             skipBlank()
@@ -313,14 +329,17 @@ function TOML.decode(str)
             elseif c == "]" then pos = pos + 1; break
             else err("expected ',' or ']' in array") end
         end
+        depth = depth - 1
         return arr
     end
 
     local function parseInlineTable()
         pos = pos + 1
+        depth = depth + 1
+        if depth > MAX_DEPTH then err("nesting too deep") end
         local t = {}
         skipInlineWS()
-        if peek() == "}" then pos = pos + 1; return t end
+        if peek() == "}" then pos = pos + 1; depth = depth - 1; return t end
         while true do
             local path = parseKeyPath()
             skipInlineWS()
@@ -338,6 +357,7 @@ function TOML.decode(str)
             elseif c == "}" then pos = pos + 1; break
             else err("expected ',' or '}' in inline table") end
         end
+        depth = depth - 1
         return t
     end
 

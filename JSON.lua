@@ -9,6 +9,10 @@
 --   * decode returns JSON arrays as sequences and JSON objects with string keys.
 --     Integer-looking keys are normalized to numbers by the import layer, not
 --     here, so this stays a faithful generic JSON codec.
+--   * Fidelity: integers print exactly (large ones via %.17g, not an overflowing
+--     %d) and non-integers via %.17g so export->import is lossless. decode
+--     rejects `null` (it cannot live in a Lua table without corrupting it) and
+--     caps nesting depth instead of overflowing the stack.
 --
 -- Reads from: nothing.
 -- Exposes on ns.JSON: .encode(value, pretty), .decode(str) -> value | nil, err
@@ -17,6 +21,10 @@ local ADDON, ns = ...
 
 ns.JSON = ns.JSON or {}
 local JSON = ns.JSON
+
+-- Hard nesting limit for decode: a pathologically deep payload would otherwise
+-- run the recursive parser off the C stack and surface a raw "stack overflow".
+local MAX_DEPTH = 200
 
 -- Encoding.
 
@@ -50,15 +58,23 @@ local function EncodeValue(v, indent, pretty)
     if t == "string" then
         return EncodeString(v)
     elseif t == "number" then
-        if v == math.floor(v) and v == v and v ~= math.huge and v ~= -math.huge then
+        -- Integers within the exact-double range print as integers; everything
+        -- else (large integers that "%d" would overflow into garbage, and all
+        -- non-integers) goes through "%.17g" so decode reproduces the value
+        -- exactly. tostring() is only %.14g in Lua 5.1 and silently loses bits.
+        if v == math.floor(v) and v == v and v ~= math.huge and v ~= -math.huge
+            and math.abs(v) < 2 ^ 53 then
             return string.format("%d", v)
         end
-        return tostring(v)
+        return string.format("%.17g", v)
     elseif t == "boolean" then
         return tostring(v)
     elseif t == "nil" then
         return "null"
     elseif t == "table" then
+        -- An empty Lua table is ambiguous (list vs map); it encodes to [] since
+        -- lists are the common case. Parchment fields that must stay maps are
+        -- never empty in practice, so this does not bite the round-trip.
         if next(v) == nil then return "[]" end
         local nl, pad, padIn, sp = "", "", "", ""
         if pretty then
@@ -108,6 +124,7 @@ end
 function JSON.decode(str)
     local s = str
     local pos = 1
+    local depth = 0
     local parseValue
 
     -- Errors report line:column - a byte offset is useless in a long paste.
@@ -175,9 +192,11 @@ function JSON.decode(str)
 
     local function parseArray()
         pos = pos + 1
+        depth = depth + 1
+        if depth > MAX_DEPTH then err("nesting too deep") end
         local arr = {}
         skip()
-        if s:sub(pos, pos) == "]" then pos = pos + 1; return arr end
+        if s:sub(pos, pos) == "]" then pos = pos + 1; depth = depth - 1; return arr end
         while true do
             arr[#arr + 1] = parseValue()
             skip()
@@ -191,14 +210,17 @@ function JSON.decode(str)
                 err("expected ',' or ']'")
             end
         end
+        depth = depth - 1
         return arr
     end
 
     local function parseObject()
         pos = pos + 1
+        depth = depth + 1
+        if depth > MAX_DEPTH then err("nesting too deep") end
         local obj = {}
         skip()
-        if s:sub(pos, pos) == "}" then pos = pos + 1; return obj end
+        if s:sub(pos, pos) == "}" then pos = pos + 1; depth = depth - 1; return obj end
         while true do
             skip()
             if s:sub(pos, pos) ~= '"' then err("expected string key") end
@@ -218,6 +240,7 @@ function JSON.decode(str)
                 err("expected ',' or '}'")
             end
         end
+        depth = depth - 1
         return obj
     end
 
@@ -235,7 +258,10 @@ function JSON.decode(str)
             if s:sub(pos, pos + 4) == "false" then pos = pos + 5; return false end
             err("invalid literal")
         elseif c == "n" then
-            if s:sub(pos, pos + 3) == "null" then pos = pos + 4; return nil end
+            -- Reject null outright rather than dropping it: a returned nil would
+            -- vanish from arrays (compacting them) and objects (key disappears),
+            -- silently corrupting the data. Parchment data never contains null.
+            if s:sub(pos, pos + 3) == "null" then err("null is not allowed") end
             err("invalid literal")
         else
             return parseNumber()

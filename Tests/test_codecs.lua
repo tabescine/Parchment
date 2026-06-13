@@ -50,14 +50,16 @@ T.assert_deepeq(data, {
 local bad, badErr = ns.TOML.decode("= broken")
 assert(bad == nil and badErr ~= nil)
 
--- JSON decoding, including escapes and nesting. Note the codec's contract
--- for null: it is DROPPED (arrays compact) - Parchment data never contains
--- null, and Lua tables cannot hold nil values anyway.
-local jdata, jerr = ns.JSON.decode([[{"a": [1, 2.5, true, null, "x\"y"], "n": {"k": -3}}]])
+-- JSON decoding, including escapes and nesting. The codec's null contract is
+-- now REJECT (not silently drop) - dropping would corrupt arrays/objects, and
+-- Parchment data never contains null. See test_codec_fidelity for the full set.
+local jdata, jerr = ns.JSON.decode([[{"a": [1, 2.5, true, "x\"y"], "n": {"k": -3}}]])
 assert(jdata, tostring(jerr))
 assert(jdata.a[1] == 1 and jdata.a[2] == 2.5 and jdata.a[3] == true)
-assert(jdata.a[4] == 'x"y' and #jdata.a == 4, "null should be dropped, compacting the array")
+assert(jdata.a[4] == 'x"y' and #jdata.a == 4)
 assert(jdata.n.k == -3)
+local jnull, jnullErr = ns.JSON.decode('[1, null, 2]')
+assert(jnull == nil and jnullErr ~= nil, "null must be rejected, not dropped")
 local jbad, jbadErr = ns.JSON.decode("{nope")
 assert(jbad == nil and jbadErr ~= nil)
 
