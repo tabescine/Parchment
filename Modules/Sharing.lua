@@ -6,8 +6,12 @@
 -- whispers a request, the target's addon replies with their active
 -- character, and we open the sheet in view mode.
 --
--- Reads from: ns.Comm, ns.Addon (event registration), ns.GetActiveCharacter,
---   ns.CharacterSheetUI, ns.Print.
+-- Received sheets are bounded before they reach SavedVariables: a sheet over a
+-- size cap is refused, and the cache keeps only the newest MAX_ENTRIES (oldest
+-- evicted by time). Name matching goes through the shared Comm normalizer.
+--
+-- Reads from: ns.Comm (send/normalize), ns.Addon (event registration),
+--   ns.GetActiveCharacter, ns.Schema, ns.JSON, ns.CharacterSheetUI, ns.Print.
 -- Exposes on ns.Sharing: Request, GetCache, OpenCache, ClearCache.
 
 local ADDON, ns = ...
@@ -20,6 +24,13 @@ local function FullName(name, realm)
     if realm and realm ~= "" then return name .. "-" .. realm end
     return name
 end
+
+-- Bounds on the persistent cache: a received sheet over MAX_CHAR_BYTES (encoded)
+-- is refused before it touches SavedVariables, and the cache keeps at most
+-- MAX_ENTRIES, evicting the oldest by `time`. Together they stop a hostile or
+-- accidental flood of large/many sheets from bloating the saved file.
+local MAX_CHAR_BYTES = 256 * 1024
+local MAX_ENTRIES = 50
 
 -- Targets we are awaiting a reply from (prevents request pile-ups).
 local pending = {}
@@ -37,12 +48,34 @@ local function Cache()
     return g.sharedCache
 end
 
--- Compares two names ignoring realm and case ("Bob-Realm" == "bob").
+-- Compares two names ignoring realm and case ("Bob-Realm" == "bob"). Delegates
+-- to the one shared normalizer so name matching never diverges between modules.
 local function SameName(a, b)
-    if not a or not b then return false end
-    a = (a:match("^[^-]+") or a):lower()
-    b = (b:match("^[^-]+") or b):lower()
-    return a == b
+    return ns.Comm.SameName(a, b)
+end
+
+-- The encoded byte size of a received sheet, or nil when it cannot be encoded.
+-- Runs under pcall so a pathologically deep payload cannot throw here.
+local function EncodedSize(char)
+    local ok, enc = pcall(ns.JSON.encode, char)
+    if not ok or type(enc) ~= "string" then return nil end
+    return #enc
+end
+
+-- Evicts the oldest entries (by `time`) until the cache is within MAX_ENTRIES.
+local function EvictOldest(cache)
+    local n = 0
+    for _ in pairs(cache) do n = n + 1 end
+    while n > MAX_ENTRIES do
+        local oldestKey, oldestTime
+        for key, entry in pairs(cache) do
+            local t = tonumber(entry.time) or 0
+            if not oldestTime or t < oldestTime then oldestKey, oldestTime = key, t end
+        end
+        if not oldestKey then break end
+        cache[oldestKey] = nil
+        n = n - 1
+    end
 end
 
 -- Returns a cached entry whose key matches name (ignoring realm), or nil.
@@ -120,17 +153,14 @@ end
 -- show characters we receive. ShowCharacter is wrapped so a display error is
 -- reported rather than swallowed by AceComm's protected dispatch.
 if ns.Comm then
-    ns.Comm.On("REQ", function(payload, sender, distribution)
+    ns.Comm.On("REQ", function(payload, sender)
         if not ForMe(payload) then return end
         local char = ns.GetActiveCharacter()
         if not (char and sender) then return end
-        -- Mirror the request's path: a whispered request gets a whispered
-        -- reply (the requester may not be in our group at all).
-        if distribution == "WHISPER" then
-            ns.Comm.Whisper("CHAR", { char = char, to = sender }, sender)
-        else
-            SendTo("CHAR", { char = char }, sender)
-        end
+        -- The requester resolves directly, so whisper the reply straight to them
+        -- rather than broadcasting a (potentially large) sheet the whole group
+        -- would decode and discard. Whispers reach party members cross-realm.
+        ns.Comm.Whisper("CHAR", { char = char, to = sender }, sender)
     end)
     ns.Comm.On("CHAR", function(payload, sender)
         if type(payload) ~= "table" or type(payload.char) ~= "table" then return end
@@ -152,7 +182,16 @@ if ns.Comm then
             return
         end
 
-        Cache()[sender] = { char = payload.char, name = payload.char.name, time = (time and time()) or 0 }
+        -- Bound the size before it reaches SavedVariables, then store and cap the
+        -- entry count (oldest-out) so the cache cannot grow without limit.
+        local size = EncodedSize(payload.char)
+        if not size or size > MAX_CHAR_BYTES then
+            ns.Print((sender or "?") .. " sent an oversized character sheet; ignored.")
+            return
+        end
+        local cache = Cache()
+        cache[sender] = { char = payload.char, name = payload.char.name, time = (time and time()) or 0 }
+        EvictOldest(cache)
         ns.Print("received " .. (payload.char.name or "a character") .. " from " .. (sender or "?") .. ".")
         if ns.CharacterSheetUI then
             local ok, err = pcall(ns.CharacterSheetUI.ShowCharacter, payload.char, sender)

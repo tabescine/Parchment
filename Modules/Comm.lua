@@ -24,10 +24,16 @@
 -- comm degrades to uncompressed when it is absent) and big bodies ride at BULK
 -- priority so a system share cannot stall vitals/sheet traffic. See Encode.
 --
+-- The inbound edge is hardened centrally in OnReceive (not per handler): own
+-- group echoes are filtered once, the decode chain is fully pcall-guarded, and
+-- accepted messages are rate-limited per sender+type so one peer cannot flood
+-- the main thread (SYSTEM decompress, VITALS churn). Per-sender bookkeeping is
+-- pruned when the group roster changes.
+--
 -- Reads from: ns.Addon (the AceAddon object with Comm/Serializer mixins), its
 --   db, ns.Print, ns.Party (guarded; vitals push on role change), and
 --   LibDeflate via LibStub (optional).
--- Exposes on ns.Comm: IsDM, IsSelf, SameName, SetDM, RecognizedDM,
+-- Exposes on ns.Comm: IsDM, IsSelf, NormalizeName, SameName, SetDM, RecognizedDM,
 --   SetRecognizedDM, ClearRecognizedDM, IsAuthoritative, Send, Whisper, On, Init.
 
 local ADDON, ns = ...
@@ -50,6 +56,18 @@ local AUTHORITATIVE = { SYSTEM = true, INIT = true }
 -- locks one in. Changed only by an explicit claim/take-over/accept, or cleared
 -- by a RELEASE; a roster change never touches it.
 local recognizedDM = nil
+
+-- Group channels (AceComm loops our own broadcasts on these back to us).
+local GROUP_DIST = { PARTY = true, RAID = true, INSTANCE_CHAT = true }
+
+-- Inbound rate limit: the minimum seconds between two ACCEPTED messages of a
+-- given type from one sender. Caps the cost a single peer can impose - SYSTEM
+-- decompresses ~100 KB on the main thread, VITALS arrives at edit frequency.
+-- Types absent here are unlimited (REQ/CHAR are self-throttled by `pending`).
+local MIN_INTERVAL = { SYSTEM = 3, VITALS = 0.5, INIT = 0.25, CHAR = 2 }
+-- [sender][type] = GetTime() of the last accepted message (pruned on roster
+-- change). Nested by sender so a departing member's row drops in one step.
+local recvAt = {}
 
 -- Our addon version, from the .toc (single source of truth).
 local VERSION = (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(ADDON, "Version"))
@@ -101,12 +119,15 @@ function Comm.IsDM()
     return (db and db.profile and db.profile.dm) or false
 end
 
--- Canonical comparison key for a player name: the name part (before any
--- "-Realm"), lowercased. Phase 2 will centralize a full Name-Realm normalizer;
--- for now this matches the existing same-name semantics.
-local function NameKey(name)
-    if not name then return nil end
-    local key = tostring(name):match("^[^-]+")
+-- The single canonical identity key for a player name: the name part (before
+-- any "-Realm"), lowercased. The one normalizer the whole addon shares, so name
+-- comparisons can never diverge between modules. Returns nil for empty input.
+-- (Realm-tolerant by design: within a party names are unique, and our peers send
+-- bare and realm-qualified names interchangeably. A full Name-Realm canonical
+-- via GetNormalizedRealmName is a possible future tightening.)
+function Comm.NormalizeName(name)
+    if type(name) ~= "string" or name == "" then return nil end
+    local key = name:match("^[^-]+")
     return key and key:lower() or nil
 end
 
@@ -117,8 +138,8 @@ end
 
 -- True when two names refer to the same player (realm-suffix tolerant).
 function Comm.SameName(a, b)
-    local ka = NameKey(a)
-    return ka ~= nil and ka == NameKey(b)
+    local ka = Comm.NormalizeName(a)
+    return ka ~= nil and ka == Comm.NormalizeName(b)
 end
 
 -- True when sender is this player. AceComm echoes our own group broadcasts
@@ -210,8 +231,10 @@ local function Encode(env)
 end
 
 -- Reverses Encode. Returns ok, envelope (ok=false on any malformed/foreign or
--- undecodable input, so the receiver drops it quietly).
-local function Decode(text)
+-- undecodable input, so the receiver drops it quietly). The whole chain runs
+-- under pcall: a hostile or corrupt body that makes LibDeflate or the serializer
+-- throw becomes a quiet drop, never an error surfaced from AceComm's dispatch.
+local function DecodeUnprotected(text)
     if type(text) ~= "string" or #text < 1 then return false end
     local marker, body = text:sub(1, 1), text:sub(2)
     if marker == "1" then
@@ -225,6 +248,12 @@ local function Decode(text)
         return ns.Addon:Deserialize(body)
     end
     return false
+end
+
+local function Decode(text)
+    local ok, a, b = pcall(DecodeUnprotected, text)
+    if not ok then return false end
+    return a, b
 end
 
 -- Broadcasts a typed message to the group. Returns ok, reason.
@@ -249,9 +278,30 @@ function Comm.On(msgType, fn)
     handlers[msgType] = fn
 end
 
--- AceComm receive callback: decode, gate on version, dispatch by type.
+-- True when accepting another `t` from `sender` now respects its rate limit;
+-- records the acceptance time when it does. No clock (tests) means no limiting.
+local function RateOK(sender, t)
+    local interval = MIN_INTERVAL[t]
+    if not interval or not GetTime then return true end
+    local now = GetTime()
+    local row = recvAt[sender or "?"]
+    if row and row[t] and (now - row[t]) < interval then return false end
+    row = row or {}
+    row[t] = now
+    recvAt[sender or "?"] = row
+    return true
+end
+
+-- AceComm receive callback. The inbound edge is hardened here, in one place,
+-- rather than per handler: drop our own looped-back group broadcasts, drop
+-- malformed/foreign/incompatible bodies, gate DM authority, and rate-limit per
+-- sender+type - so a handler only ever sees trusted, well-paced traffic.
 local function OnReceive(prefix, text, distribution, sender)
     if prefix ~= PREFIX then return end
+    -- Our own group broadcast echoes back to us; filter it once, centrally.
+    -- (Whispers are never self-echoed and may legitimately target self - e.g.
+    -- the self "View sheet" loopback - so only group channels are filtered.)
+    if GROUP_DIST[distribution] and Comm.IsSelf(sender) then return end
     local ok, env = Decode(text)
     if not ok or type(env) ~= "table" then return end
     if not Compatible(env.ver) then
@@ -262,13 +312,43 @@ local function OnReceive(prefix, text, distribution, sender)
     -- DM. This is the central fix for DM-broadcast spoofing - a non-DM group
     -- member can no longer push a fake system or initiative state.
     if AUTHORITATIVE[env.t] and not Comm.IsAuthoritative(sender) then return end
+    -- Rate gate: cap how often one sender can make us do expensive work.
+    if not RateOK(sender, env.t) then return end
     local fn = handlers[env.t]
     if fn then fn(env.v, sender, distribution) end
 end
 
--- Registers the comm prefix. Called once the addon is enabled.
+-- Drops per-sender bookkeeping for players no longer in the group, so a long
+-- session cannot accumulate unbounded version-warning and rate-limit rows (and a
+-- player who leaves and rejoins can be re-warned). The recognized DM is NOT
+-- touched - a disconnect must not unseat the DM (see the trust model).
+local function PruneDepartedSenders()
+    local keep = { [Comm.NormalizeName(MyName()) or ""] = true }
+    local n = (GetNumGroupMembers and GetNumGroupMembers()) or 0
+    local prefix = (IsInRaid and IsInRaid()) and "raid" or "party"
+    for i = 1, n do
+        local unit = prefix .. i
+        if UnitExists and UnitExists(unit) then
+            local who = Comm.NormalizeName((UnitName and UnitName(unit)) or "")
+            if who then keep[who] = true end
+        end
+    end
+    for who in pairs(versionWarned) do
+        if not keep[Comm.NormalizeName(who) or ""] then versionWarned[who] = nil end
+    end
+    for who in pairs(recvAt) do
+        if not keep[Comm.NormalizeName(who) or ""] then recvAt[who] = nil end
+    end
+end
+
+-- Registers the comm prefix and the roster-change prune. Called once the addon
+-- is enabled. RegisterEvent is guarded so the out-of-client tests (a bare Addon
+-- stub) can drive OnReceive without AceEvent.
 function Comm.Init()
     ns.Addon:RegisterComm(PREFIX, OnReceive)
+    if ns.Addon.RegisterEvent then
+        ns.Addon:RegisterEvent("GROUP_ROSTER_UPDATE", PruneDepartedSenders)
+    end
 end
 
 -- Role announcements drive DM recognition. The FIRST claim this client sees
