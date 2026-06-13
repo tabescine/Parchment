@@ -275,14 +275,23 @@ local function BuildFrame()
     end)
     saveBtn:SetScript("OnLeave", GameTooltip_Hide)
 
-    -- Wire inputs (read live f.char at event time).
-    local function textCommit(box, field)
+    -- Wire the text fields (read live f.char at event time). These are cosmetic:
+    -- none changes a derived stat, so they never trigger a recompute cascade. The
+    -- sheet refresh (name -> title, quote -> subtitle, notes -> body) is debounced
+    -- so it runs once after typing settles, not per keystroke; `player` is not
+    -- shown on the sheet at all, so it refreshes nothing.
+    local refreshSheet = ns.UI.Debounce(0.2, function()
+        if ns.CharacterSheetUI then ns.CharacterSheetUI.RefreshIfShown() end
+    end)
+    local function textCommit(box, field, affectsSheet)
         box:SetScript("OnTextChanged", function(self, user)
-            if user and f.char then f.char[field] = self:GetText(); if ns.CharacterSheetUI then ns.CharacterSheetUI.RefreshIfShown() end end
+            if not (user and f.char) then return end
+            f.char[field] = self:GetText()
+            if affectsSheet then refreshSheet() end
         end)
     end
-    textCommit(f.nameBox, "name"); textCommit(f.playerBox, "player")
-    textCommit(f.quoteBox, "quote"); textCommit(f.notesBox, "notes")
+    textCommit(f.nameBox, "name", true); textCommit(f.playerBox, "player", false)
+    textCommit(f.quoteBox, "quote", true); textCommit(f.notesBox, "notes", true)
 
     for id, st in pairs(f.steppers) do
         st:OnStep(function(delta)

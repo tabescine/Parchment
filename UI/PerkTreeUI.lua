@@ -511,9 +511,15 @@ local function BuildFrame()
         box:ClearFocus()
     end)
     f.searchBox:SetScript("OnEnterPressed", function(box) box:ClearFocus() end)
+    -- Debounced, and only when the text actually changed: OnTextChanged also
+    -- fires for programmatic SetText and no-op edits, and the cross-sphere search
+    -- is not free.
+    local runSearch = UI.Debounce(0.15, function() Refresh(f) end)
     f.searchBox:SetScript("OnTextChanged", function(box)
-        f.query = box:GetText()
-        Refresh(f)
+        local q = box:GetText()
+        if q == f.query then return end
+        f.query = q
+        runSearch()
     end)
     UI.SetPlaceholder(f.searchBox, "Search perks")
 
@@ -554,9 +560,12 @@ local function BuildFrame()
     content.nodePool, content.linePool = {}, {}
     content.usedNodes, content.usedLines = 0, 0
     scroll:SetScrollChild(content)
+    -- Width tracks the viewport immediately; the graph re-layout is debounced so
+    -- a drag-resize relays out once the size settles, not every pixel.
+    local relayout = UI.Debounce(0.1, function() if f.char then RenderGraph(f) end end)
     scroll:SetScript("OnSizeChanged", function(_, w)
         content:SetWidth(w)
-        if f.char then RenderGraph(f) end
+        relayout()
     end)
     f.content = content
 

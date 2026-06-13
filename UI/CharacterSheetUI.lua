@@ -688,10 +688,13 @@ local function BuildFrame()
     scroll:SetScrollChild(content)
     f.content = content
 
-    -- Keep the body width matched to the viewport and re-wrap on resize.
-    scroll:SetScript("OnSizeChanged", function(self, width)
+    -- Keep the body width matched to the viewport and re-wrap on resize. The
+    -- width tracks every pixel, but the (expensive) re-layout is debounced so a
+    -- drag-resize only re-wraps once the size settles.
+    local reflow = ns.UI.Debounce(0.1, function() if f.sheet then RenderBody(f) end end)
+    scroll:SetScript("OnSizeChanged", function(_, width)
         content:SetWidth(width)
-        if f.sheet then RenderBody(f) end
+        reflow()
     end)
 
     return f

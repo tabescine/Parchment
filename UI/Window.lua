@@ -7,8 +7,8 @@
 -- behaviours common to every Parchment window.
 --
 -- Reads from: ns.Addon.db (for geometry persistence, keyed by opts.dbKey).
--- Exposes on ns.UI: .CreateWindow, .Signed, .SetPlaceholder, and the shared
---   palette constants.
+-- Exposes on ns.UI: .CreateWindow, .Signed, .Debounce, .SetPlaceholder, and the
+--   shared palette constants.
 
 local ADDON, ns = ...
 
@@ -27,6 +27,24 @@ UI.HILITE = { 0.85, 0.72, 0.45, 0.18 }
 -- Formats a number with an explicit sign ("+2", "-1", "+0").
 function UI.Signed(n)
     return (n >= 0 and "+" or "") .. n
+end
+
+-- Wraps fn in a debouncer: each call cancels any pending run and reschedules it
+-- `delay` seconds out, so only the last call in a burst (quiet for `delay`)
+-- actually runs fn. Used to collapse per-keystroke and per-resize-pixel work
+-- into a single trailing pass. Falls back to running immediately when C_Timer is
+-- unavailable (the out-of-client tests). Forwards the final call's arguments.
+function UI.Debounce(delay, fn)
+    local timer
+    return function(...)
+        if not (C_Timer and C_Timer.NewTimer) then return fn(...) end
+        local args, n = { ... }, select("#", ...)
+        if timer then timer:Cancel() end
+        timer = C_Timer.NewTimer(delay, function()
+            timer = nil
+            fn(unpack(args, 1, n))
+        end)
+    end
 end
 
 -- Adds grey placeholder text to an EditBox, shown while it is empty and

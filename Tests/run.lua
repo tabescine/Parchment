@@ -16,6 +16,7 @@ local MANIFEST = {
     "test_perktree.lua",
     "test_initiative.lua",
     "test_widgets.lua",
+    "test_widgets_debounce.lua",
     "test_comm.lua",
     "test_comm_trust.lua",
     "test_comm_hardening.lua",
