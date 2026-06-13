@@ -151,16 +151,30 @@ function IE.Import(text)
     local validateSystem = ns.HasSystem() and ns.GetSystem() or nil
 
     if kind == "character_db" then
+        local incoming = data.characters or {}
+        -- Validate every character BEFORE writing anything: a partial import that
+        -- committed some and failed others would be worse than refusing outright.
         local count = 0
-        for charKey, char in pairs(data.characters or {}) do
+        for charKey, char in pairs(incoming) do
             local ok, issues = ns.Schema.ValidateCharacter(char, validateSystem)
             if not ok then
                 return false, "character '" .. tostring(charKey) .. "' invalid: " .. SummarizeIssues(issues)
             end
             count = count + 1
         end
-        ns.SetCharacterDB(StripMeta(data))
-        return true, "imported " .. count .. " character(s)."
+        -- MERGE into the existing roster (add or overwrite by key) rather than
+        -- replacing the whole database: a paste can no longer silently wipe
+        -- characters that are not present in the import.
+        local chars = ns.GetCharacters()
+        for charKey, char in pairs(incoming) do
+            chars[charKey] = StripMeta(char)
+        end
+        -- Re-stamp the active pointer onto a key that still exists (GetActiveCharacter
+        -- self-heals to the first present character), so it never dangles and an
+        -- import into an empty install gains an active character.
+        local _, activeKey = ns.GetActiveCharacter()
+        if activeKey then ns.SetActiveCharacter(activeKey) end
+        return true, "imported " .. count .. " character(s) (merged into your roster)."
     end
 
     -- Single character.
