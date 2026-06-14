@@ -343,7 +343,10 @@ local function BuildFrame()
     f.levelDownBtn:SetScript("OnClick", function() EditorUI.DoLevelDown(f) end)
     local function maxCommit(box, field)
         box:SetScript("OnEnterPressed", function(self)
-            if f.char then f.char[field] = tonumber(self:GetText()) or 0 end
+            if f.char then
+                local n = tonumber(self:GetText())
+                if n then f.char[field] = math.max(0, math.min(99999, math.floor(n))) end
+            end
             self:ClearFocus(); Changed(f)
         end)
     end
@@ -421,8 +424,13 @@ end
 -- silently discard a typed-but-not-entered value.
 local function CommitPending(self)
     if not self.char then return end
-    if self.maxHpBox then self.char.max_hp = tonumber(self.maxHpBox:GetText()) or self.char.max_hp end
-    if self.maxManaBox then self.char.max_mana = tonumber(self.maxManaBox:GetText()) or self.char.max_mana end
+    local function commit(box, field)
+        if not box then return end
+        local n = tonumber(box:GetText())
+        if n then self.char[field] = math.max(0, math.min(99999, math.floor(n))) end
+    end
+    commit(self.maxHpBox, "max_hp")
+    commit(self.maxManaBox, "max_mana")
 end
 
 function EditorUI.PickCharacter(self)
