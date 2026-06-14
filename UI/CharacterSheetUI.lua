@@ -37,8 +37,12 @@ ns.CharacterSheetUI = CharacterSheetUI
 -- Formats a number with an explicit sign (+3, -2, +0).
 local Signed = ns.UI.Signed
 
--- Trims trailing ".0" off a number formatted for display (13.0 -> 13).
+-- Trims trailing ".0" off a number formatted for display (13.0 -> 13). Coerces
+-- and tolerates a nil/non-number (a malformed remote sheet) with a "?" instead
+-- of throwing on math.floor.
 local function Num(n)
+    n = tonumber(n)
+    if not n then return "?" end
     if n == math.floor(n) then return tostring(math.floor(n)) end
     return tostring(n)
 end
@@ -94,6 +98,9 @@ local function AcquireBtn(content)
         content.btnPool[content.btnUsed] = b
     end
     b:ClearAllPoints()
+    -- Clear last render's tip/roll: a pooled button reused by a row that sets
+    -- neither must not carry a stale tooltip or click from its previous use.
+    b.tip, b.roll = nil, nil
     b:Show()
     return b
 end
@@ -597,8 +604,9 @@ end
 local function CommitResource(self, field, box)
     local char = ns.GetCharacter(self.charKey)
     if not char then return end
+    -- Bound the typed value: integral, non-negative, and not absurdly large.
     local n = tonumber(box:GetText())
-    if n then char[field] = n end
+    if n then char[field] = math.max(0, math.min(99999, math.floor(n))) end
     box:ClearFocus()
     Refresh(self)
     if ns.Party then ns.Party.OnVitalsChanged() end

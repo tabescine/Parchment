@@ -57,6 +57,18 @@ ok, msg = IE.Import([[{"characters": {"Zara": {"name":"Zara","level":1}}}]])
 assert(ok, tostring(msg))
 assert(active == "Zara", "import into an empty install should set an active character")
 
+-- StripMeta is recursive: '_'-prefixed metadata is removed at every depth, not
+-- just the top level, before a character reaches storage.
+ok = IE.Import([[
+  {"characters": {"Meta": {"name":"Meta", "_key":"ignored",
+    "nested": {"keep": 1, "_hidden": 2, "deep": {"_x": 9, "ok": 3}}}}}
+]])
+assert(ok, tostring(msg))
+local m = roster.Meta
+assert(m and m._key == nil, "top-level _meta must be stripped")
+assert(m.nested.keep == 1 and m.nested._hidden == nil, "nested _meta must be stripped")
+assert(m.nested.deep._x == nil and m.nested.deep.ok == 3, "deeply nested _meta must be stripped")
+
 -- A single bad character refuses the whole import (no partial write).
 ns.Schema.ValidateCharacter = function(c) return c.name ~= "Bad", { "bad" } end
 local before = roster.Zara

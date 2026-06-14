@@ -270,7 +270,9 @@ local function BuildFrame()
                 local before = PerLevelHp(f.char)
                 f.char.attributes[id] = newVal
                 local after = PerLevelHp(f.char)
-                local retro = (after - before) * (level - 1)
+                -- Round: per-level HP deltas are whole, but keep HP integral
+                -- regardless of how a system defines its hit die / modifiers.
+                local retro = math.floor((after - before) * (level - 1) + 0.5)
                 if retro ~= 0 then
                     f.char.max_hp = (f.char.max_hp or 0) + retro
                     f.char.current_hp = (f.char.current_hp or 0) + retro
@@ -414,12 +416,25 @@ function EditorUI.DeleteCharacter(self)
     if key then StaticPopup_Show("PARCHMENT_DELETE_CHAR", char.name or key, nil, key) end
 end
 
+-- Commits any uncommitted resource-box edits to the current character. The max
+-- HP/Mana boxes only commit on Enter, so without this a character switch would
+-- silently discard a typed-but-not-entered value.
+local function CommitPending(self)
+    if not self.char then return end
+    if self.maxHpBox then self.char.max_hp = tonumber(self.maxHpBox:GetText()) or self.char.max_hp end
+    if self.maxManaBox then self.char.max_mana = tonumber(self.maxManaBox:GetText()) or self.char.max_mana end
+end
+
 function EditorUI.PickCharacter(self)
     local items = {}
     for key, ch in pairs(ns.GetCharacters()) do items[#items + 1] = { id = key, name = ch.name or key } end
     ns.Dialogs.Pick({ title = "Characters", prompt = "Switch active character", items = items, max = 1,
         selected = { select(2, ns.GetActiveCharacter()) },
-        onConfirm = function(ids) if ids[1] then ns.SetActiveCharacter(ids[1]) end; Changed(self) end })
+        onConfirm = function(ids)
+            CommitPending(self)
+            if ids[1] then ns.SetActiveCharacter(ids[1]) end
+            Changed(self)
+        end })
 end
 
 -- Fills every widget from the active character.

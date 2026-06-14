@@ -44,7 +44,11 @@ end
 local function SetStatus(self, msg, isError)
     local c = isError and UI.RED or UI.GREEN
     self.status:SetTextColor(c[1], c[2], c[3])
-    self.status:SetText(msg or "")
+    -- Long parse errors (with line:column and a hint) used to run off the edge;
+    -- the status now wraps, but cap the length so a giant paste cannot fill it.
+    msg = msg or ""
+    if #msg > 400 then msg = msg:sub(1, 400) .. " ..." end
+    self.status:SetText(msg)
 end
 
 -- Puts text in the box and selects it so the user can immediately copy. The
@@ -174,7 +178,7 @@ local function BuildContent(f)
     f.status:SetPoint("BOTTOMLEFT", 2, 64)
     f.status:SetPoint("BOTTOMRIGHT", -2, 64)
     f.status:SetJustifyH("LEFT")
-    f.status:SetWordWrap(false)
+    f.status:SetWordWrap(true)
 
     -- Top button row: export actions and the format toggle.
     local expChar = MakeButton(f, "Export Char", 88, function() DoExportCharacter(f) end)

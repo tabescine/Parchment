@@ -357,8 +357,10 @@ local function CommitInput(self, rolled)
     if rolled then
         -- May resolve asynchronously (public rolls); refresh in the callback.
         IT.AddRolled(name, value, isNPC, nil, function(combatant, _, _, err)
+            -- A public roll resolves async: the window may have closed, and
+            -- IT.Add re-checks duplicates, so honour both before touching the UI.
             if err then ns.Print(err) end
-            Refresh(self)
+            if self:IsShown() then Refresh(self) end
             if combatant then Sync() end
         end)
     else

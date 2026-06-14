@@ -140,12 +140,31 @@ local function BuildFrame()
 end
 
 -- Saves the draft, makes it active, and opens the editor.
-function WizardUI.Finish(self)
+local function Commit(self)
     CE.InitResources(self.draft, ns.GetSystem())
     CE.SaveNew(ns.NextCharacterKey(), self.draft)
     self:Hide()
     if ns.CharacterEditorUI then ns.CharacterEditorUI.Open() end
     if ns.CharacterSheetUI then ns.CharacterSheetUI.RefreshIfShown() end
+end
+
+-- Soft warnings never block creation (the review lists them), but Finishing with
+-- them present is confirmed so it cannot be an accident.
+StaticPopupDialogs["PARCHMENT_WIZARD_WARN"] = {
+    text = "This character still has %s. Create it anyway?",
+    button1 = "Create", button2 = CANCEL,
+    OnAccept = function(_, self) Commit(self) end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
+function WizardUI.Finish(self)
+    local warns = CE.Warnings(self.draft, ns.GetSystem())
+    if #warns > 0 then
+        StaticPopup_Show("PARCHMENT_WIZARD_WARN",
+            #warns .. " warning" .. (#warns == 1 and "" or "s"), nil, self)
+        return
+    end
+    Commit(self)
 end
 
 -- Redraws the current step.

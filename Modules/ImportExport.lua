@@ -30,12 +30,15 @@ local function NormalizeKeys(value)
     return out
 end
 
--- Returns a shallow copy of a table without keys beginning with '_' (metadata
--- such as _key, which is converter/import-only and never stored).
+-- Returns a deep copy of a table with every key beginning with '_' removed at
+-- all depths (metadata such as _key, which is converter/import-only and never
+-- stored). Recursive so a nested record cannot smuggle a _-field into storage.
 local function StripMeta(t)
     local out = {}
     for k, v in pairs(t) do
-        if not (type(k) == "string" and k:sub(1, 1) == "_") then out[k] = v end
+        if not (type(k) == "string" and k:sub(1, 1) == "_") then
+            out[k] = (type(v) == "table") and StripMeta(v) or v
+        end
     end
     return out
 end
