@@ -41,6 +41,7 @@ UI\HubPanels.lua
 Modules\PerkTree.lua
 UI\PerkTreeUI.lua
 Modules\CharacterEditor.lua
+UI\CharacterForm.lua
 UI\CharacterEditorUI.lua
 UI\CharacterWizardUI.lua
 UI\ConfigUI.lua

@@ -19,6 +19,7 @@ local ADDON, ns = ...
 
 local UI = ns.UI
 local CE = ns.CharacterEditor
+local Form = ns.CharacterForm
 local PAD, ROW_H, CTRL_X = 14, 26, 120
 
 -- Confirm dialog for deleting a character (destructive).
@@ -75,27 +76,9 @@ local function Changed(self)
     if ns.Party then ns.Party.OnVitalsChanged() end
 end
 
--- Opens a picker and applies the result, then refreshes.
-local function Pick(self, title, prompt, items, max, selected, apply)
-    ns.Dialogs.Pick({
-        title = title, prompt = prompt, items = items, max = max, selected = selected,
-        onConfirm = function(ids) apply(ids); Changed(self) end,
-    })
-end
-
--- Picker item-list builders, shared with the wizard (see UI/Widgets.lua).
-local W = ns.Widgets
-local ListItems, AttrItems, TraitItems = W.ListItems, W.AttrItems, W.TraitItems
-local RacialItems, SaveItems, TraitName = W.RacialItems, W.SaveItems, W.TraitName
-
--- Creates a static label at (x, y).
-local function Label(content, text, x, y)
-    local fs = content:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    fs:SetPoint("TOPLEFT", x, y)
-    fs:SetTextColor(UI.TEXT[1], UI.TEXT[2], UI.TEXT[3])
-    fs:SetText(text)
-    return fs
-end
+-- The shared form (labels, pickers, value fill) lives in ns.CharacterForm; the
+-- editor binds the builders to its own control column (CTRL_X) below.
+local Label = Form.Label
 
 local function Header(content, text, y)
     local fs = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
@@ -109,26 +92,8 @@ local function Header(content, text, y)
     line:SetHeight(1)
 end
 
-local function FieldButton(content, y, width)
-    local b = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-    b:SetSize(width or 200, 20)
-    b:SetPoint("TOPLEFT", CTRL_X, y + 1)
-    -- Clip the label to the button so long values (e.g. two origin traits) do
-    -- not spill outside the button graphic.
-    local fs = b:GetFontString()
-    if fs then fs:SetWidth((width or 200) - 12); fs:SetWordWrap(false) end
-    return b
-end
-
-local function TextBox(content, y, width)
-    local e = CreateFrame("EditBox", nil, content, "InputBoxTemplate")
-    e:SetSize(width or 200, 20)
-    e:SetPoint("TOPLEFT", CTRL_X + 6, y)
-    e:SetAutoFocus(false)
-    e:SetTextColor(UI.TEXT[1], UI.TEXT[2], UI.TEXT[3])
-    e:SetScript("OnEscapePressed", e.ClearFocus)
-    return e
-end
+local function FieldButton(content, y, width) return Form.FieldButton(content, CTRL_X, y, width) end
+local function TextBox(content, y, width) return Form.TextBox(content, CTRL_X, y, width) end
 
 -- A bordered multi-line text area (for notes) that wraps within its width.
 -- Spans from PAD to the content's right edge so it grows with the window.
@@ -212,18 +177,7 @@ local function BuildFrame()
     -- Attributes. May be empty on first run (no system imported yet); the
     -- NoSystem overlay covers the form and GetFrame rebuilds on system change.
     y = y - 10; Header(c, "ATTRIBUTES", y); y = y - 24
-    f.steppers, f.modText = {}, {}
-    for _, attr in ipairs(system.attributes or {}) do
-        Label(c, attr.name, PAD, y)
-        local st = ns.Widgets.Stepper(c, 96)
-        st:SetPoint("TOPLEFT", CTRL_X, y + 1)
-        f.steppers[attr.id] = st
-        local m = c:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-        m:SetPoint("TOPLEFT", CTRL_X + 104, y)
-        m:SetTextColor(UI.HEAD[1], UI.HEAD[2], UI.HEAD[3])
-        f.modText[attr.id] = m
-        adv()
-    end
+    y = Form.BuildAttributeRows(f, c, system, PAD, CTRL_X, y, ROW_H)
     f.pointsText = c:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     f.pointsText:SetPoint("TOPLEFT", PAD, y); adv()
 
@@ -330,68 +284,9 @@ local function BuildFrame()
         end)
     end
 
-    -- Field pickers. Each guards on f.char both at click time and again in the
-    -- apply callback: ns.Dialogs.Pick is not modal, so the character can be
-    -- deleted (or the roster switched) while a picker is open.
-    f.raceBtn:SetScript("OnClick", function()
-        if not f.char then return end
-        local items = {}
-        for _, r in ipairs(CE.Races(ns.GetSystem())) do items[#items + 1] = { id = r, name = r } end
-        if #items == 0 then
-            ns.Print("the loaded system defines no races - add a top-level `races` list or race lists on its racial traits.")
-            return
-        end
-        Pick(f, "Race", "Choose a race", items, 1, { f.char.race },
-            function(ids) if f.char then f.char.race = ids[1] end end)
-    end)
-    f.racialBtn:SetScript("OnClick", function()
-        if not f.char then return end
-        Pick(f, "Racial Trait", "Choose a racial trait (hover for details)", RacialItems(ns.GetSystem(), f.char.race), 1,
-            { f.char.racial_trait },
-            function(ids) if f.char then f.char.racial_trait = (ids[1] ~= "__none") and ids[1] or nil end end)
-    end)
-    f.originBtn:SetScript("OnClick", function()
-        if not f.char then return end
-        Pick(f, "Origin Traits", "Choose up to two (hover for details)", TraitItems(ns.GetSystem().origin_traits), 2,
-            f.char.origin_traits, function(ids) if f.char then f.char.origin_traits = ids end end)
-    end)
-    f.primaryBtn:SetScript("OnClick", function()
-        if not f.char then return end
-        Pick(f, "Primary Attribute", "Choose the primary attribute", AttrItems(ns.GetSystem()), 1,
-            { f.char.primary_attribute }, function(ids) if f.char then f.char.primary_attribute = ids[1] end end)
-    end)
-    -- AC/init pickers are restricted to the system's candidate lists when
-    -- declared (e.g. "Agility, Sense or Luck"); without one, any attribute.
-    f.acBtn:SetScript("OnClick", function()
-        if not f.char then return end
-        local allow = W.CandidateSet(ns.DerivedConfig().ac_attributes)
-        Pick(f, "AC Attribute", "Choose the attribute that governs AC", AttrItems(ns.GetSystem(), allow), 1,
-            { f.char.ac_attribute }, function(ids) if f.char then f.char.ac_attribute = ids[1] end end)
-    end)
-    f.initBtn:SetScript("OnClick", function()
-        if not f.char then return end
-        local allow = W.CandidateSet(ns.DerivedConfig().init_attributes)
-        Pick(f, "Initiative Attribute", "Choose the attribute that governs initiative", AttrItems(ns.GetSystem(), allow), 1,
-            { f.char.init_attribute }, function(ids) if f.char then f.char.init_attribute = ids[1] end end)
-    end)
-    f.skillsBtn:SetScript("OnClick", function()
-        if not f.char then return end
-        local items = ListItems(ns.GetSystem().skills)
-        Pick(f, "Accomplished Skills", "Mark accomplished skills", items, #items,
-            f.char.accomplished_skills, function(ids) if f.char then f.char.accomplished_skills = ids end end)
-    end)
-    f.weaponsBtn:SetScript("OnClick", function()
-        if not f.char then return end
-        local items = ListItems(ns.GetSystem().weapons)
-        Pick(f, "Accomplished Weapons", "Mark accomplished weapons", items, #items,
-            f.char.accomplished_weapons, function(ids) if f.char then f.char.accomplished_weapons = ids end end)
-    end)
-    f.savesBtn:SetScript("OnClick", function()
-        if not f.char then return end
-        Pick(f, "Accomplished Saves", "Primary save is auto; choose one more", SaveItems(ns.GetSystem(), f.char.primary_attribute),
-            #(ns.GetSystem().attributes or {}), f.char.accomplished_saves,
-            function(ids) if f.char then f.char.accomplished_saves = ids end end)
-    end)
+    -- Field pickers (race, traits, key attributes, proficiencies): the shared
+    -- form wires them, reading f.char live and refreshing via Changed afterward.
+    Form.WirePickers(f, function() return f.char end, function() Changed(f) end)
 
     -- Hover tooltips on the accomplished count buttons explaining the target.
     local function countTip(btn, build)
@@ -403,7 +298,6 @@ local function BuildFrame()
         end)
         btn:SetScript("OnLeave", GameTooltip_Hide)
     end
-    local function mod(sheet, id) for _, a in ipairs(sheet.attributes) do if a.id == id then return a.modifier end end return 0 end
     countTip(f.skillsBtn, function(tt, sheet)
         local tg = CE.AccomplishTargets(sheet)
         tt:AddLine("Accomplished Skills", UI.GOLD[1], UI.GOLD[2], UI.GOLD[3])
@@ -550,77 +444,25 @@ Refresh = function(self)
     self.titleFS:SetText("Editing: " .. (char.name or key or "?"))
 
     local sheet = ns.CharacterSheet.Compute(char, system)
+    Form.FillCommon(self, char, system, sheet, true)
+
+    -- Editor-only fields (the wizard has none of these).
     local function setBox(box, v) if not box:HasFocus() then box:SetText(v or "") end end
-    setBox(self.nameBox, char.name); setBox(self.playerBox, char.player)
-    setBox(self.quoteBox, char.quote); setBox(self.notesBox, char.notes)
+    setBox(self.notesBox, char.notes)
     self.hpBreakdown:SetText("")
     setBox(self.maxHpBox, tostring(char.max_hp or 0))
     setBox(self.maxManaBox, tostring(char.max_mana or 0))
-
-    self.raceBtn:SetText(char.race ~= "" and char.race or "(choose)")
     self.levelText:SetText(tostring(char.level or 1))
-
-    local modById = {}
-    for _, a in ipairs(sheet.attributes) do modById[a.id] = a end
-    for _, attr in ipairs(system.attributes or {}) do
-        local st = self.steppers[attr.id]
-        if st then
-            st:SetText(tostring((char.attributes or {})[attr.id] or 1))
-            local a = modById[attr.id]
-            -- Labelled so modifier and (trait-adjusted) total read apart.
-            self.modText[attr.id]:SetText(a and ("|cff9e998cmod|r " .. Signed(a.modifier)
-                .. (a.bonus ~= 0 and ("   |cff9e998ctotal|r " .. a.final) or "")) or "")
-        end
-    end
-
-    local used, avail = CE.AttributePoints(char, system)
-    local pc = (used == avail) and UI.GREEN or (used > avail and UI.RED or UI.HEAD)
-    self.pointsText:SetTextColor(pc[1], pc[2], pc[3])
-    self.pointsText:SetText(string.format("Attribute points: %d / %d", used, avail))
-
-    self.racialBtn:SetText(char.racial_trait and TraitName(system, "racial_traits", char.racial_trait) or "(none)")
-    local origins = {}
-    for _, id in ipairs(char.origin_traits or {}) do origins[#origins + 1] = TraitName(system, "origin_traits", id) end
-    self.originBtn:SetText(#origins > 0 and table.concat(origins, ", ") or "(none)")
-    self.primaryBtn:SetText(ns.AttrName(char.primary_attribute))
-    self.acBtn:SetText(W.AttrPickText(char.ac_attribute, sheet.derived.ac_attribute))
-    self.initBtn:SetText(W.AttrPickText(char.init_attribute, sheet.derived.init_attribute))
-
-    local tg = CE.AccomplishTargets(sheet)
-    self.skillsBtn:SetText(string.format("%d / %d", #(char.accomplished_skills or {}), tg.skills))
-    self.weaponsBtn:SetText(string.format("%d / %d", #(char.accomplished_weapons or {}), tg.weapons))
-    self.savesBtn:SetText(string.format("%d / %d", #(char.accomplished_saves or {}), tg.saves))
 
     local warns = CE.Warnings(char, system)
     if self.note then table.insert(warns, 1, "|cff66d966" .. self.note .. "|r"); self.note = nil end
     self.warnText:SetText(#warns > 0 and table.concat(warns, "\n") or "|cff66d966No warnings.|r")
 end
 
--- The editor's attribute rows are laid out from the system loaded at build
--- time, so a frame built for one system cannot show another. The signature
--- detects a change in the attribute set so the frame is rebuilt for it.
-local function AttrSignature()
-    local ids = {}
-    for _, a in ipairs(ns.GetSystem().attributes or {}) do ids[#ids + 1] = tostring(a.id) end
-    return table.concat(ids, "\31")
-end
-
--- Returns the singleton frame, rebuilding it when the system's attribute set
--- changed since it was built (WoW frames cannot be destroyed; the stale one is
--- hidden and orphaned).
+-- Returns the singleton frame, rebuilt by the shared helper when the system's
+-- attribute set changes (its rows are laid out from the system at build time).
 local function GetFrame()
-    local sig = AttrSignature()
-    local f = EditorUI.frame
-    if f and f.attrSignature ~= sig then
-        f:Hide()
-        f:SetParent(nil)
-        EditorUI.frame = nil
-    end
-    if not EditorUI.frame then
-        EditorUI.frame = BuildFrame()
-        EditorUI.frame.attrSignature = sig
-    end
-    return EditorUI.frame
+    return ns.UI.RebuildableFrame(EditorUI, BuildFrame, Form.AttrSignature)
 end
 
 function EditorUI.Open()

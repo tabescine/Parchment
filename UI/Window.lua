@@ -7,8 +7,8 @@
 -- behaviours common to every Parchment window.
 --
 -- Reads from: ns.Addon.db (for geometry persistence, keyed by opts.dbKey).
--- Exposes on ns.UI: .CreateWindow, .Signed, .Debounce, .SetPlaceholder, and the
---   shared palette constants.
+-- Exposes on ns.UI: .CreateWindow, .Signed, .Debounce, .RebuildableFrame,
+--   .SetPlaceholder, and the shared palette constants.
 
 local ADDON, ns = ...
 
@@ -27,6 +27,26 @@ UI.HILITE = { 0.85, 0.72, 0.45, 0.18 }
 -- Formats a number with an explicit sign ("+2", "-1", "+0").
 function UI.Signed(n)
     return (n >= 0 and "+" or "") .. n
+end
+
+-- Returns holder.frame, rebuilding it when signatureFn() differs from the value
+-- captured at the last build. WoW cannot destroy a frame laid out for one system
+-- when the layout-defining set (e.g. attributes) changes, so the stale frame is
+-- hidden and orphaned and a fresh one is built. holder is the module table whose
+-- `.frame` field holds the singleton (editor and wizard share this logic).
+function UI.RebuildableFrame(holder, builder, signatureFn)
+    local sig = signatureFn()
+    local f = holder.frame
+    if f and f.attrSignature ~= sig then
+        f:Hide()
+        f:SetParent(nil)
+        holder.frame = nil
+    end
+    if not holder.frame then
+        holder.frame = builder()
+        holder.frame.attrSignature = sig
+    end
+    return holder.frame
 end
 
 -- Wraps fn in a debouncer: each call cancels any pending run and reschedules it

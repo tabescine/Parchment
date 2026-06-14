@@ -17,6 +17,7 @@ local MANIFEST = {
     "test_initiative.lua",
     "test_widgets.lua",
     "test_widgets_debounce.lua",
+    "test_characterform.lua",
     "test_importexport.lua",
     "test_comm.lua",
     "test_comm_trust.lua",
