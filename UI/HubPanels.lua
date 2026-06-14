@@ -5,7 +5,9 @@
 -- (always preserving the outgoing one), X deletes via the shared confirm
 -- popup, footer buttons share the system with the group or jump to Import /
 -- Export. The Cached Sheets panel lists received character sheets: click to
--- view one read-only, Clear all drops the cache.
+-- view one read-only, a search box filters by character/player name, each row
+-- has a refresh button (re-request a live copy) and an X (remove via the shared
+-- confirm) and shows its staleness, and Clear all drops the whole cache.
 --
 -- Reads from: ns.UI, ns.HubUI, ns.Systems, ns.Sharing, ns.GetSystem,
 --   ns.ShareSystem, ns.CharacterSheetUI, ns.OpenModule, ns.Print.
@@ -45,14 +47,36 @@ local function CreateListRow(content, onDelete)
     return row
 end
 
--- Shared scroll-list scaffolding for both panels.
-local function BuildList(panel, scrollName, hintText)
+-- Shared scroll-list scaffolding for both panels. When onSearch is given, a
+-- debounced search box sits in the header (top-right) and the hint shrinks to
+-- its left; onSearch(query) fires only when the text actually changed.
+local function BuildList(panel, scrollName, hintText, onSearch)
     local hint = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     hint:SetPoint("TOPLEFT", 4, -4)
-    hint:SetPoint("RIGHT", panel, "RIGHT", -4, 0)
     hint:SetJustifyH("LEFT")
     hint:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
     hint:SetText(hintText)
+
+    if onSearch then
+        local box = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
+        box:SetSize(120, 18)
+        box:SetPoint("TOPRIGHT", -10, -4)
+        box:SetAutoFocus(false)
+        box:SetScript("OnEscapePressed", function(b) b:SetText(""); b:ClearFocus() end)
+        box:SetScript("OnEnterPressed", function(b) b:ClearFocus() end)
+        local last = ""
+        local run = UI.Debounce(0.15, function() onSearch(box:GetText()) end)
+        box:SetScript("OnTextChanged", function(b, user)
+            if not user or b:GetText() == last then return end
+            last = b:GetText()
+            run()
+        end)
+        UI.SetPlaceholder(box, "Search")
+        hint:SetPoint("RIGHT", box, "LEFT", -8, 0)
+        panel.searchBox = box
+    else
+        hint:SetPoint("RIGHT", panel, "RIGHT", -4, 0)
+    end
 
     local scroll = CreateFrame("ScrollFrame", scrollName, panel, "UIPanelScrollFrameTemplate")
     scroll:SetPoint("TOPLEFT", 0, -24)
@@ -147,36 +171,78 @@ ns.HubUI.RegisterPanel({
 
 -- Cached Sheets panel ---------------------------------------------------------
 
+-- Human-readable staleness from an entry's stored epoch time ("just now",
+-- "5m ago", "2h ago", "3d ago"); empty when no timestamp was recorded.
+local function AgeText(t)
+    t = tonumber(t)
+    if not t or t == 0 then return "" end
+    local secs = ((time and time()) or 0) - t
+    if secs < 60 then return "cached just now" end
+    if secs < 3600 then return "cached " .. math.floor(secs / 60) .. "m ago" end
+    if secs < 86400 then return "cached " .. math.floor(secs / 3600) .. "h ago" end
+    return "cached " .. math.floor(secs / 86400) .. "d ago"
+end
+
+-- A cached-sheet row: the shared list row plus a per-row refresh button (left of
+-- the delete X) that re-requests a live copy.
+local function MakeCacheRow(content)
+    local row = CreateListRow(content, function(r)
+        if r.cacheKey then ns.Sharing.ConfirmRemoveCached(r.cacheKey, r.cacheName) end
+    end)
+    local refresh = CreateFrame("Button", nil, row)
+    refresh:SetSize(16, 16)
+    refresh:SetPoint("RIGHT", -28, 0)
+    refresh:SetNormalTexture("Interface\\Buttons\\UI-RefreshButton")
+    refresh:SetHighlightTexture("Interface\\Buttons\\UI-RefreshButton")
+    refresh:SetScript("OnClick", function()
+        if row.cacheKey then ns.Sharing.Request(row.cacheKey) end
+    end)
+    return row
+end
+
 local function RefreshCached(panel)
-    local list = {}
-    for key, entry in pairs(ns.Sharing.GetCache()) do
-        list[#list + 1] = { key = key, entry = entry }
+    local query = (panel.cacheQuery or ""):lower()
+    local cache = ns.Sharing.GetCache()
+    local total, list = 0, {}
+    for key, entry in pairs(cache) do
+        total = total + 1
+        local hay = ((entry.name or "") .. " " .. key):lower()
+        if query == "" or hay:find(query, 1, true) then
+            list[#list + 1] = { key = key, entry = entry }
+        end
     end
     table.sort(list, function(a, b) return (a.entry.name or a.key) < (b.entry.name or b.key) end)
 
     if #list == 0 then
-        ns.UI.Empty(panel, "No cached sheets yet.\n\nView another player's sheet to cache it"
-            .. " (right-click them, or /pmt view <name>).")
+        local msg = total == 0
+            and "No cached sheets yet.\n\nView another player's sheet to cache it"
+                .. " (right-click them, or /pmt view <name>)."
+            or ("No cached sheets match \"" .. (panel.cacheQuery or "") .. "\".")
+        ns.UI.Empty(panel, msg)
         panel.content:SetHeight(10)
         return
     end
     ns.UI.HideEmpty(panel)
 
     PlaceRows(panel.content, list, function(row, item)
+        row.cacheKey, row.cacheName = item.key, item.entry.name
         row.name:SetText(item.entry.name or "?")
         row.name:SetTextColor(UI.TEXT[1], UI.TEXT[2], UI.TEXT[3])
-        row.meta:SetText("played by " .. item.key)
+        local age = AgeText(item.entry.time)
+        local suffix = age ~= "" and ("   |cff8a857a" .. age .. "|r") or ""
+        row.meta:SetText("played by " .. item.key .. suffix)
         row:SetScript("OnClick", function()
             if ns.CharacterSheetUI then
                 ns.CharacterSheetUI.ShowCharacter(item.entry.char, item.key .. " (cached)")
             end
         end)
-    end, function(content) return CreateListRow(content) end)
+    end, MakeCacheRow)
 end
 
 local function BuildCached(panel)
     BuildList(panel, "ParchmentHubCacheScroll",
-        "Click a sheet to view it read-only (works offline).")
+        "Click to view (offline). Refresh re-requests a live copy; X removes.",
+        function(query) panel.cacheQuery = query; RefreshCached(panel) end)
     FooterButton(panel, "Clear all", 90, 0, function()
         ns.Sharing.ClearCache()
         ns.HubUI.RefreshIfShown("cached")

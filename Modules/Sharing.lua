@@ -12,7 +12,8 @@
 --
 -- Reads from: ns.Comm (send/normalize), ns.Addon (event registration),
 --   ns.GetActiveCharacter, ns.Schema, ns.JSON, ns.CharacterSheetUI, ns.Print.
--- Exposes on ns.Sharing: Request, GetCache, OpenCache, ClearCache.
+-- Exposes on ns.Sharing: Request, GetCache, OpenCache, RemoveCached,
+--   ConfirmRemoveCached, ClearCache.
 
 local ADDON, ns = ...
 
@@ -209,6 +210,34 @@ end
 -- Opens the cached-sheets browser (the hub's Cached Sheets panel).
 function S.OpenCache()
     if ns.HubUI then ns.HubUI.Open("cached") end
+end
+
+-- Removes one cached sheet by its exact key. Returns true when one was removed.
+function S.RemoveCached(key)
+    local cache = Cache()
+    if cache[key] == nil then return false end
+    cache[key] = nil
+    return true
+end
+
+-- Confirm dialog for removing a single cached sheet. Light by design: a cached
+-- sheet is just a copy and can be re-requested, so this only guards a misclick.
+StaticPopupDialogs["PARCHMENT_REMOVE_CACHED"] = {
+    text = "Remove the cached sheet for %s?\n\nYou can view it again by requesting it.",
+    button1 = DELETE or "Remove",
+    button2 = CANCEL,
+    OnAccept = function(_, data)
+        if data and S.RemoveCached(data.key) and ns.HubUI then
+            ns.HubUI.RefreshIfShown("cached")
+        end
+    end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
+-- Prompts to remove a cached sheet; removal is keyed by the exact `key`, while
+-- `name` (the character name) is what the prompt shows.
+function S.ConfirmRemoveCached(key, name)
+    StaticPopup_Show("PARCHMENT_REMOVE_CACHED", name or key, nil, { key = key })
 end
 
 -- Clears all cached sheets.

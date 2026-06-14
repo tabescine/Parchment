@@ -4,6 +4,9 @@
 local T = dofile((TEST_ROOT or "") .. "Tests/wow_stubs.lua")
 
 Menu = nil                                  -- skip the right-click menu registration
+StaticPopupDialogs = {}                       -- Sharing registers a remove-cached confirm
+StaticPopup_Show = function() end
+CANCEL, DELETE = "Cancel", "Delete"
 UnitName = function() return "Me" end
 IsInGroup = function() return false end      -- so requests whisper (no group scan)
 IsInRaid = function() return false end
@@ -57,3 +60,12 @@ for _ in pairs(S.GetCache()) do n = n + 1 end
 assert(n == 50, "the cache must cap at MAX_ENTRIES, got " .. n)
 assert(S.GetCache()["Bob"] == nil, "the oldest entry must be evicted")
 assert(S.GetCache()["P51"], "the newest entry must remain")
+
+-- Per-entry removal drops exactly one entry by its exact key.
+assert(S.RemoveCached("P51") == true, "removing a present key should report success")
+assert(S.GetCache()["P51"] == nil, "the removed entry must be gone")
+assert(S.GetCache()["P50"], "removal must not touch other entries")
+assert(S.RemoveCached("P51") == false, "removing an absent key should report no-op")
+local m = 0
+for _ in pairs(S.GetCache()) do m = m + 1 end
+assert(m == 49, "exactly one entry should have been removed, have " .. m)
