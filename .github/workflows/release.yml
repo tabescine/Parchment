@@ -58,12 +58,21 @@ jobs:
           zip -r -X "Parchment-${VERSION}.zip" Parchment
           zipinfo -1 "Parchment-${VERSION}.zip"
 
-      - name: Create the GitHub release
+      - name: Create the GitHub release (or attach to an existing one)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          gh release create "${GITHUB_REF_NAME}" \
-            "dist/Parchment-${VERSION}.zip" \
-            --title "Parchment ${VERSION}" \
-            --generate-notes
+          # Creating a release in the GitHub UI also creates the tag, so this
+          # workflow may fire when the release already exists. In that case
+          # attach the zip to it (keeping its hand-written notes) instead of
+          # failing on the name collision; --clobber makes re-runs idempotent.
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" \
+              "dist/Parchment-${VERSION}.zip" --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              "dist/Parchment-${VERSION}.zip" \
+              --title "Parchment ${VERSION}" \
+              --generate-notes
+          fi
