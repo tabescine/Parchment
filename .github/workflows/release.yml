@@ -1,0 +1,69 @@
+# Parchment release: pushing a tag like v0.2.0 builds and publishes a GitHub
+# release with an AddOns-ready zip. The zip contains a top-level Parchment/
+# folder holding ONLY what the game loads (.toc, .lua, Libs/, embeds.xml) plus
+# LICENSE - no Tests/, docs, or CI config. Tools/ (the converter scripts) are
+# deliberately not shipped: they are opt-in, downloadable from the repo.
+#
+# The release is gated: the test suite must pass, and the tag must match the
+# .toc's "## Version:" line, so a stale version string can never ship.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write   # gh release create
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Lua 5.1
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.1
+
+      - name: Syntax-check all Lua files (except vendored Libs)
+        run: |
+          find . -name '*.lua' -not -path './Libs/*' -print0 \
+            | xargs -0 -n1 luac5.1 -p
+
+      - name: Run tests
+        run: lua5.1 Tests/run.lua
+
+      - name: Verify the tag matches the .toc version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if ! grep -q "^## Version: ${VERSION}$" Parchment.toc; then
+            echo "Tag ${GITHUB_REF_NAME} does not match Parchment.toc:" >&2
+            grep '^## Version:' Parchment.toc >&2
+            exit 1
+          fi
+
+      - name: Package the addon zip
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Same exclude list as the local deploy (CLAUDE.md): ship only what
+          # the game loads, plus LICENSE.
+          mkdir -p dist/Parchment
+          rsync -a \
+            --exclude=.git --exclude=.github --exclude='*.md' \
+            --exclude=Tests --exclude=Tools --exclude=.luacheckrc \
+            --exclude=dist \
+            ./ dist/Parchment/
+          cd dist
+          zip -r -X "Parchment-${VERSION}.zip" Parchment
+          zipinfo -1 "Parchment-${VERSION}.zip"
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release create "${GITHUB_REF_NAME}" \
+            "dist/Parchment-${VERSION}.zip" \
+            --title "Parchment ${VERSION}" \
+            --generate-notes
