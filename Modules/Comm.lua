@@ -202,7 +202,7 @@ local function GroupChannel()
 end
 
 -- Wire encoding. AceSerializer produces a printable string the addon channel
--- accepts as-is; a big system (the aias ruleset serializes to ~100 KB) then
+-- accepts as-is; a big system (a full ruleset can serialize to ~100 KB) then
 -- chunks into hundreds of throttled packets and takes minutes to arrive,
 -- stalling every other message behind it. So we DEFLATE-compress the payload
 -- (LibDeflate, ~5x on this data) when it is large enough to pay for itself.

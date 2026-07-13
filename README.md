@@ -140,8 +140,8 @@ by hand.
 Parchment is released under the [MIT License](LICENSE).
 
 Bundled third-party libraries in `Libs/` (Ace3, LibStub, CallbackHandler,
-LibDataBroker, LibDBIcon) remain under their own licenses - see each library's
-directory.
+LibDataBroker, LibDBIcon, LibDeflate) remain under their own licenses - see
+each library's directory and `Libs/README.md`.
 
 The sample system and character in `Tools/examples/` are original,
 public-domain demo data: use them however you like.
