@@ -80,7 +80,9 @@ local function MajorMinor(v)
 end
 
 -- True when a sender's version can sync with ours: same major, and - while
--- the major is 0 - the same minor too.
+-- the major is 0 - the same minor too. NOTE: this is a compatibility gate, not
+-- a resource guard - env.ver lives inside the (compressed) body, so it runs
+-- only after full decode; the MAX_WIRE/MAX_DECOMPRESSED caps bound decode cost.
 local function Compatible(theirs)
     local tMaj, tMin = MajorMinor(theirs)
     local oMaj, oMin = MajorMinor(VERSION)
@@ -214,6 +216,18 @@ local Deflate = LibStub and LibStub("LibDeflate", true)
 local COMPRESS_MIN = 600   -- below this, deflate + encode rarely nets a saving
 local BULK_MIN = 2000      -- encoded bodies larger than this go out at BULK prio
 
+-- Decompression-bomb guards. Decode necessarily runs before the version, trust,
+-- and rate gates (the envelope's `ver`/`t` live inside the compressed body), so
+-- those gates cannot bound decode cost - these size caps do. MAX_WIRE rejects an
+-- oversized packed body before it is decompressed at all; MAX_DECOMPRESSED
+-- rejects a body that expands past any legitimate payload before it is
+-- deserialized into a table. The largest real message is a full system
+-- (~100 KB raw, ~25 KB on the wire) or a 256 KB shared character; both sit far
+-- under these ceilings, so a peer cannot make us expand a tiny body into
+-- hundreds of MB on the main thread.
+local MAX_WIRE = 128 * 1024
+local MAX_DECOMPRESSED = 1024 * 1024
+
 -- Serializes and (when worthwhile) compresses an envelope. Returns the wire
 -- string and the AceComm priority to send it at: a large body uses "BULK" so
 -- it cannot starve the small, latency-sensitive traffic (vitals, sheet
@@ -235,14 +249,14 @@ end
 -- under pcall: a hostile or corrupt body that makes LibDeflate or the serializer
 -- throw becomes a quiet drop, never an error surfaced from AceComm's dispatch.
 local function DecodeUnprotected(text)
-    if type(text) ~= "string" or #text < 1 then return false end
+    if type(text) ~= "string" or #text < 1 or #text > MAX_WIRE then return false end
     local marker, body = text:sub(1, 1), text:sub(2)
     if marker == "1" then
         if not Deflate then return false end
         local packed = Deflate:DecodeForWoWAddonChannel(body)
         if not packed then return false end
         local raw = Deflate:DecompressDeflate(packed)
-        if not raw then return false end
+        if not raw or #raw > MAX_DECOMPRESSED then return false end
         return ns.Addon:Deserialize(raw)
     elseif marker == "0" then
         return ns.Addon:Deserialize(body)

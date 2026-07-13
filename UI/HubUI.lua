@@ -169,6 +169,13 @@ local function CreateCharRow(content)
     end)
     del:SetScript("OnLeave", GameTooltip_Hide)
 
+    -- Right edges (short of the X) so a long name/meta truncates instead of
+    -- rendering underneath the button.
+    row.name:SetPoint("RIGHT", del, "LEFT", -4, 0)
+    row.name:SetWordWrap(false)
+    row.meta:SetPoint("RIGHT", del, "LEFT", -4, 0)
+    row.meta:SetWordWrap(false)
+
     row:SetScript("OnClick", function(self)
         if self.key and ns.SetActiveCharacter(self.key) then
             ActiveChanged()

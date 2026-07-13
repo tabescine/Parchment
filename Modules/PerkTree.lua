@@ -246,8 +246,16 @@ end
 
 -- Returns invested, available perk points. One point is granted per level.
 -- Both selected sphere perks and DM-granted homebrew perks count as invested.
+-- Only ids that resolve in the active system count: after a system switch,
+-- char.perks can hold stale ids the player can neither see nor deselect in
+-- the tree UI, and counting those would warn about an overspend the player
+-- cannot fix (Compute already skips them for effects/display).
 function PT.Points(char)
-    return #(char.perks or {}) + #(char.custom_perks or {}), (char.level or 1)
+    local invested = 0
+    for _, id in ipairs(char.perks or {}) do
+        if FindPerkAnywhere(id) then invested = invested + 1 end
+    end
+    return invested + #(char.custom_perks or {}), (char.level or 1)
 end
 
 -- Searches trees for perks whose name or description contains the query

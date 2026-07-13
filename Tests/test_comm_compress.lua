@@ -88,4 +88,20 @@ assert(got[1][1].id == "perk_1" and got[1][400].name == "Perk Number 400", "payl
 wire.receive("Parchment", "1@@@not-valid-encoded-deflate@@@", "PARTY", "DungeonMaster-Realm")
 assert(#got == 1, "corrupt compressed body must be ignored")
 
+-- Decompression bomb: a tiny wire body that expands past the size ceiling must be
+-- dropped BEFORE it is deserialized into state - decode runs ahead of the version
+-- and trust gates, so this cap is the only thing bounding the cost. The payload is
+-- a VALID envelope (it would dispatch if it fit), so only the size cap can stop it.
+local huge = {}
+for i = 1, 10000 do
+    huge[i] = { id = "perk_" .. i, name = "Perk Number " .. i,
+        description = "A lengthy and repetitive description of a perk that adds modifiers to skills and saves." }
+end
+local hugeRaw = JSON.encode({ t = "SYSTEM", v = huge, ver = "0.2.0" })
+assert(#hugeRaw > 1024 * 1024, "the bomb must decompress past the ceiling")
+local bomb = "1" .. Deflate:EncodeForWoWAddonChannel(Deflate:CompressDeflate(hugeRaw))
+assert(#bomb < 128 * 1024, "the compressed bomb should be tiny on the wire")
+wire.receive("Parchment", bomb, "PARTY", "DungeonMaster-Realm")
+assert(#got == 1, "a valid body expanding past the decompressed ceiling must still be dropped")
+
 _G.LibStub = nil

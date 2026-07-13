@@ -33,6 +33,13 @@ local IT = ns.InitiativeTracker
 -- Bounds for wire-sourced player submissions (init and the tiebreaker stat).
 local SUBMIT_MIN, SUBMIT_MAX = -999, 999
 
+-- Length cap for combatant names. Numeric wire fields are clamped; names need
+-- the same treatment or a peer can persist a multi-KB string into the
+-- SavedVariables via INIT/INITSUBMIT. Applied in Add and SetState so local and
+-- wire paths hold the same line. (A multi-byte char may be cut mid-sequence -
+-- cosmetic at worst, and only on names this long.)
+local MAX_NAME = 64
+
 -- Returns the persisted initiative state, creating the default on first use.
 local function State()
     local db = ns.Addon.db
@@ -103,7 +110,7 @@ function IT.SetState(incoming)
     for _, c in ipairs(type(incoming.combatants) == "table" and incoming.combatants or {}) do
         if type(c) == "table" and type(c.name) == "string" and c.name ~= "" then
             combatants[#combatants + 1] = {
-                name = c.name,
+                name = string.sub(c.name, 1, MAX_NAME),
                 init = tonumber(c.init) or 0,
                 isNPC = c.isNPC and true or false,
             }
@@ -188,7 +195,7 @@ end
 -- over the wire via INITSUBMIT.
 function IT.Add(name, init, isNPC, tb)
     if type(name) ~= "string" then return nil end
-    name = strtrim(name)
+    name = string.sub(strtrim(name), 1, MAX_NAME)
     if name == "" then return nil end
     if not isNPC and IT.HasPlayer(name) then
         return nil, name .. " is already in the turn order."
@@ -281,11 +288,14 @@ end
 function IT.Remove(index)
     local state = State()
     if not state.combatants[index] then return end
+    -- current == 0 is the pre-combat state (nobody's turn yet); a removal must
+    -- not promote it to an active turn, only keep an already-running pointer valid.
+    local running = state.current >= 1
     table.remove(state.combatants, index)
     if index < state.current then state.current = state.current - 1 end
     local n = #state.combatants
     if state.current > n then state.current = n end
-    if state.current < 1 and n > 0 then state.current = 1 end
+    if running and state.current < 1 and n > 0 then state.current = 1 end
 end
 
 -- Sets the current turn to a specific index.

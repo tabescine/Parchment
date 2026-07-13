@@ -149,8 +149,15 @@ function Dialogs.Pick(opts)
     f.items = opts.items or {}
     f.max = opts.max or 1
     f.onConfirm = opts.onConfirm
+    -- Seed the pre-selected ids, but never past the cap: an over-cap character
+    -- (imports allow one - CE.Warnings only warns) must not open at "3 / 2" and
+    -- confirm all three, which would round-trip the over-cap state through the
+    -- very dialog whose job is to enforce the cap.
     f.sel = {}
-    for _, id in ipairs(opts.selected or {}) do f.sel[#f.sel + 1] = id end
+    for _, id in ipairs(opts.selected or {}) do
+        if #f.sel >= f.max then break end
+        f.sel[#f.sel + 1] = id
+    end
     RenderRows(f)
     f:Show()
     f:Raise()

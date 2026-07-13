@@ -235,10 +235,14 @@ function CharacterSheet.Compute(char, system)
                     if choice.apply == "accomplished" then
                         extraSkills[cid] = true
                     elseif choice.apply == "double_accomplishment" then
-                        choiceEffects[#choiceEffects + 1] = { { type = "skill", skill = cid, value = accomplishment }, perk.name }
+                        choiceEffects[#choiceEffects + 1] =
+                            { { type = "skill", skill = cid, value = accomplishment }, perk.name }
                     else
                         local n = tonumber(tostring(choice.apply):match("skill_bonus:(%d+)"))
-                        if n then choiceEffects[#choiceEffects + 1] = { { type = "skill", skill = cid, value = n }, perk.name } end
+                        if n then
+                            choiceEffects[#choiceEffects + 1] =
+                                { { type = "skill", skill = cid, value = n }, perk.name }
+                        end
                     end
                 elseif choice.kind == "weapon" then
                     names[#names + 1] = NameInList(system.weapons, cid)
@@ -260,13 +264,12 @@ function CharacterSheet.Compute(char, system)
     for _, ce in ipairs(choiceEffects) do ApplyEffect(fx, ce[1], ce[2]) end
 
     -- Attributes: base + trait bonus + global all-attribute adjustment.
-    local final, modifier = {}, {}
+    local modifier = {}
     local attributes = {}
     for _, attr in ipairs(system.attributes or {}) do
         local base = (char.attributes or {})[attr.id] or 0
         local bonus = (fx.attr[attr.id] or 0) + fx.allAttr
         local value = base + bonus
-        final[attr.id] = value
         modifier[attr.id] = ns.GetModifier(value)
         attributes[#attributes + 1] = {
             id = attr.id, name = attr.name,
@@ -372,12 +375,23 @@ function CharacterSheet.Compute(char, system)
     local moveMod = cfg.movement_attribute and (modifier[cfg.movement_attribute] or 0) or 0
     local hitDieMod = cfg.hit_die_attribute and (modifier[cfg.hit_die_attribute] or 0) or 0
 
+    -- Stored max mana wins when set; otherwise the system's mana formula. This is
+    -- the fx-free base (trait/perk effects are added as `mana.max` in derived).
+    local manaBase = char.max_mana or math.max(0, cfg.mana_multiplier * spellMod)
+
     local derived = {
         accomplishment = accomplishment,
         primary_attribute = primary,
         hit_dice = level .. ns.GetHitDie(hitDieMod),
         hp = { current = char.current_hp, max = (char.max_hp or 0) + fx.maxHP, temp = char.temp_hp },
-        mana = { current = char.current_mana, max = (char.max_mana or math.max(0, cfg.mana_multiplier * spellMod)) + fx.maxMana },
+        -- `base` is the stored (fx-free) maximum; `max` adds the live trait/perk
+        -- effect on top. Creation persists `base`, never `max`, so an effect is
+        -- not baked into the stored value and then re-added on every Compute.
+        mana = {
+            current = char.current_mana,
+            base = manaBase,
+            max = manaBase + fx.maxMana,
+        },
         ac = cfg.ac_base + acMod + fx.ac,
         ac_attribute = acAttr,       -- the EFFECTIVE attribute (pick or best candidate)
         initiative = initMod + fx.initiative,

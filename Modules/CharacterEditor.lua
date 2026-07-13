@@ -10,7 +10,7 @@
 -- Reads from: ns.CharacterSheet.Compute, ns.Schema, ns.PerkTree, ns.GetModifier,
 --   ns.GetHitDie, and the character data API (Get/SetCharacter(s),
 --   SetActiveCharacter).
--- Exposes on ns.CharacterEditor: NewBlank, InitResources, Races,
+-- Exposes on ns.CharacterEditor: NewBlank, HitDieSize, InitResources, Races,
 --   AttributePoints, AccomplishTargets, AccomplishTargetDesc, LevelUp,
 --   LevelDown, Warnings, SaveNew, Delete.
 
@@ -70,6 +70,13 @@ function CE.NewBlank()
     }
 end
 
+-- The die size of a hit-dice string ("3d8" -> 8), defaulting to 6 when it does
+-- not parse. The one shared parse - the editor UI's per-level HP math uses it
+-- too, so the two can never drift.
+function CE.HitDieSize(hitDice)
+    return tonumber(tostring(hitDice):match("d(%d+)")) or 6
+end
+
 -- Sets the level-1 starting HP and Mana from the character's stats: HP is the
 -- maximum of the hit die + 5; Mana is the computed maximum from the system's
 -- derived_stats config. Called when a new character is finished.
@@ -78,10 +85,13 @@ function CE.InitResources(char, system)
     local sheet = ns.CharacterSheet.Compute(char, system)
     if not sheet then return end
     char.hit_dice = sheet.derived.hit_dice
-    local die = tonumber(tostring(sheet.derived.hit_dice):match("d(%d+)")) or 6
+    local die = CE.HitDieSize(sheet.derived.hit_dice)
     char.max_hp = die + 5
     char.current_hp = char.max_hp
-    char.max_mana = sheet.derived.mana.max or 0
+    -- Store the fx-free base, not the effect-inclusive max: Compute re-adds trait
+    -- and perk mana effects on every call, so persisting the max would double-count
+    -- them (a creation-time +5 mana trait would grant +10 forever).
+    char.max_mana = sheet.derived.mana.base or 0
     char.current_mana = char.max_mana
 end
 
@@ -285,11 +295,7 @@ function CE.SaveNew(key, char)
     ns.SetActiveCharacter(key)
 end
 
--- Deletes a character by key, re-pointing the active character if needed.
+-- Deletes a character by key (Core re-points the active character if needed).
 function CE.Delete(key)
-    local chars = ns.GetCharacters()
-    chars[key] = nil
-    if ns.Addon.db.global.activeCharacter == key then
-        ns.Addon.db.global.activeCharacter = next(chars)
-    end
+    ns.DeleteCharacter(key)
 end

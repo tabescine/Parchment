@@ -222,28 +222,21 @@ local function Paragraph(content, title, body, color)
     content.y = content.y - fs:GetStringHeight() - 6
 end
 
--- Renders the computed sheet into the body. Called on open and after edits.
-local function RenderBody(self)
-    local content = self.content
-    CanvasReset(content)
-    local sheet = self.sheet
+-- Section renderers. Each draws one block of the sheet into the body canvas,
+-- advancing content.y, and is called in order by RenderBody. They share a small
+-- ctx built once per render: modById (attribute entry by id), the accomplishment
+-- bonus, viewChar (set when showing a read-only received sheet), and rollSpec -
+-- which yields a click-to-roll spec for the own character and nil for a viewed
+-- one (its modifiers are not yours to roll).
 
-    -- Click-to-roll specs. Only for the own character - a viewed (received)
-    -- sheet is read-only and its modifiers are not yours to roll.
-    local function rollSpec(label, mod)
-        if self.viewChar then return nil end
-        return { label = label, modifier = mod or 0, who = sheet.name }
-    end
-
-    -- Derivation tooltips for the overview. The effect shares fall out as
-    -- differences from the structural parts, so the tooltips are arithmetic
-    -- on the displayed numbers and cannot drift from them.
+-- Overview: level, hit dice, and the derived stats. The effect shares fall out
+-- as differences from the structural parts, so the tooltips are arithmetic on
+-- the displayed numbers and cannot drift from them.
+local function RenderOverview(content, sheet, ctx)
     local d = sheet.derived
     local cfg = ns.DerivedConfig()
-    local ovById = {}
-    for _, a in ipairs(sheet.attributes) do ovById[a.id] = a end
-    local function aName(id) return id and ovById[id] and ovById[id].name or id or "(none)" end
-    local function aMod(id) return id and ovById[id] and ovById[id].modifier or 0 end
+    local function aName(id) return id and ctx.modById[id] and ctx.modById[id].name or id or "(none)" end
+    local function aMod(id) return id and ctx.modById[id] and ctx.modById[id].modifier or 0 end
     local function fxTerm(x) return x ~= 0 and (" " .. Signed(x) .. " effects") or "" end
     local function Tip(title, line)
         return function(tt)
@@ -267,7 +260,7 @@ local function RenderBody(self)
     Row(content, "Initiative", Signed(d.initiative), 0, C_GOLD, Tip("Initiative",
         aName(d.init_attribute) .. " modifier " .. Signed(aMod(d.init_attribute))
         .. fxTerm(d.initiative - aMod(d.init_attribute))),
-        (not self.viewChar) and {
+        (not ctx.viewChar) and {
             label = "Initiative", modifier = d.initiative, who = sheet.name,
             hint = "Click: roll initiative and join the combat tracker",
             click = function() if ns.InitiativeUI then ns.InitiativeUI.AddSelf() end end,
@@ -295,12 +288,13 @@ local function RenderBody(self)
     if d.attack_modifier ~= 0 then
         Row(content, "Global Attack Modifier", Signed(d.attack_modifier), 0, C_DIM)
     end
+end
 
-    -- Attributes.
-    -- Attributes render as two right-aligned columns (total | mod) under dim
-    -- column heads, so the numbers line up down the sheet. The total keeps
-    -- its trait breakdown inline, dimmed ("8 +1 =  9"); the modifier is gold
-    -- because it is the number a row click rolls with.
+-- Attributes render as two right-aligned columns (total | mod) under dim column
+-- heads, so the numbers line up down the sheet. The total keeps its trait
+-- breakdown inline, dimmed ("8 +1 =  9"); the modifier is gold because it is the
+-- number a row click rolls with.
+local function RenderAttributes(content, sheet, ctx)
     Header(content, "ATTRIBUTES")
     local MOD_X, TOTAL_X = PAD, PAD + 48   -- column right edges, from the right
     local totalHead = Acquire(content, "GameFontHighlightSmall")
@@ -314,7 +308,7 @@ local function RenderBody(self)
     content.y = content.y - 14
     for _, a in ipairs(sheet.attributes) do
         local rowY = content.y
-        Row(content, a.name, "", 0, nil, nil, rollSpec(a.name .. " check", a.modifier))
+        Row(content, a.name, "", 0, nil, nil, ctx.rollSpec(a.name .. " check", a.modifier))
         local total = Acquire(content, "GameFontHighlightSmall")
         total:SetPoint("TOPRIGHT", content, "TOPRIGHT", -TOTAL_X, rowY)
         total:SetTextColor(C_TEXT[1], C_TEXT[2], C_TEXT[3])
@@ -329,15 +323,15 @@ local function RenderBody(self)
             Row(content, "", table.concat(a.sources, ", "), INDENT, C_DIM)
         end
     end
+end
 
-
-    -- Skills and saves, grouped under each attribute's saving throw. Each row
-    -- carries a hover tooltip breaking down how its total is reached.
+-- Skills and saves, grouped under each attribute's saving throw. Each row
+-- carries a hover tooltip breaking down how its total is reached.
+local function RenderSkills(content, sheet, ctx)
     Header(content, "SKILLS & SAVING THROWS")
-    local saveByAttr, modById = {}, {}
+    local saveByAttr = {}
     for _, s in ipairs(sheet.saves) do saveByAttr[s.id] = s end
-    for _, a in ipairs(sheet.attributes) do modById[a.id] = a end
-    local accomplishment = sheet.derived.accomplishment
+    local accomplishment = ctx.accomplishment
     local primary = sheet.derived.primary_attribute
     local skillsByAttr = {}
     for _, sk in ipairs(sheet.skills) do
@@ -367,17 +361,21 @@ local function RenderBody(self)
         Row(content, saveLabel, save and Signed(save.total) or "-", 0,
             save and save.accomplished and C_STAR or C_HEAD,
             save and breakdownTip(a.name .. " Saving Throw", a, save.accomplished, save.sources, save.total),
-            save and rollSpec(a.name .. " save", save.total))
+            save and ctx.rollSpec(a.name .. " save", save.total))
         for _, sk in ipairs(skillsByAttr[a.id] or {}) do
             local name = (sk.accomplished and "* " or "") .. sk.name .. SourceTag(sk.sources)
             Row(content, name, Signed(sk.total), INDENT, sk.accomplished and C_STAR or C_TEXT,
                 breakdownTip(sk.name, a, sk.accomplished, sk.sources, sk.total),
-                rollSpec(sk.name, sk.total))
+                ctx.rollSpec(sk.name, sk.total))
         end
     end
+end
 
-    -- Weapon proficiencies as aligned columns (atk | damage); atk is gold -
-    -- clicking the row rolls the attack. Versatile/properties detail hovers.
+-- Weapon proficiencies as aligned columns (atk | damage); atk is gold - clicking
+-- the row rolls the attack. Versatile/properties detail hovers.
+local function RenderWeapons(content, sheet, ctx)
+    local accomplishment = ctx.accomplishment
+    local modById = ctx.modById
     if #sheet.weapons > 0 then
         Header(content, "WEAPON SKILLS (accomplished)")
         local W_ATK_X, W_DMG_X = PAD + 60, PAD   -- column right edges
@@ -413,7 +411,7 @@ local function RenderBody(self)
                 else
                     tt:AddLine("Accomplished: adds " .. Signed(accomplishment) .. " to attack rolls", 0.56, 0.78, 1)
                 end
-            end, w.attack_total and rollSpec(w.name .. " attack", w.attack_total) or nil)
+            end, w.attack_total and ctx.rollSpec(w.name .. " attack", w.attack_total) or nil)
             local atk = Acquire(content, "GameFontHighlightSmall")
             atk:SetPoint("TOPRIGHT", content, "TOPRIGHT", -W_ATK_X, rowY)
             if w.attack_total then
@@ -429,11 +427,15 @@ local function RenderBody(self)
             dmg:SetText(w.damage or "-")
         end
     end
+end
 
-    -- Spellcasting (casters): per-school spell attack and save DC columns;
-    -- atk is gold - clicking a row rolls that spell attack.
+-- Spellcasting (casters): per-school spell attack and save DC columns; atk is
+-- gold - clicking a row rolls that spell attack.
+local function RenderSpellcasting(content, sheet, ctx)
     if sheet.derived.spell then
         local spell = sheet.derived.spell
+        local accomplishment = ctx.accomplishment
+        local modById = ctx.modById
         Header(content, "SPELLCASTING")
         local S_ATK_X, S_DC_X = PAD + 44, PAD   -- column right edges
         local sAtkHead = Acquire(content, "GameFontHighlightSmall")
@@ -479,7 +481,7 @@ local function RenderBody(self)
         local function SpellRow(label, atkValue, dcValue, school)
             local rowY = content.y
             Row(content, label, "", 0, nil, SpellTip(label, school),
-                rollSpec(label .. " spell attack", atkValue))
+                ctx.rollSpec(label .. " spell attack", atkValue))
             local atk = Acquire(content, "GameFontHighlightSmall")
             atk:SetPoint("TOPRIGHT", content, "TOPRIGHT", -S_ATK_X, rowY)
             atk:SetTextColor(C_GOLD[1], C_GOLD[2], C_GOLD[3])
@@ -497,7 +499,11 @@ local function RenderBody(self)
             end
         end
     end
+end
 
+-- Prose blocks: traits, selected sphere perks, the homebrew ability path, and
+-- notes. Each is a titled list of wrapped paragraphs, shown only when non-empty.
+local function RenderProse(content, sheet)
     -- Traits.
     if #sheet.traits > 0 then
         Header(content, "TRAITS")
@@ -530,6 +536,36 @@ local function RenderBody(self)
         Header(content, "NOTES")
         Paragraph(content, nil, sheet.notes, C_DIM)
     end
+end
+
+-- Renders the computed sheet into the body. Called on open and after edits.
+-- Builds the per-render ctx once (see the section renderers above) and draws
+-- each block top to bottom; the section helpers each no-op when their data is
+-- absent (no weapons, no spellcasting, no notes).
+local function RenderBody(self)
+    local content = self.content
+    CanvasReset(content)
+    local sheet = self.sheet
+
+    local ctx = {
+        viewChar = self.viewChar,
+        accomplishment = sheet.derived.accomplishment,
+        modById = {},
+    }
+    for _, a in ipairs(sheet.attributes) do ctx.modById[a.id] = a end
+    -- Click-to-roll spec, or nil for a viewed (read-only) sheet whose modifiers
+    -- are not yours to roll.
+    function ctx.rollSpec(label, mod)
+        if ctx.viewChar then return nil end
+        return { label = label, modifier = mod or 0, who = sheet.name }
+    end
+
+    RenderOverview(content, sheet, ctx)
+    RenderAttributes(content, sheet, ctx)
+    RenderSkills(content, sheet, ctx)
+    RenderWeapons(content, sheet, ctx)
+    RenderSpellcasting(content, sheet, ctx)
+    RenderProse(content, sheet)
 
     CanvasFinish(content)
 end
@@ -546,6 +582,25 @@ local function RefreshVitals(self)
     self.manaMax:SetText("/ " .. tostring(d.mana.max or "?"))
     setBox(self.tempBox, tostring(d.hp.temp or 0))
     self.tempMax:SetText("")
+end
+
+-- Commits a focused, typed-but-not-entered vitals box to the character it was
+-- typed FOR. Refresh leaves focused boxes alone but re-points self.charKey, so
+-- without this a character switch mid-typing would land the old character's
+-- typed HP on the new one when Enter finally commits. The editor's
+-- CommitPending solves the same problem for its max HP/Mana boxes.
+local function CommitPendingVitals(self)
+    local char = self.charKey and ns.GetCharacter(self.charKey)
+    if not char then return end
+    local function commit(box, field)
+        if not (box and box:HasFocus()) then return end
+        local n = tonumber(box:GetText())
+        if n then char[field] = math.max(0, math.min(99999, math.floor(n))) end
+        box:ClearFocus()
+    end
+    commit(self.hpBox, "current_hp")
+    commit(self.manaBox, "current_mana")
+    commit(self.tempBox, "temp_hp")
 end
 
 -- Recomputes the sheet and redraws. Shows the active character normally, or a
@@ -571,6 +626,7 @@ local function Refresh(self)
 
     local char, key
     if viewing then char, key = self.viewChar, nil else char, key = ns.GetActiveCharacter() end
+    if key ~= self.charKey then CommitPendingVitals(self) end
     self.charKey = key
     if not char then
         self.title:SetText("Parchment")

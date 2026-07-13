@@ -64,7 +64,7 @@ local function BuildFrame()
     Label(p1, "Name", PAD, y); f.nameBox = TextBox(p1, y, 220); y = y - ROW_H
     Label(p1, "Player", PAD, y); f.playerBox = TextBox(p1, y, 220); y = y - ROW_H
     Label(p1, "Race", PAD, y); f.raceBtn = FieldButton(p1, y); y = y - ROW_H
-    Label(p1, "Quote", PAD, y); f.quoteBox = TextBox(p1, y, 250); y = y - ROW_H
+    Label(p1, "Quote", PAD, y); f.quoteBox = TextBox(p1, y, 250)
 
     -- Attributes page (shown at step 3). May be empty on first run (no system
     -- imported yet); the NoSystem overlay covers the form until one is.
@@ -81,7 +81,7 @@ local function BuildFrame()
     Label(p3, "Origins", PAD, y); f.originBtn = FieldButton(p3, y); y = y - ROW_H
     Label(p3, "Primary", PAD, y); f.primaryBtn = FieldButton(p3, y, 120); y = y - ROW_H
     Label(p3, "AC attr", PAD, y); f.acBtn = FieldButton(p3, y, 120); y = y - ROW_H
-    Label(p3, "Init attr", PAD, y); f.initBtn = FieldButton(p3, y, 120); y = y - ROW_H
+    Label(p3, "Init attr", PAD, y); f.initBtn = FieldButton(p3, y, 120)
 
     -- Page 4: Proficiencies.
     local p4 = NewPage(f); f.pages[4] = p4
@@ -114,7 +114,9 @@ local function BuildFrame()
 
     -- Input wiring (reads live f.draft).
     local function textCommit(box, field)
-        box:SetScript("OnTextChanged", function(self, user) if user and f.draft then f.draft[field] = self:GetText() end end)
+        box:SetScript("OnTextChanged", function(self, user)
+            if user and f.draft then f.draft[field] = self:GetText() end
+        end)
     end
     textCommit(f.nameBox, "name"); textCommit(f.playerBox, "player"); textCommit(f.quoteBox, "quote")
 
@@ -124,10 +126,14 @@ local function BuildFrame()
     for id, st in pairs(f.steppers) do
         st:OnStep(function(delta)
             if not f.draft then return end
+            -- Floor at point_buy.min (not a hardcoded 1), matching CE.NewBlank's
+            -- seeding and CE.Warnings' check - else a player could step below the
+            -- base and harvest points the accounting treats as unspent.
             local pb = ns.GetSystem().point_buy
+            local minAttr = (pb and pb.min) or 1
             local maxAttr = (pb and pb.max) or 10
-            local v = (f.draft.attributes[id] or 5) + delta
-            f.draft.attributes[id] = math.max(1, math.min(maxAttr, v))
+            local v = (f.draft.attributes[id] or minAttr) + delta
+            f.draft.attributes[id] = math.max(minAttr, math.min(maxAttr, v))
             Refresh(f)
         end)
     end

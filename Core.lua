@@ -132,14 +132,9 @@ function ns.SetCharacter(key, char)
     ns.GetCharacters()[key] = char
 end
 
--- Replaces the whole character database (full-roster import).
-function ns.SetCharacterDB(db)
-    ParchmentCharDB = db or {}
-end
-
 -- Returns the first free "<prefix>-N" character key (default prefix "Character").
 function ns.NextCharacterKey(prefix)
-    local chars, n, key = ns.GetCharacters(), 0, nil
+    local chars, n, key = ns.GetCharacters(), 0
     repeat
         n = n + 1
         key = (prefix or "Character") .. "-" .. n
@@ -162,6 +157,19 @@ function ns.SetActiveCharacter(key)
     if not ns.GetCharacter(key) then return false end
     Parchment.db.global.activeCharacter = key
     return true
+end
+
+-- Deletes a character by key, re-pointing a dangling active pointer at any
+-- remaining character (or nil when none are left - a state SetActiveCharacter
+-- refuses to produce, which is why deletion must live here in Core rather
+-- than callers reaching into the storage layout).
+function ns.DeleteCharacter(key)
+    local chars = ns.GetCharacters()
+    if chars[key] == nil then return end
+    chars[key] = nil
+    if Parchment.db.global.activeCharacter == key then
+        Parchment.db.global.activeCharacter = next(chars)
+    end
 end
 
 -- Finds a record by its `id` field in a list of records. Returns nil when
@@ -261,7 +269,8 @@ end
 -- Persistence. WoW only writes SavedVariables to disk on a UI reload or logout,
 -- so "save to disk" is a confirmed ReloadUI (which flushes the data).
 StaticPopupDialogs["PARCHMENT_SAVE_RELOAD"] = {
-    text = "Save all Parchment data to disk now?\n\nWoW only writes addon data on a UI reload or logout, so this will reload your interface.",
+    text = "Save all Parchment data to disk now?\n\n"
+        .. "WoW only writes addon data on a UI reload or logout, so this will reload your interface.",
     button1 = "Save & Reload",
     button2 = CANCEL,
     OnAccept = function() ReloadUI() end,

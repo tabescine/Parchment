@@ -31,10 +31,19 @@ local function CreateListRow(content, onDelete)
     row.name = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     row.name:SetPoint("TOPLEFT", 6, -2)
     row.name:SetJustifyH("LEFT")
+    row.name:SetWordWrap(false)
     row.meta = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     row.meta:SetPoint("BOTTOMLEFT", 6, 2)
     row.meta:SetJustifyH("LEFT")
+    row.meta:SetWordWrap(false)
     row.meta:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
+
+    -- Right edges (short of the X when present) so a long name/meta truncates
+    -- instead of rendering underneath the row buttons. Rows that add more
+    -- buttons (the cached-sheet refresh) re-anchor these further left.
+    local inset = onDelete and -26 or -6
+    row.name:SetPoint("RIGHT", row, "RIGHT", inset, 0)
+    row.meta:SetPoint("RIGHT", row, "RIGHT", inset, 0)
 
     if onDelete then
         local del = CreateFrame("Button", nil, row)
@@ -197,6 +206,9 @@ local function MakeCacheRow(content)
     refresh:SetScript("OnClick", function()
         if row.cacheKey then ns.Sharing.Request(row.cacheKey) end
     end)
+    -- This row has a second button; pull the text edges left of it.
+    row.name:SetPoint("RIGHT", row, "RIGHT", -48, 0)
+    row.meta:SetPoint("RIGHT", row, "RIGHT", -48, 0)
     return row
 end
 

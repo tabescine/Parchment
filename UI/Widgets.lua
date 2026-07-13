@@ -11,7 +11,6 @@
 
 local ADDON, ns = ...
 
-local UI = ns.UI
 local Widgets = {}
 ns.Widgets = Widgets
 

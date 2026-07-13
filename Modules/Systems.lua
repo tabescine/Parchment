@@ -6,8 +6,9 @@
 -- outgoing one. A picker (/pmt systems) chooses the active system from the
 -- library. Parchment ships no system, so the library starts empty.
 --
--- Reads from: ns.Addon.db.global (systemLibrary, systemSource), ns.Comm,
---   ns.Print, ns.DeepCopy, ns.HubUI, ns.CharacterSheetUI, ns.PerkTreeUI.
+-- Reads from: ns.Addon.db.global (systemLibrary), ns.Comm, ns.ImportExport
+--   (StripMeta), ns.Print, ns.DeepCopy, ns.HubUI, ns.CharacterSheetUI,
+--   ns.PerkTreeUI.
 --   Owns ParchmentSystemDB swaps. The library is browsed/managed in the
 --   hub's Systems panel (UI/HubPanels.lua).
 -- Exposes on ns.Systems: Store, SetActive, GetLibrary, ConfirmDelete,
@@ -49,13 +50,11 @@ end
 -- (if not already there) so nothing is lost.
 function Sys.SetActive(system, from)
     if type(system) ~= "table" then return end
-    local g = ns.Addon.db.global
     if type(ParchmentSystemDB) == "table" and ParchmentSystemDB.system_name
         and not Library()[ParchmentSystemDB.system_name] then
         Sys.Store(ParchmentSystemDB, "yours")
     end
     ParchmentSystemDB = ns.DeepCopy(system)
-    g.systemSource = "imported"
     Sys.Store(ParchmentSystemDB, from)
     RefreshAll()
 end
@@ -79,7 +78,6 @@ function Sys.Delete(name)
     Library()[name] = nil
     if IsActiveName(name) then
         ParchmentSystemDB = {}
-        ns.Addon.db.global.systemSource = nil
         ns.Print("deleted system '" .. name .. "'. It was active - no system is loaded now.")
     else
         ns.Print("deleted system '" .. name .. "' from your library.")
@@ -134,6 +132,12 @@ if ns.Comm then
         -- the system they just shared.
         if ns.Comm.IsSelf(sender) then return end
         if type(system) ~= "table" or type(system.system_name) ~= "string" then return end
+        -- Same line as the local import path: strip '_'-prefixed metadata
+        -- before validating and storing, so remote metadata never persists into
+        -- the library / ParchmentSystemDB or round-trips into local exports.
+        if ns.ImportExport and ns.ImportExport.StripMeta then
+            system = ns.ImportExport.StripMeta(system)
+        end
         local ok = ns.Schema.ValidateSystem(system)
         if not ok then
             ns.Print((sender or "someone") .. " shared system '" .. system.system_name

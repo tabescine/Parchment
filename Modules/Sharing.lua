@@ -194,6 +194,9 @@ if ns.Comm then
         cache[sender] = { char = payload.char, name = payload.char.name, time = (time and time()) or 0 }
         EvictOldest(cache)
         ns.Print("received " .. (payload.char.name or "a character") .. " from " .. (sender or "?") .. ".")
+        -- A refetch updates the entry's time; re-render the Cached Sheets panel
+        -- so its "cached N ago" line reflects the new copy, not the stale one.
+        if ns.HubUI then ns.HubUI.RefreshIfShown("cached") end
         if ns.CharacterSheetUI then
             local ok, err = pcall(ns.CharacterSheetUI.ShowCharacter, payload.char, sender)
             if not ok then ns.Print("could not display the sheet: " .. tostring(err)) end

@@ -9,8 +9,8 @@
 -- Export produces pretty JSON (or TOML) matching the converter's format.
 --
 -- Reads from: ns.JSON, ns.TOML, ns.Schema, ns.Systems, ns.GetSystem,
---   ns.GetCharacter(s), ns.SetCharacter(DB), ns.SetActiveCharacter.
--- Exposes on ns.ImportExport: ExportSystem, ExportCharacter, Import.
+--   ns.GetCharacter(s), ns.SetCharacter, ns.NextCharacterKey, ns.SetActiveCharacter.
+-- Exposes on ns.ImportExport: ExportSystem, ExportCharacter, Import, StripMeta.
 
 local ADDON, ns = ...
 
@@ -42,15 +42,31 @@ local function StripMeta(t)
     end
     return out
 end
+-- Exposed for the comm path (Modules/Systems.lua): a DM-shared system must be
+-- stripped exactly like a locally imported one, or remote metadata persists
+-- into the library and round-trips into local exports.
+IE.StripMeta = StripMeta
 
 -- Classifies a decoded table as a system, a single character, a full character
 -- DB, or nil when it matches none.
 local function DetectKind(data)
     if type(data) ~= "table" then return nil end
-    if data.characters then return "character_db" end
+    -- A `characters` field must be a table to be a roster; a scalar there (e.g.
+    -- `{"characters": 5}`) is malformed, not a DB - falling through to a clean
+    -- "could not tell" refusal instead of later throwing from pairs(5).
+    if type(data.characters) == "table" then return "character_db" end
     if data.system_name or data.perk_trees or data.modifier_table then return "system" end
     if data.name and (data.attributes or data.level) then return "character" end
     return nil
+end
+
+-- True when two character records look like the same character (same name,
+-- case-insensitive). Used to decide whether importing onto an existing key is an
+-- idempotent update of that character or a collision with an unrelated one.
+local function SameCharacter(a, b)
+    if type(a) ~= "table" or type(b) ~= "table" then return false end
+    local an, bn = tostring(a.name or ""):lower(), tostring(b.name or ""):lower()
+    return an ~= "" and an == bn
 end
 
 -- Parses a Lua table literal in a sandbox (empty environment, no global access).
@@ -74,13 +90,22 @@ local function SummarizeIssues(issues)
     return msg
 end
 
--- Encodes a table as JSON or TOML. format defaults to "json".
+-- Encodes a table as JSON or TOML. format defaults to "json". Returns the
+-- string, or nil plus an error - the codecs throw on unencodable input
+-- (non-finite numbers), which must surface as a status line, not a Lua error.
 local function Encode(tbl, format)
-    if format == "toml" then return ns.TOML.encode(tbl) end
-    return ns.JSON.encode(tbl, true)
+    local ok, out
+    if format == "toml" then
+        ok, out = pcall(ns.TOML.encode, tbl)
+    else
+        ok, out = pcall(ns.JSON.encode, tbl, true)
+    end
+    if not ok then return nil, "export failed: " .. tostring(out) end
+    return out
 end
 
 -- Exports the active system definition. format is "json" (default) or "toml".
+-- Returns the string, or nil plus an error.
 function IE.ExportSystem(format)
     return Encode(ns.GetSystem(), format)
 end
@@ -124,7 +149,8 @@ function IE.Import(text)
                 -- backslashes lost in transit (Discord and most markdown eat
                 -- lone backslashes outside code blocks), turning \" into ".
                 local hint = text:find('""%a') and
-                    ' HINT: a text field contains "" - were escape backslashes (\\") lost when the export was shared (e.g. pasted into Discord outside a code block)?'
+                    ' HINT: a text field contains "" - were escape backslashes (\\") lost'
+                    .. ' when the export was shared (e.g. pasted into Discord outside a code block)?'
                     or ""
                 return false, "could not parse (JSON: " .. tostring(jsonErr)
                     .. "; TOML: " .. tostring(tomlErr)
@@ -159,6 +185,9 @@ function IE.Import(text)
         -- committed some and failed others would be worse than refusing outright.
         local count = 0
         for charKey, char in pairs(incoming) do
+            if type(charKey) ~= "string" then
+                return false, "character key '" .. tostring(charKey) .. "' is not a string."
+            end
             local ok, issues = ns.Schema.ValidateCharacter(char, validateSystem)
             if not ok then
                 return false, "character '" .. tostring(charKey) .. "' invalid: " .. SummarizeIssues(issues)
@@ -183,11 +212,25 @@ function IE.Import(text)
     -- Single character.
     local key = data._key
     if not key then return false, "character has no key; add a \"_key\" field." end
+    if type(key) ~= "string" then return false, "the \"_key\" field must be a string." end
     local clean = StripMeta(data)
     local ok, issues = ns.Schema.ValidateCharacter(clean, validateSystem)
     if not ok then return false, "character invalid: " .. SummarizeIssues(issues) end
 
+    -- Keys are auto-generated "Character-N", so an export from another install
+    -- almost always collides with one of ours. Overwrite only when the existing
+    -- entry is the same character (an idempotent re-import); otherwise import
+    -- under a fresh key so a shared character can never clobber an unrelated one.
+    local existing = ns.GetCharacter(key)
+    local remapped = false
+    if existing and not SameCharacter(existing, clean) then
+        key = ns.NextCharacterKey()
+        remapped = true
+    end
+
     ns.SetCharacter(key, clean)
     ns.SetActiveCharacter(key)
-    return true, "imported character '" .. (clean.name or key) .. "'."
+    local msg = "imported character '" .. (clean.name or key) .. "'."
+    if remapped then msg = msg .. " (added as '" .. key .. "' to avoid overwriting an existing character.)" end
+    return true, msg
 end

@@ -106,8 +106,12 @@ local function ShowTooltip(self, node)
         return
     end
 
-    local reqAttr = perk.req_attribute or tree.governing_attribute
-    GameTooltip:AddLine("Requires " .. ns.AttrName(reqAttr) .. " " .. (perk.attribute_req or 5), 0.9, 0.9, 0.9)
+    -- Only show the attribute-threshold line when the perk actually has one; the
+    -- logic module gates on perk.attribute_req, so a nil there means unconditional.
+    if perk.attribute_req then
+        local reqAttr = perk.req_attribute or tree.governing_attribute
+        GameTooltip:AddLine("Requires " .. ns.AttrName(reqAttr) .. " " .. perk.attribute_req, 0.9, 0.9, 0.9)
+    end
     if perk.prerequisites and #perk.prerequisites > 0 then
         GameTooltip:AddLine("Needs: " .. NamesOf(perk.prerequisites), 0.9, 0.9, 0.9)
     end
@@ -115,7 +119,8 @@ local function ShowTooltip(self, node)
         GameTooltip:AddLine("Exclusive with: " .. NamesOf(perk.exclusive_with), UI.RED[1], UI.RED[2], UI.RED[3])
     end
     if perk.level_req then
-        local levels = type(perk.level_req) == "table" and table.concat(perk.level_req, ", ") or tostring(perk.level_req)
+        local levels = type(perk.level_req) == "table"
+            and table.concat(perk.level_req, ", ") or tostring(perk.level_req)
         GameTooltip:AddLine("Level(s): " .. levels, 0.9, 0.9, 0.9)
     end
     local status = PT.Status(self.char, self.sheet, tree, perk)

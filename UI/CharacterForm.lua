@@ -79,10 +79,13 @@ end
 
 -- The attribute-set signature: a frame is laid out from the system loaded at
 -- build time, so a change in the attribute set means the frame must be rebuilt
--- (see ns.UI.RebuildableFrame).
+-- (see ns.UI.RebuildableFrame). Names are part of the signature - reimporting
+-- a system that renames attributes (same ids) must also refresh the row labels.
 function Form.AttrSignature()
     local ids = {}
-    for _, a in ipairs(ns.GetSystem().attributes or {}) do ids[#ids + 1] = tostring(a.id) end
+    for _, a in ipairs(ns.GetSystem().attributes or {}) do
+        ids[#ids + 1] = tostring(a.id) .. "\30" .. tostring(a.name)
+    end
     return table.concat(ids, "\31")
 end
 
@@ -179,7 +182,7 @@ function Form.FillCommon(f, target, system, sheet, showTotal)
     setBox(f.nameBox, target.name)
     setBox(f.playerBox, target.player)
     setBox(f.quoteBox, target.quote)
-    f.raceBtn:SetText(target.race ~= "" and target.race or "(choose)")
+    f.raceBtn:SetText((target.race and target.race ~= "") and target.race or "(choose)")
 
     local modById = {}
     for _, a in ipairs(sheet.attributes) do modById[a.id] = a end

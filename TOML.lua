@@ -10,8 +10,9 @@
 -- Decode keeps object keys as strings (the import layer normalizes integer-like
 -- keys to numbers, matching the JSON path). Encode emits arrays of tables as
 -- readable [[...]] blocks and leaf maps as inline tables. Numbers round-trip
--- losslessly (large integers and non-integers via %.17g, not %d/%.14g); decode
--- caps nesting depth and rejects a malformed \u escape rather than emitting NUL.
+-- losslessly (always %.17g, never %d/%.14g); NaN/inf are refused on both encode
+-- and decode. decode caps nesting depth, rejects a malformed \u escape rather
+-- than emitting NUL, and requires escapes to be Unicode scalar values.
 --
 -- Reads from: nothing.
 -- Exposes on ns.TOML: .encode(value) -> string, .decode(str) -> value | nil,err
@@ -69,13 +70,15 @@ local function EncodeScalar(v)
     local t = type(v)
     if t == "string" then return EncodeString(v) end
     if t == "boolean" then return tostring(v) end
-    -- Integers in the exact-double range print as integers; large integers (which
-    -- "%d" would overflow into garbage) and all non-integers go through "%.17g"
-    -- so decode reproduces the value exactly (tostring is only %.14g here).
-    if v == math.floor(v) and v == v and v ~= math.huge and v ~= -math.huge
-        and math.abs(v) < 2 ^ 53 then
-        return string.format("%d", v)
+    -- NaN/inf never round-trip here (the decoder does not parse them and the
+    -- schema rejects them), so refuse loudly rather than emit them.
+    if v ~= v or v == math.huge or v == -math.huge then
+        error("cannot encode non-finite number", 0)
     end
+    -- "%.17g" prints every integer up to 2^53 exactly, as plain digits, and
+    -- reproduces every other double on decode. Never "%d": Lua 5.1 casts it
+    -- through C long, 32-bit on Windows (the retail client), so integers past
+    -- 2^31 would print garbage in-game (tostring is only %.14g here).
     return string.format("%.17g", v)
 end
 
@@ -181,10 +184,13 @@ local function Utf8(cp)
         return string.char(cp)
     elseif cp < 0x800 then
         return string.char(0xC0 + math.floor(cp / 0x40), 0x80 + cp % 0x40)
-    else
+    elseif cp < 0x10000 then
         return string.char(0xE0 + math.floor(cp / 0x1000),
             0x80 + math.floor(cp / 0x40) % 0x40, 0x80 + cp % 0x40)
     end
+    return string.char(0xF0 + math.floor(cp / 0x40000),
+        0x80 + math.floor(cp / 0x1000) % 0x40,
+        0x80 + math.floor(cp / 0x40) % 0x40, 0x80 + cp % 0x40)
 end
 
 -- Decodes a TOML document into a Lua table.
@@ -248,7 +254,14 @@ function TOML.decode(str)
                     -- Require exactly `len` hex digits; an invalid escape must
                     -- error, not inject a NUL byte (tonumber(bad,16) was `or 0`).
                     if #hex ~= len or not hex:match("^%x+$") then err("invalid \\u escape") end
-                    buf[#buf + 1] = Utf8(tonumber(hex, 16))
+                    local cp = tonumber(hex, 16)
+                    -- TOML escapes must be Unicode scalar values: no surrogate
+                    -- halves (TOML has \U for astral chars, not UTF-16 pairs)
+                    -- and nothing beyond the Unicode range.
+                    if (cp >= 0xD800 and cp <= 0xDFFF) or cp > 0x10FFFF then
+                        err("\\" .. e .. " escape is not a Unicode scalar value")
+                    end
+                    buf[#buf + 1] = Utf8(cp)
                     pos = pos + 2 + len
                 elseif triple and (e == "\n" or e == " " or e == "\t" or e == "\r") then
                     -- line-ending backslash: trim following whitespace
@@ -290,7 +303,17 @@ function TOML.decode(str)
             or s:match("^[%+%-]?[%d_]+%.?[%d_]*", pos)
         if not numstr or numstr == "" then err("invalid value") end
         pos = pos + #numstr
-        return tonumber((numstr:gsub("_", "")))
+        -- The digit class allows a bare "_" (or a lone sign), which cleans to "".
+        -- tonumber("") is nil; returning it would silently drop the key or compact
+        -- the array, so reject instead - malformed input must fail, not vanish.
+        local value = tonumber((numstr:gsub("_", "")))
+        if value == nil then err("invalid number '" .. numstr .. "'") end
+        -- A syntactically valid literal can still overflow the double range
+        -- ("1e999" -> inf); non-finite numbers must not enter the data model.
+        if value ~= value or value == math.huge or value == -math.huge then
+            err("number out of range")
+        end
+        return value
     end
 
     local function parseKey()

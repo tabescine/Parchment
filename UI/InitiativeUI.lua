@@ -238,6 +238,9 @@ local function RenderList(self)
         row.hp:SetTextColor(hpColor[1], hpColor[2], hpColor[3])
         row.hpBtn:SetShown(c.isNPC and editable)
         row.moveUp:SetShown(editable and i > 1)
+        -- Like moveUp/hpBtn: a non-editing player must not see a control whose
+        -- click can only ever no-op in its CanEdit() guard.
+        row.remove:SetShown(editable)
 
         row.hl:SetShown(isCurrent)
         row:Show()
@@ -499,7 +502,8 @@ local function BuildFrame()
     f.npcCheck:SetScript("OnLeave", GameTooltip_Hide)
 
     -- Action row: Me/Submit, Start, Next, Reset.
-    f.meBtn = MakeButton(f, "Me", 42, "DM/solo: add your active character (rolled). Player: submit your initiative to the DM.")
+    f.meBtn = MakeButton(f, "Me", 42,
+        "DM/solo: add your active character (rolled). Player: submit your initiative to the DM.")
     f.meBtn:SetPoint("BOTTOMLEFT", 18, 14)
     f.startBtn = MakeButton(f, "Start", 50,
         "Start combat: round 1 begins at the top of the order. Add everyone "
@@ -582,7 +586,10 @@ local function BuildFrame()
     UI.SetPlaceholder(f.nameBox, "name")
     UI.SetPlaceholder(f.modBox, "init")
 
-    f.OnResize = function(self) RenderList(self) end
+    -- Debounced, like the sheet body and the perk graph: OnResize fires per
+    -- pixel of a drag-resize, and the scroll's OnSizeChanged fires too.
+    local relayout = UI.Debounce(0.1, function() if f:IsShown() then RenderList(f) end end)
+    f.OnResize = relayout
     return f
 end
 
@@ -629,7 +636,8 @@ end
 -- Set-HP popup for NPC rows (DM only; opened from a row's HP cell). The
 -- combatant table travels as popup data; AdjustHP validates and parses.
 StaticPopupDialogs["PARCHMENT_SET_NPC_HP"] = {
-    text = "Hit points for %s\n|cff888888number = set current (and max while unset),\n+N / -N = adjust, current/max = set both|r",
+    text = "Hit points for %s\n|cff888888number = set current (and max while unset),\n"
+        .. "+N / -N = adjust, current/max = set both|r",
     button1 = ACCEPT,
     button2 = CANCEL,
     hasEditBox = 1,
@@ -665,17 +673,50 @@ StaticPopupDialogs["PARCHMENT_RESET_COMBAT"] = {
     timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
 }
 
+-- Adopt prompt for an INIT arriving before any DM is recognized (the bootstrap
+-- window, where Comm's central gate accepts anyone). Accepting applies the
+-- order AND recognizes the sender as this session's DM, so their later syncs
+-- flow normally; declining ignores that sender's pushes until reload.
+StaticPopupDialogs["PARCHMENT_ADOPT_INIT"] = {
+    text = "%s is sharing a combat order but is not your recognized DM yet."
+        .. "\n\nApply it and recognize them as your DM for this session?",
+    button1 = ACCEPT,
+    button2 = "Ignore",
+    OnAccept = function(_, data)
+        ns.Comm.SetRecognizedDM(data.sender)
+        IT.SetState(data.state)
+        RefreshIfShown()
+    end,
+    OnCancel = function(_, data)
+        if data.ignored then data.ignored[data.key] = true end
+    end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
 -- Sync handlers: players adopt the DM's broadcast order; the DM accepts player
 -- initiative submissions, adds them, and rebroadcasts.
 if ns.Comm then
-    ns.Comm.On("INIT", function(state)
+    -- Senders whose pre-recognition INIT pushes were declined (session memory;
+    -- keyed by canonical name). They can still become DM via a DMROLE claim.
+    local ignoredInit = {}
+    ns.Comm.On("INIT", function(state, sender)
         -- Only the recognized DM's INIT reaches here (Comm gates it centrally);
         -- an active DM still ignores the echo of its own broadcast.
         if ns.Comm.IsDM() then return end
-        if type(state) == "table" then
-            IT.SetState(state)
-            RefreshIfShown()
+        if type(state) ~= "table" then return end
+        -- Bootstrap gate: while no DM is recognized, Comm.IsAuthoritative lets
+        -- any group member through, and INIT overwrites the PERSISTED order -
+        -- so it must not apply silently. Hold the same trust posture as SYSTEM
+        -- (Modules/Systems.lua): prompt, and lock recognition in on accept.
+        if not ns.Comm.RecognizedDM() then
+            local key = ns.Comm.NormalizeName(sender) or "?"
+            if ignoredInit[key] then return end
+            StaticPopup_Show("PARCHMENT_ADOPT_INIT", tostring(sender), nil,
+                { sender = sender, state = state, key = key, ignored = ignoredInit })
+            return
         end
+        IT.SetState(state)
+        RefreshIfShown()
     end)
     -- A player submitted their own initiative. SubmitFor binds the entry to the
     -- sender (so only they can later end its turn), refuses a second entry from

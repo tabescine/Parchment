@@ -44,7 +44,11 @@ ns.GetSystem = function()
 end
 ns.Widgets = {
     Stepper = function() end,
-    ListItems = function(list) local o = {} for _, r in ipairs(list or {}) do o[#o + 1] = { id = r.id, name = r.name } end return o end,
+    ListItems = function(list)
+        local o = {}
+        for _, r in ipairs(list or {}) do o[#o + 1] = { id = r.id, name = r.name } end
+        return o
+    end,
     AttrItems = function() return { { id = "str", name = "Strength" } } end,
     TraitItems = function() return {} end,
     RacialItems = function() return {} end,

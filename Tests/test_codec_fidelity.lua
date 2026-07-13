@@ -1,11 +1,12 @@
--- Phase 0 (test-first): codec fidelity cases the current JSON/TOML codecs get
--- wrong. These are EXPECTED TO FAIL until Phase 3 ("Codec fidelity") lands; they
--- pin the desired contract so that fix is test-driven, not eyeballed. Each case
--- cross-references the audit/IMPROVEMENT_PLAN.md finding it guards.
+-- Codec fidelity regression suite. Originally written test-first against known
+-- corruption bugs (big-int %d overflow, %.14g float loss, silent null drops,
+-- unbounded nesting, NUL-injecting \u escapes); those fixes have all landed, so
+-- every case here is EXPECTED TO PASS and pins the contract against regression.
 --
--- Where Phase 3 leaves a design choice open (sentinel vs. clean rejection), the
--- assertion is written to accept EITHER correct outcome - it only fails on the
--- current silent-corruption behaviour.
+-- Where the contract leaves a design choice open (sentinel vs. clean rejection),
+-- the assertion accepts EITHER correct outcome - it only fails on silent
+-- corruption. The in-comment "Today ..." notes describe the historical bug each
+-- case was written against, not current behaviour.
 local T = dofile((TEST_ROOT or "") .. "Tests/wow_stubs.lua")
 local ns = {}
 T.load(ns, "JSON.lua")

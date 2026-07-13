@@ -29,9 +29,11 @@ StaticPopupDialogs["PARCHMENT_DELETE_CHAR"] = {
     button2 = CANCEL,
     OnAccept = function(_, key)
         ns.CharacterEditor.Delete(key)
-        if ns.CharacterEditorUI.frame and ns.CharacterEditorUI.frame:IsShown() then ns.CharacterEditorUI.Open() end
-        if ns.CharacterSheetUI then ns.CharacterSheetUI.RefreshIfShown() end
-        if ns.HubUI then ns.HubUI.RefreshIfShown("characters") end
+        -- Refresh every window that shows the character (RefreshAll covers the
+        -- perk tree, whose self.char would otherwise point at the deleted table)
+        -- and push vitals, mirroring the hub roster's delete path.
+        if ns.Systems then ns.Systems.RefreshAll() end
+        if ns.Party then ns.Party.OnVitalsChanged() end
     end,
     timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
 }
@@ -47,7 +49,7 @@ local Signed = ns.UI.Signed
 -- The hit die size and the modifier of the system's HP attribute (if any).
 local function HitDieAndHpMod(char)
     local sheet = ns.CharacterSheet.Compute(char, ns.GetSystem())
-    local die = tonumber(tostring(sheet.derived.hit_dice):match("d(%d+)")) or 6
+    local die = ns.CharacterEditor.HitDieSize(sheet.derived.hit_dice)
     local hpAttr = ns.DerivedConfig().hp_attribute
     local hpMod = 0
     if hpAttr then
@@ -155,7 +157,8 @@ local function BuildFrame()
     f.levelUpBtn = CreateFrame("Button", nil, c, "UIPanelButtonTemplate")
     f.levelUpBtn:SetSize(76, 20); f.levelUpBtn:SetText("Level Up"); f.levelUpBtn:SetPoint("TOPLEFT", CTRL_X + 34, y + 1)
     f.levelDownBtn = CreateFrame("Button", nil, c, "UIPanelButtonTemplate")
-    f.levelDownBtn:SetSize(86, 20); f.levelDownBtn:SetText("Level Down"); f.levelDownBtn:SetPoint("TOPLEFT", CTRL_X + 114, y + 1)
+    f.levelDownBtn:SetSize(86, 20); f.levelDownBtn:SetText("Level Down")
+    f.levelDownBtn:SetPoint("TOPLEFT", CTRL_X + 114, y + 1)
     adv()
 
     -- Resources: editable max HP / Mana, and an ad-hoc HP gain roll.
@@ -255,8 +258,11 @@ local function BuildFrame()
             -- Base attributes may exceed the creation cap of 10 post-creation
             -- (level milestone points and traits push toward the 11/12 perk
             -- requirements), so the stepper allows the modifier table's range.
+            -- Only fall back to a default cap when the system has NO modifier
+            -- table; a short one is its real range (a system with an 8-entry
+            -- table caps at 8, which CE.Warnings also enforces).
             local maxAttr = #(ns.GetSystem().modifier_table or {})
-            if maxAttr < 10 then maxAttr = 20 end
+            if maxAttr == 0 then maxAttr = 20 end
             local cfg = ns.DerivedConfig()
             local hpAttr = cfg.hp_attribute
             f.char.attributes = f.char.attributes or {}
@@ -376,13 +382,18 @@ end
 -- not a level-up).
 function EditorUI.AddHP(self)
     if not self.char then return end
-    local hp = tonumber(self.hpBox:GetText()) or 0
+    -- Floor and ignore non-numeric input, and clamp the resulting totals to the
+    -- same [0, 99999] range the max HP/mana boxes enforce, so a stray "1e300" or
+    -- a large negative cannot push an absurd value into the character.
+    local hp = tonumber(self.hpBox:GetText())
+    if not hp then return end
+    hp = math.floor(hp)
     if hp == 0 then return end
-    self.char.max_hp = (self.char.max_hp or 0) + hp
-    self.char.current_hp = (self.char.current_hp or 0) + hp
+    self.char.max_hp = math.max(0, math.min(99999, (self.char.max_hp or 0) + hp))
+    self.char.current_hp = math.max(0, math.min(99999, (self.char.current_hp or 0) + hp))
     self.hpBox:SetText("")
     self.hpBreakdown:SetText("")
-    self.note = "+" .. hp .. " HP (max " .. self.char.max_hp .. ")"
+    self.note = string.format("%+d HP (max %d)", hp, self.char.max_hp)
     Changed(self)
 end
 

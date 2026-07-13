@@ -148,7 +148,10 @@ if ns.Comm then
         if type(payload) ~= "table" or not sender then return end
         if type(payload.name) ~= "string" or payload.name == "" then return end
         vitals[sender] = {
-            name = payload.name,
+            -- Numeric fields are clamped below; the name gets the same line - a
+            -- length cap - so a peer cannot fill the roster/UI with multi-KB
+            -- strings (cosmetic/memory nuisance, but free to prevent).
+            name = string.sub(payload.name, 1, 64),
             level = math.floor(tonumber(payload.level) or 0),
             hp = math.floor(tonumber(payload.hp) or 0),
             hpmax = math.floor(tonumber(payload.hpmax) or 0),

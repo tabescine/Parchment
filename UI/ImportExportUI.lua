@@ -89,7 +89,9 @@ local function DoExportCharacter(self)
 end
 
 local function DoExportSystem(self)
-    ShowText(self, IE.ExportSystem(self.format))
+    local str, err = IE.ExportSystem(self.format)
+    if not str then return SetStatus(self, err, true) end
+    ShowText(self, str)
     SetStatus(self, "Exported system as " .. self.format:upper() .. ". Press Ctrl+C to copy.", false)
 end
 

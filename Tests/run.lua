@@ -15,6 +15,7 @@ local MANIFEST = {
     "test_charactersheet.lua",
     "test_perktree.lua",
     "test_initiative.lua",
+    "test_init_adopt.lua",
     "test_widgets.lua",
     "test_widgets_debounce.lua",
     "test_characterform.lua",

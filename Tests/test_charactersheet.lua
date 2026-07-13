@@ -134,6 +134,20 @@ assert(#spell.schools == 2)
 assert(spell.schools[1].id == "ev" and spell.schools[1].attack == 8 and spell.schools[1].dc == 14)
 assert(spell.schools[2].id == "wd" and spell.schools[2].attack == 6 and spell.schools[2].dc == 13)
 
+-- Mana base vs max: a max_mana effect adds to `max` but not to the stored-facing
+-- `base`. Persisting `base` (as CE.InitResources does) and recomputing must NOT
+-- re-add the effect - the fix for creation-time mana being double-counted forever.
+local charM = {
+    name = "M", level = 1, attributes = { a = 1, b = 3, c = 4 }, primary_attribute = "c",
+    custom_perks = { { id = "hb", name = "HB", effects = { { type = "max_mana", value = 5 } } } },
+}
+local sm = ns.CharacterSheet.Compute(charM, system).derived.mana
+assert(sm.base == 6, "base must be the fx-free mana (3 x c's mod 2), got " .. tostring(sm.base))
+assert(sm.max == 11, "max must add the +5 max_mana effect once, got " .. tostring(sm.max))
+charM.max_mana = sm.base                    -- what InitResources persists
+local sm2 = ns.CharacterSheet.Compute(charM, system).derived.mana
+assert(sm2.max == 11, "recompute must not double-count the effect, got " .. tostring(sm2.max))
+
 -- Non-caster fallback: primary outside spell_attributes uses mana_attribute,
 -- and there is no spell block and NO save DC (it is a spellcasting number).
 local char2 = { name = "N", level = 1, attributes = { a = 1, b = 3, c = 4 }, primary_attribute = "b" }

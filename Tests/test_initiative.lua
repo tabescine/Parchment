@@ -44,6 +44,22 @@ IT.Remove(1)                   -- Faster gone; everything shifts down
 assert(s.combatants[s.current].name == "Slow")
 assert(#s.combatants == 3)
 
+-- Removing a combatant BEFORE combat starts must not begin combat: the pre-combat
+-- pointer (current == 0) has to stay 0, or the round counter never leaves 0.
+IT.Reset()
+IT.Add("One", 15)
+IT.Add("Two", 10)
+IT.Add("Three", 5)
+assert(IT.GetState().current == 0 and IT.GetState().round == 0)
+IT.Remove(2)                   -- DM fixes a mistyped entry before pressing Start
+assert(IT.GetState().current == 0, "a pre-combat remove must not start a turn")
+assert(IT.GetState().round == 0)
+IT.Next()                      -- the real start
+assert(IT.GetState().current == 1 and IT.GetState().round == 1, "first Next must begin round 1")
+IT.Reset()
+IT.Add("Slow", 5); IT.Add("Fast", 18, true); IT.Add("Mid", 10)
+s = IT.GetState()
+
 -- AdjustHP: only NPC rows; number / +N / -N / cur-max syntaxes.
 local npcIndex, pcIndex
 for i, c in ipairs(s.combatants) do
@@ -64,7 +80,7 @@ assert(IT.AdjustHP(npcIndex, "12/40"))
 assert(s.combatants[npcIndex].hp == 12 and s.combatants[npcIndex].hpmax == 40)
 ok, err = IT.AdjustHP(npcIndex, "potato")
 assert(not ok and err ~= nil)
-ok, err = IT.AdjustHP(99, "5")
+ok = IT.AdjustHP(99, "5")
 assert(not ok, "out-of-range index must fail")
 
 -- WireState: same order/pointers, but NO hp fields - the privacy guarantee.
@@ -106,7 +122,7 @@ assert(IT.Add("Wolf", 9), "a player may share a name with NPCs")
 assert(#IT.GetState().combatants == 4)
 -- AddRolled refuses a duplicate player BEFORE rolling, via the callback.
 local gotErr
-IT.AddRolled("Wren", 0, false, nil, function(c, _, _, err) gotErr = (c == nil) and err end)
+IT.AddRolled("Wren", 0, false, nil, function(c, _, _, e) gotErr = (c == nil) and e end)
 assert(gotErr and gotErr:find("already in the turn order"), tostring(gotErr))
 IT.Reset()
 
@@ -150,7 +166,7 @@ assert(c1 and c1.owner == "Bob-Realm" and c1.init == 15, "submission not bound t
 
 -- One live submission per player: a resubmit (realm-tolerant match) is refused,
 -- so a player cannot flood the order with extra entries.
-local dup, dupErr = IT.SubmitFor("Bob", "Imposter", 20)
+dup, dupErr = IT.SubmitFor("Bob", "Imposter", 20)
 assert(dup == nil and dupErr, "a second submission from the same player must be refused")
 assert(#IT.GetState().combatants == 1, "the refused resubmit must not add a combatant")
 
@@ -183,3 +199,14 @@ IT.Reset()
 IT.Add("Ogre", 12, true)
 IT.Start()
 assert(IT.EndTurnFor("Bob", "Ogre") == nil, "a player must not end an NPC's turn")
+
+-- Wire-sourced names hold the same clamped line as the numeric fields: both
+-- SetState (INIT) and Add (INITSUBMIT via SubmitFor) cap the length, so a peer
+-- cannot persist a multi-KB name into the SavedVariables.
+IT.Reset()
+local LONG = string.rep("x", 500)
+IT.SetState({ combatants = { { name = LONG, init = 1 } }, current = 0, round = 0 })
+assert(#IT.GetState().combatants[1].name == 64, "SetState must cap combatant name length")
+IT.Reset()
+assert(IT.Add(LONG, 5, true))
+assert(#IT.GetState().combatants[1].name == 64, "Add must cap combatant name length")

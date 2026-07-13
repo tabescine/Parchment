@@ -1,6 +1,8 @@
 -- Phase 2: the shared-sheet cache is bounded before it reaches SavedVariables -
--- an oversized sheet is refused, and the cache caps its entry count, evicting
--- the oldest by time.
+-- an unsolicited or malformed sheet is dropped, an oversized sheet is refused,
+-- and the cache caps its entry count, evicting the oldest by time. Inbound CHAR
+-- validation runs through the REAL Schema (not a stub), so the wire path proves
+-- it holds the same validation line as the local import path.
 local T = dofile((TEST_ROOT or "") .. "Tests/wow_stubs.lua")
 
 Menu = nil                                  -- skip the right-click menu registration
@@ -17,7 +19,7 @@ C_Timer = { After = function() end }         -- request-timeout no-op
 
 local ns = {}
 ns.Print = function() end
-ns.Schema = { ValidateCharacter = function() return true end }
+T.load(ns, "Schema.lua")   -- the real validator: the comm path must hold the import path's line
 T.load(ns, "JSON.lua")
 local handlers = {}
 ns.Comm = {
@@ -37,6 +39,18 @@ T.load(ns, "Modules/Sharing.lua")
 local S = ns.Sharing
 assert(handlers.CHAR and handlers.REQ, "comm handlers not registered")
 
+-- Records the panel re-rendered when a sheet arrives (so its "cached N ago" line
+-- reflects a refetch, not the stale copy).
+local hubRefreshed
+ns.HubUI = { RefreshIfShown = function(panel) hubRefreshed = panel end }
+
+-- A schema-valid character shape (CHAR_REQUIRED: name, level, attributes).
+local function validChar(name, extra)
+    local c = { name = name, level = 1, attributes = {} }
+    for k, v in pairs(extra or {}) do c[k] = v end
+    return c
+end
+
 -- Seeds a pending request for `sender`, then delivers their CHAR reply.
 local function deliver(sender, char)
     CLOCK = CLOCK + 1
@@ -44,17 +58,33 @@ local function deliver(sender, char)
     handlers.CHAR({ char = char, to = "Me" }, sender)
 end
 
--- A normal sheet is cached.
-deliver("Bob", { name = "Bob", level = 1 })
+-- An UNSOLICITED sheet (no pending request to that sender) is dropped: the
+-- pendingKey guard is what stops any peer from pushing sheets into the
+-- persistent cache at will.
+handlers.CHAR({ char = validChar("Intruder"), to = "Me" }, "Intruder")
+assert(S.GetCache()["Intruder"] == nil, "an unsolicited sheet must be dropped")
+
+-- A normal sheet is cached, and receiving it re-renders the Cached Sheets panel.
+deliver("Bob", validChar("Bob"))
 assert(S.GetCache()["Bob"], "a valid sheet should be cached")
+assert(hubRefreshed == "cached", "receiving a sheet must refresh the cached panel")
+
+-- A malformed sheet (fails the real shape validation - no level/attributes)
+-- is refused even though it was requested.
+deliver("Eve", { name = "Eve" })
+assert(S.GetCache()["Eve"] == nil, "a schema-invalid sheet must be refused")
+
+-- A non-finite numeric field is a shape error too (Schema finiteness check).
+deliver("Nan", validChar("Nan", { level = 1 / 0 }))
+assert(S.GetCache()["Nan"] == nil, "a non-finite level must be refused")
 
 -- An oversized sheet is refused before it touches the saved cache.
-deliver("Hugo", { name = "Hugo", blob = string.rep("x", 300 * 1024) })
+deliver("Hugo", validChar("Hugo", { blob = string.rep("x", 300 * 1024) }))
 assert(S.GetCache()["Hugo"] == nil, "an oversized sheet must be refused")
 
 -- The cache caps its entry count, evicting the oldest by time. Bob is the oldest
 -- entry, so filling past the cap must drop it while keeping the newest.
-for i = 1, 51 do deliver("P" .. i, { name = "P" .. i }) end
+for i = 1, 51 do deliver("P" .. i, validChar("P" .. i)) end
 local n = 0
 for _ in pairs(S.GetCache()) do n = n + 1 end
 assert(n == 50, "the cache must cap at MAX_ENTRIES, got " .. n)
