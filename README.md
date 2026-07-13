@@ -39,15 +39,29 @@ every window - sheet math included - adapts to it.
 
 ## Installation
 
-1. Download or clone this repository.
-2. Copy the `Parchment` folder into your AddOns directory:
-   `World of Warcraft/_retail_/Interface/AddOns/`
+**From a release (recommended):**
+
+1. Download `Parchment-<version>.zip` from the
+   [latest release](https://github.com/tabescine/Parchment/releases/latest).
+2. Extract it into your AddOns directory so you end up with
+   `World of Warcraft/_retail_/Interface/AddOns/Parchment/Parchment.toc`
+   (the zip already contains the `Parchment` folder).
 3. Restart the client (or `/reload`), and enable Parchment in the AddOns list.
+
+The release zip contains only what the game loads. The optional offline
+converter and the annotated sample system/character files are not part of it -
+grab those straight from the repository's [`Tools/`](Tools/) folder whenever
+you want them.
+
+**From source:** clone the repository and copy the `Parchment` folder into
+`Interface/AddOns/`. The dev-only extras (tests, docs, tooling) ride along
+harmlessly - WoW only loads what `Parchment.toc` lists.
 
 ## Quick start
 
 1. `/pmt import` - paste a system or character definition (JSON or TOML). A small
-   public-domain sample lives in `Tools/examples/` if you just want to try it.
+   public-domain sample lives in [`Tools/examples/`](Tools/examples/) in the
+   repository if you just want to try it.
 2. `/pmt new` - create a character with the guided wizard.
 3. `/pmt sheet` - open your character sheet.
 4. Playing with a group? The DM toggles `/pmt dm` and uses `/pmt share` to
@@ -91,11 +105,12 @@ A system definition declares your ruleset as data: attributes, a modifier
 table, skills, saving throws, weapons, racial/origin traits, perk trees, and
 an optional `derived_stats` block that tells Parchment which attributes drive
 HP, mana, AC, movement, and so on. Nothing is hard-coded - see
-`Tools/examples/sample.system.toml` for the fully annotated format reference
-(every feature appears once, with a comment) and `sample.character.toml` for
-its character-side counterpart. Import both with `/pmt import`; `Tools/`
-also holds an optional offline converter for version-controlled rulesets
-and SavedVariables recovery.
+[`Tools/examples/sample.system.toml`](Tools/examples/sample.system.toml) for
+the fully annotated format reference (every feature appears once, with a
+comment) and `sample.character.toml` for its character-side counterpart.
+Import both with `/pmt import`. The repository's `Tools/` folder (not part of
+the release zip) also holds an optional offline converter for
+version-controlled rulesets and SavedVariables recovery.
 
 ## Development
 
@@ -113,6 +128,12 @@ the context-menu integration, and an end-to-end import of the sample files
 (whose documented numbers double as regression expectations). CI
 (`.github/workflows/ci.yml`) runs a syntax check plus this suite. UI code
 (frames, menus beyond their logic) is exercised in-game.
+
+Releases are built by `.github/workflows/release.yml`: pushing a `v*` tag
+(matching the `.toc`'s `## Version:`, gated on the test suite) packages an
+AddOns-ready zip - runtime files only - and publishes it as a GitHub release,
+attaching to an existing release of the same tag if one was already drafted
+by hand.
 
 ## License
 
