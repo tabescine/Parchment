@@ -1,14 +1,16 @@
 -- Parchment - Config (UI)
 --
--- The settings window (/pmt config): checkboxes for the profile toggles that
--- previously lived only behind slash commands (DM mode, public initiative
--- rolls, minimap button), plus shortcuts to the system library and saving.
--- Pure UI over db.profile - it owns no state of its own, so the slash
--- commands and the minimap menu stay equally valid ways to flip the same
--- settings (they refresh this window when it is open, and vice versa).
+-- The Settings panel of the hub window (/pmt config opens the hub there):
+-- checkboxes for the profile toggles (DM mode, public initiative rolls,
+-- vitals sharing, minimap button), plus shortcuts to the system library and
+-- saving. Pure UI over db.profile - it owns no state of its own, so the
+-- slash commands and the minimap menu stay equally valid ways to flip the
+-- same settings (they refresh this panel when it shows, and vice versa).
 --
--- Reads from: ns.Addon.db.profile, ns.Comm, ns.Minimap, ns.Systems, ns.UI.
--- Exposes on ns.ConfigUI: Open, Toggle, RefreshIfShown.
+-- Reads from: ns.Addon.db.profile, ns.Comm, ns.Minimap, ns.Systems, ns.UI,
+--   ns.HubUI (panel registration and open/refresh).
+-- Exposes on ns.ConfigUI: Open, Toggle, RefreshIfShown (thin wrappers over
+--   the hub's settings panel, kept so callers need not know where it lives).
 -- Registers the "config" module opener with Core.
 
 local ADDON, ns = ...
@@ -64,24 +66,18 @@ local function Header(f, y, text)
     fs:SetText(text)
 end
 
--- Builds the window once. Refresh fills the checkbox states.
-local function BuildFrame()
-    local f = UI.CreateWindow("ParchmentConfigFrame", {
-        title = "Settings", width = 320, height = 380,
-        minW = 300, minH = 380, maxW = 460, maxH = 520, dbKey = "configWindow",
-    })
-    -- Restored geometry may predate a taller layout; programmatic SetSize is
-    -- not clamped by the resize bounds, so enforce the minimum here.
-    if f:GetHeight() < 380 then f:SetHeight(380) end
-
-    local y = -48
+-- Builds the panel widgets once into the hub-provided frame. Refresh fills
+-- the checkbox states.
+local function BuildContent(f)
+    local y = -8
     Header(f, y, "GENERAL"); y = y - 24
 
     f.dmCheck = Checkbox(f, y, "DM mode",
         "Act as the DM: your initiative edits broadcast to the group, and you "
         .. "may send your ruleset with 'Share system'. When off, you receive "
-        .. "the DM's sync and submit your own initiative instead. Toggling "
-        .. "this never sends anything by itself.",
+        .. "the DM's sync and submit your own initiative instead. Turning it "
+        .. "on announces the role to your group (so two active DMs notice "
+        .. "each other); sharing your system stays a separate, explicit action.",
         function(checked)
             ns.Comm.SetDM(checked)
             RefreshDependents()
@@ -98,6 +94,16 @@ local function BuildFrame()
         end)
     y = y - 28
 
+    f.vitalsCheck = Checkbox(f, y, "Share vitals with party",
+        "Broadcast your character's HP/Mana/AC snapshot to group members for "
+        .. "their party overview (/pmt party). Turn off to keep your vitals "
+        .. "private - you still see members who share theirs.",
+        function(checked)
+            ns.Addon.db.profile.shareVitals = checked
+            if checked and ns.Party then ns.Party.OnVitalsChanged() end
+        end)
+    y = y - 28
+
     f.minimapCheck = Checkbox(f, y, "Minimap button",
         "Show the Parchment button on the minimap.",
         function(checked)
@@ -106,9 +112,8 @@ local function BuildFrame()
     y = y - 36
 
     Header(f, y, "SYSTEMS"); y = y - 26
-    ActionButton(f, y, "Choose active system", function() ns.Systems.OpenPicker() end); y = y - 26
-    ActionButton(f, y, "Delete a system", function() ns.Systems.OpenDeletePicker() end); y = y - 26
-    ActionButton(f, y, "Import / Export", function() ns.OpenModule("import") end); y = y - 26
+    ActionButton(f, y, "Manage systems", function() ns.HubUI.Open("systems") end); y = y - 26
+    ActionButton(f, y, "Import / Export", function() ns.HubUI.Open("import") end); y = y - 26
     local share = ActionButton(f, y, "Share system with group", ns.ShareSystem); y = y - 36
     share:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
@@ -127,8 +132,6 @@ local function BuildFrame()
         GameTooltip:Show()
     end)
     save:SetScript("OnLeave", GameTooltip_Hide)
-
-    return f
 end
 
 -- Fills the checkbox states from the live profile.
@@ -136,30 +139,27 @@ Refresh = function(self)
     local p = ns.Addon.db.profile
     self.dmCheck:SetChecked(ns.Comm and ns.Comm.IsDM() or false)
     self.rollsCheck:SetChecked(p.publicRolls and true or false)
+    self.vitalsCheck:SetChecked(p.shareVitals ~= false)
     self.minimapCheck:SetChecked(not (p.minimap and p.minimap.hide))
 end
 
--- Returns the singleton frame, building it on first use.
-local function GetFrame()
-    if not ConfigUI.frame then ConfigUI.frame = BuildFrame() end
-    return ConfigUI.frame
-end
+ns.HubUI.RegisterPanel({
+    id = "settings", label = "Settings", order = 90,
+    Build = BuildContent, Refresh = Refresh,
+})
 
 function ConfigUI.Open()
-    local f = GetFrame()
-    Refresh(f)
-    f:Show()
+    ns.HubUI.Open("settings")
 end
 
 function ConfigUI.Toggle()
-    local f = GetFrame()
-    if f:IsShown() then f:Hide() else ConfigUI.Open() end
+    ns.HubUI.Toggle("settings")
 end
 
 -- Re-syncs the checkboxes when a setting changes elsewhere (slash command,
--- minimap menu) while the window is open.
+-- minimap menu) while the panel shows.
 function ConfigUI.RefreshIfShown()
-    if ConfigUI.frame and ConfigUI.frame:IsShown() then Refresh(ConfigUI.frame) end
+    ns.HubUI.RefreshIfShown("settings")
 end
 
 ns.RegisterModule("config", ConfigUI.Toggle)

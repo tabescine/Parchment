@@ -2,7 +2,7 @@
 ## Title: Parchment
 ## Notes: System-agnostic TTRPG toolkit - character sheets, initiative, and perk trees.
 ## Author: Parchment
-## Version: 0.1.0
+## Version: 0.2.0
 ## SavedVariables: ParchmentSystemDB, ParchmentCharDB, ParchmentDB
 
 # Embedded libraries (load first so LibStub and the Ace3 modules exist).
@@ -24,6 +24,8 @@ Modules\Dice.lua
 UI\Window.lua
 UI\Dialogs.lua
 UI\Widgets.lua
+# The hub (management window). Loads before the files that register panels.
+UI\HubUI.lua
 
 # Modules (logic) and their UI. Each registers its opener with Core.
 Modules\CharacterSheet.lua
@@ -35,9 +37,11 @@ Modules\InitiativeTracker.lua
 UI\InitiativeUI.lua
 Modules\ImportExport.lua
 UI\ImportExportUI.lua
+UI\HubPanels.lua
 Modules\PerkTree.lua
 UI\PerkTreeUI.lua
 Modules\CharacterEditor.lua
+UI\CharacterForm.lua
 UI\CharacterEditorUI.lua
 UI\CharacterWizardUI.lua
 UI\ConfigUI.lua

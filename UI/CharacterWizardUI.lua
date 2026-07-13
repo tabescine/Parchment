@@ -1,7 +1,7 @@
 -- Parchment - Character Wizard (UI)
 --
--- A guided, stepped creator for a brand-new character: Identity -> Attributes ->
--- Traits -> Proficiencies -> Review. It edits a draft (not the active
+-- A guided, stepped creator for a brand-new character: Identity -> Traits ->
+-- Attributes -> Proficiencies -> Review. It edits a draft (not the active
 -- character); Finish saves the draft, makes it active, and opens the editor for
 -- any further tweaks. Reuses ns.Widgets.Stepper, ns.Dialogs.Pick and the
 -- ns.CharacterEditor budgets/warnings; validation is soft (shown, never blocks).
@@ -16,6 +16,7 @@ local ADDON, ns = ...
 
 local UI = ns.UI
 local CE = ns.CharacterEditor
+local Form = ns.CharacterForm
 local PAD, ROW_H, CTRL_X = 16, 26, 110
 -- Traits come before Attributes so trait-granted attribute points are in the
 -- budget when the player allocates. Proficiencies follow Attributes (their
@@ -27,37 +28,14 @@ ns.CharacterWizardUI = WizardUI
 
 local Refresh
 
-local Signed = ns.UI.Signed
+-- The shared form (labels, pickers, value fill) lives in ns.CharacterForm; the
+-- wizard binds the builders to its own control column (CTRL_X) below.
+local Label = Form.Label
+local function FieldButton(p, y, width) return Form.FieldButton(p, CTRL_X, y, width) end
+local function TextBox(p, y, width) return Form.TextBox(p, CTRL_X, y, width) end
 
--- Picker item-list builders, shared with the editor (see UI/Widgets.lua).
-local W = ns.Widgets
-local ListItems, AttrItems, TraitItems = W.ListItems, W.AttrItems, W.TraitItems
-local RacialItems, SaveItems, TraitName = W.RacialItems, W.SaveItems, W.TraitName
-
--- Small widget helpers.
-local function Label(p, text, x, y)
-    local fs = p:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    fs:SetPoint("TOPLEFT", x, y); fs:SetTextColor(UI.TEXT[1], UI.TEXT[2], UI.TEXT[3]); fs:SetText(text)
-    return fs
-end
-local function FieldButton(p, y, width)
-    local b = CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
-    b:SetSize(width or 200, 20); b:SetPoint("TOPLEFT", CTRL_X, y + 1)
-    local fs = b:GetFontString(); if fs then fs:SetWidth((width or 200) - 12); fs:SetWordWrap(false) end
-    return b
-end
-local function TextBox(p, y, width)
-    local e = CreateFrame("EditBox", nil, p, "InputBoxTemplate")
-    e:SetSize(width or 200, 20); e:SetPoint("TOPLEFT", CTRL_X + 6, y); e:SetAutoFocus(false)
-    e:SetTextColor(UI.TEXT[1], UI.TEXT[2], UI.TEXT[3]); e:SetScript("OnEscapePressed", e.ClearFocus)
-    return e
-end
-
--- Opens a picker that writes into the draft and refreshes.
-local function Pick(f, title, prompt, items, max, selected, apply)
-    ns.Dialogs.Pick({ title = title, prompt = prompt, items = items, max = max, selected = selected,
-        onConfirm = function(ids) apply(ids); Refresh(f) end })
-end
+-- Still referenced directly by the Review step's summary text.
+local TraitName = ns.Widgets.TraitName
 
 local function NewPage(f)
     local p = CreateFrame("Frame", nil, f)
@@ -86,22 +64,13 @@ local function BuildFrame()
     Label(p1, "Name", PAD, y); f.nameBox = TextBox(p1, y, 220); y = y - ROW_H
     Label(p1, "Player", PAD, y); f.playerBox = TextBox(p1, y, 220); y = y - ROW_H
     Label(p1, "Race", PAD, y); f.raceBtn = FieldButton(p1, y); y = y - ROW_H
-    Label(p1, "Quote", PAD, y); f.quoteBox = TextBox(p1, y, 250); y = y - ROW_H
+    Label(p1, "Quote", PAD, y); f.quoteBox = TextBox(p1, y, 250)
 
     -- Attributes page (shown at step 3). May be empty on first run (no system
     -- imported yet); the NoSystem overlay covers the form until one is.
     local p2 = NewPage(f); f.pages[3] = p2
     y = -PAD
-    f.steppers, f.modText = {}, {}
-    for _, attr in ipairs(system.attributes or {}) do
-        Label(p2, attr.name, PAD, y)
-        local st = ns.Widgets.Stepper(p2, 96); st:SetPoint("TOPLEFT", CTRL_X, y + 1)
-        f.steppers[attr.id] = st
-        local m = p2:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-        m:SetPoint("TOPLEFT", CTRL_X + 104, y); m:SetTextColor(UI.HEAD[1], UI.HEAD[2], UI.HEAD[3])
-        f.modText[attr.id] = m
-        y = y - ROW_H
-    end
+    y = Form.BuildAttributeRows(f, p2, system, PAD, CTRL_X, y, ROW_H)
     f.pointsText = p2:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     f.pointsText:SetPoint("TOPLEFT", PAD, y - 4)
 
@@ -112,7 +81,7 @@ local function BuildFrame()
     Label(p3, "Origins", PAD, y); f.originBtn = FieldButton(p3, y); y = y - ROW_H
     Label(p3, "Primary", PAD, y); f.primaryBtn = FieldButton(p3, y, 120); y = y - ROW_H
     Label(p3, "AC attr", PAD, y); f.acBtn = FieldButton(p3, y, 120); y = y - ROW_H
-    Label(p3, "Init attr", PAD, y); f.initBtn = FieldButton(p3, y, 120); y = y - ROW_H
+    Label(p3, "Init attr", PAD, y); f.initBtn = FieldButton(p3, y, 120)
 
     -- Page 4: Proficiencies.
     local p4 = NewPage(f); f.pages[4] = p4
@@ -145,7 +114,9 @@ local function BuildFrame()
 
     -- Input wiring (reads live f.draft).
     local function textCommit(box, field)
-        box:SetScript("OnTextChanged", function(self, user) if user and f.draft then f.draft[field] = self:GetText() end end)
+        box:SetScript("OnTextChanged", function(self, user)
+            if user and f.draft then f.draft[field] = self:GetText() end
+        end)
     end
     textCommit(f.nameBox, "name"); textCommit(f.playerBox, "player"); textCommit(f.quoteBox, "quote")
 
@@ -155,83 +126,51 @@ local function BuildFrame()
     for id, st in pairs(f.steppers) do
         st:OnStep(function(delta)
             if not f.draft then return end
+            -- Floor at point_buy.min (not a hardcoded 1), matching CE.NewBlank's
+            -- seeding and CE.Warnings' check - else a player could step below the
+            -- base and harvest points the accounting treats as unspent.
             local pb = ns.GetSystem().point_buy
+            local minAttr = (pb and pb.min) or 1
             local maxAttr = (pb and pb.max) or 10
-            local v = (f.draft.attributes[id] or 5) + delta
-            f.draft.attributes[id] = math.max(1, math.min(maxAttr, v))
+            local v = (f.draft.attributes[id] or minAttr) + delta
+            f.draft.attributes[id] = math.max(minAttr, math.min(maxAttr, v))
             Refresh(f)
         end)
     end
 
-    -- Field pickers. Each guards on f.draft both at click time and again in
-    -- the apply callback: ns.Dialogs.Pick is not modal, so the wizard can be
-    -- cancelled (clearing the draft) while a picker is open.
-    f.raceBtn:SetScript("OnClick", function()
-        if not f.draft then return end
-        local items = {}
-        for _, r in ipairs(CE.Races(ns.GetSystem())) do items[#items + 1] = { id = r, name = r } end
-        if #items == 0 then
-            ns.Print("the loaded system defines no races - add a top-level `races` list or race lists on its racial traits.")
-            return
-        end
-        Pick(f, "Race", "Choose a race", items, 1, { f.draft.race },
-            function(ids) if f.draft then f.draft.race = ids[1] end end)
-    end)
-    f.racialBtn:SetScript("OnClick", function()
-        if not f.draft then return end
-        Pick(f, "Racial Trait", "Choose a racial trait (hover for details)", RacialItems(ns.GetSystem(), f.draft.race), 1,
-            { f.draft.racial_trait },
-            function(ids) if f.draft then f.draft.racial_trait = (ids[1] ~= "__none") and ids[1] or nil end end)
-    end)
-    f.originBtn:SetScript("OnClick", function()
-        if not f.draft then return end
-        Pick(f, "Origin Traits", "Choose up to two (hover for details)", TraitItems(ns.GetSystem().origin_traits), 2,
-            f.draft.origin_traits, function(ids) if f.draft then f.draft.origin_traits = ids end end)
-    end)
-    f.primaryBtn:SetScript("OnClick", function()
-        if not f.draft then return end
-        Pick(f, "Primary Attribute", "Choose the primary attribute", AttrItems(ns.GetSystem()), 1,
-            { f.draft.primary_attribute }, function(ids) if f.draft then f.draft.primary_attribute = ids[1] end end)
-    end)
-    f.acBtn:SetScript("OnClick", function()
-        if not f.draft then return end
-        Pick(f, "AC Attribute", "Choose the attribute that governs AC", AttrItems(ns.GetSystem()), 1,
-            { f.draft.ac_attribute }, function(ids) if f.draft then f.draft.ac_attribute = ids[1] end end)
-    end)
-    f.initBtn:SetScript("OnClick", function()
-        if not f.draft then return end
-        Pick(f, "Initiative Attribute", "Choose the attribute that governs initiative", AttrItems(ns.GetSystem()), 1,
-            { f.draft.init_attribute }, function(ids) if f.draft then f.draft.init_attribute = ids[1] end end)
-    end)
-    f.skillsBtn:SetScript("OnClick", function()
-        if not f.draft then return end
-        local skills = ns.GetSystem().skills or {}
-        Pick(f, "Accomplished Skills", "Mark accomplished skills", ListItems(skills), #skills,
-            f.draft.accomplished_skills, function(ids) if f.draft then f.draft.accomplished_skills = ids end end)
-    end)
-    f.weaponsBtn:SetScript("OnClick", function()
-        if not f.draft then return end
-        local weapons = ns.GetSystem().weapons or {}
-        Pick(f, "Accomplished Weapons", "Mark accomplished weapons", ListItems(weapons), #weapons,
-            f.draft.accomplished_weapons, function(ids) if f.draft then f.draft.accomplished_weapons = ids end end)
-    end)
-    f.savesBtn:SetScript("OnClick", function()
-        if not f.draft then return end
-        Pick(f, "Accomplished Saves", "Primary save is auto; choose one more", SaveItems(ns.GetSystem(), f.draft.primary_attribute),
-            #(ns.GetSystem().attributes or {}), f.draft.accomplished_saves,
-            function(ids) if f.draft then f.draft.accomplished_saves = ids end end)
-    end)
+    -- Field pickers: the shared form wires them, reading f.draft live and
+    -- refreshing the current step afterward.
+    Form.WirePickers(f, function() return f.draft end, function() Refresh(f) end)
 
     return f
 end
 
 -- Saves the draft, makes it active, and opens the editor.
-function WizardUI.Finish(self)
+local function Commit(self)
     CE.InitResources(self.draft, ns.GetSystem())
     CE.SaveNew(ns.NextCharacterKey(), self.draft)
     self:Hide()
     if ns.CharacterEditorUI then ns.CharacterEditorUI.Open() end
     if ns.CharacterSheetUI then ns.CharacterSheetUI.RefreshIfShown() end
+end
+
+-- Soft warnings never block creation (the review lists them), but Finishing with
+-- them present is confirmed so it cannot be an accident.
+StaticPopupDialogs["PARCHMENT_WIZARD_WARN"] = {
+    text = "This character still has %s. Create it anyway?",
+    button1 = "Create", button2 = CANCEL,
+    OnAccept = function(_, self) Commit(self) end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
+function WizardUI.Finish(self)
+    local warns = CE.Warnings(self.draft, ns.GetSystem())
+    if #warns > 0 then
+        StaticPopup_Show("PARCHMENT_WIZARD_WARN",
+            #warns .. " warning" .. (#warns == 1 and "" or "s"), nil, self)
+        return
+    end
+    Commit(self)
 end
 
 -- Redraws the current step.
@@ -246,39 +185,10 @@ Refresh = function(self)
     self.backBtn:SetEnabled(self.step > 1)
     self.nextBtn:SetText(self.step == #STEPS and "Finish" or "Next")
 
-    local function setBox(box, v) if not box:HasFocus() then box:SetText(v or "") end end
-    setBox(self.nameBox, d.name); setBox(self.playerBox, d.player); setBox(self.quoteBox, d.quote)
-    self.raceBtn:SetText(d.race ~= "" and d.race or "(choose)")
-
     local sheet = ns.CharacterSheet.Compute(d, system)
-    local modById = {}
-    for _, a in ipairs(sheet.attributes) do modById[a.id] = a end
-    for _, attr in ipairs(system.attributes or {}) do
-        local st = self.steppers[attr.id]
-        if st then
-            st:SetText(tostring((d.attributes or {})[attr.id] or 1))
-            local a = modById[attr.id]
-            self.modText[attr.id]:SetText(a and Signed(a.modifier) or "")
-        end
-    end
-    local used, avail = CE.AttributePoints(d, system)
-    local pc = (used == avail) and UI.GREEN or (used > avail and UI.RED or UI.HEAD)
-    self.pointsText:SetTextColor(pc[1], pc[2], pc[3])
-    self.pointsText:SetText(string.format("Attribute points: %d / %d", used, avail))
-
-    self.racialBtn:SetText(d.racial_trait and TraitName(system, "racial_traits", d.racial_trait) or "(none)")
-    local origins = {}
-    for _, id in ipairs(d.origin_traits or {}) do origins[#origins + 1] = TraitName(system, "origin_traits", id) end
-    self.originBtn:SetText(#origins > 0 and table.concat(origins, ", ") or "(none)")
-    self.primaryBtn:SetText(ns.AttrName(d.primary_attribute))
-    self.acBtn:SetText(ns.AttrName(d.ac_attribute))
-    self.initBtn:SetText(ns.AttrName(d.init_attribute))
-
-    local tg = CE.AccomplishTargets(sheet)
-    self.skillsBtn:SetText(string.format("%d / %d", #(d.accomplished_skills or {}), tg.skills))
-    self.weaponsBtn:SetText(string.format("%d / %d", #(d.accomplished_weapons or {}), tg.weapons))
-    self.savesBtn:SetText(string.format("%d / %d", #(d.accomplished_saves or {}), tg.saves))
-    self.profHint:SetText(string.format("Suggested targets: %d skills, %d weapons, %d saves (primary is automatic).",
+    local origins, tg = Form.FillCommon(self, d, system, sheet, false)
+    self.profHint:SetText(string.format(
+        "Suggested targets: %d skills, %d weapons, %d saves (primary is automatic).",
         tg.skills, tg.weapons, tg.saves))
 
     if self.step == #STEPS then
@@ -303,28 +213,11 @@ Refresh = function(self)
     end
 end
 
--- The wizard's attribute page is laid out from the system loaded at build
--- time; rebuild the frame when the attribute set changes (the draft is not
--- carried over - it belonged to the old system).
-local function AttrSignature()
-    local ids = {}
-    for _, a in ipairs(ns.GetSystem().attributes or {}) do ids[#ids + 1] = tostring(a.id) end
-    return table.concat(ids, "\31")
-end
-
+-- The wizard's attribute page is laid out from the system loaded at build time;
+-- the shared helper rebuilds the frame when the attribute set changes (the draft
+-- is dropped - it belonged to the old system; see WizardUI.RefreshIfShown).
 local function GetFrame()
-    local sig = AttrSignature()
-    local f = WizardUI.frame
-    if f and f.attrSignature ~= sig then
-        f:Hide()
-        f:SetParent(nil)
-        WizardUI.frame = nil
-    end
-    if not WizardUI.frame then
-        WizardUI.frame = BuildFrame()
-        WizardUI.frame.attrSignature = sig
-    end
-    return WizardUI.frame
+    return ns.UI.RebuildableFrame(WizardUI, BuildFrame, Form.AttrSignature)
 end
 
 -- Opens the wizard with a fresh draft.

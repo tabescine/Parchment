@@ -9,6 +9,11 @@
 --   * decode returns JSON arrays as sequences and JSON objects with string keys.
 --     Integer-looking keys are normalized to numbers by the import layer, not
 --     here, so this stays a faithful generic JSON codec.
+--   * Fidelity: every number prints via %.17g (never %d, whose C-long cast is
+--     32-bit on Windows) so export->import is lossless; NaN/inf are refused on
+--     both encode and decode. \u surrogate pairs combine into one UTF-8 char.
+--     decode rejects `null` (it cannot live in a Lua table without corrupting
+--     it) and caps nesting depth instead of overflowing the stack.
 --
 -- Reads from: nothing.
 -- Exposes on ns.JSON: .encode(value, pretty), .decode(str) -> value | nil, err
@@ -17,6 +22,10 @@ local ADDON, ns = ...
 
 ns.JSON = ns.JSON or {}
 local JSON = ns.JSON
+
+-- Hard nesting limit for decode: a pathologically deep payload would otherwise
+-- run the recursive parser off the C stack and surface a raw "stack overflow".
+local MAX_DEPTH = 200
 
 -- Encoding.
 
@@ -50,15 +59,25 @@ local function EncodeValue(v, indent, pretty)
     if t == "string" then
         return EncodeString(v)
     elseif t == "number" then
-        if v == math.floor(v) and v == v and v ~= math.huge and v ~= -math.huge then
-            return string.format("%d", v)
+        -- NaN/inf have no JSON representation - "%.17g" would print "nan"/"inf",
+        -- an invalid document that fails re-decode. Refuse loudly instead.
+        if v ~= v or v == math.huge or v == -math.huge then
+            error("cannot encode non-finite number", 0)
         end
-        return tostring(v)
+        -- "%.17g" prints every integer up to 2^53 exactly, as plain digits (no
+        -- decimal point), and reproduces every other double on decode. Never
+        -- "%d": Lua 5.1 casts it through C long, 32-bit on Windows (the retail
+        -- client), so integers past 2^31 would print garbage in-game. Never
+        -- tostring(): it is only %.14g here and silently loses bits.
+        return string.format("%.17g", v)
     elseif t == "boolean" then
         return tostring(v)
     elseif t == "nil" then
         return "null"
     elseif t == "table" then
+        -- An empty Lua table is ambiguous (list vs map); it encodes to [] since
+        -- lists are the common case. Parchment fields that must stay maps are
+        -- never empty in practice, so this does not bite the round-trip.
         if next(v) == nil then return "[]" end
         local nl, pad, padIn, sp = "", "", "", ""
         if pretty then
@@ -96,10 +115,13 @@ local function Utf8(cp)
         return string.char(cp)
     elseif cp < 0x800 then
         return string.char(0xC0 + math.floor(cp / 0x40), 0x80 + cp % 0x40)
-    else
+    elseif cp < 0x10000 then
         return string.char(0xE0 + math.floor(cp / 0x1000),
             0x80 + math.floor(cp / 0x40) % 0x40, 0x80 + cp % 0x40)
     end
+    return string.char(0xF0 + math.floor(cp / 0x40000),
+        0x80 + math.floor(cp / 0x1000) % 0x40,
+        0x80 + math.floor(cp / 0x40) % 0x40, 0x80 + cp % 0x40)
 end
 
 -- Decodes a JSON string into a Lua value.
@@ -108,6 +130,7 @@ end
 function JSON.decode(str)
     local s = str
     local pos = 1
+    local depth = 0
     local parseValue
 
     -- Errors report line:column - a byte offset is useless in a long paste.
@@ -151,7 +174,25 @@ function JSON.decode(str)
                 elseif e == "u" then
                     local hex = s:sub(pos + 2, pos + 5)
                     if not hex:match("^%x%x%x%x$") then err("invalid \\u escape") end
-                    buf[#buf + 1] = Utf8(tonumber(hex, 16))
+                    local cp = tonumber(hex, 16)
+                    if cp >= 0xD800 and cp <= 0xDBFF then
+                        -- High surrogate half: JSON escapes astral chars as a
+                        -- UTF-16 pair (Python's json.dumps does this for every
+                        -- emoji), so combine it with the low half that must
+                        -- follow. Decoding each half alone would emit CESU-8
+                        -- mojibake instead of one 4-byte UTF-8 character.
+                        local lohex = s:sub(pos + 8, pos + 11)
+                        local lo = s:sub(pos + 6, pos + 7) == "\\u"
+                            and lohex:match("^%x%x%x%x$") and tonumber(lohex, 16)
+                        if not lo or lo < 0xDC00 or lo > 0xDFFF then
+                            err("unpaired surrogate in \\u escape")
+                        end
+                        cp = 0x10000 + (cp - 0xD800) * 0x400 + (lo - 0xDC00)
+                        pos = pos + 6
+                    elseif cp >= 0xDC00 and cp <= 0xDFFF then
+                        err("unpaired surrogate in \\u escape")
+                    end
+                    buf[#buf + 1] = Utf8(cp)
                     pos = pos + 4
                 else
                     err("invalid escape '\\" .. e .. "'")
@@ -170,14 +211,20 @@ function JSON.decode(str)
             or s:match("^%-?%d+%.?%d*", pos)
         if not numstr or numstr == "" then err("invalid number") end
         pos = pos + #numstr
-        return tonumber(numstr)
+        local v = tonumber(numstr)
+        -- A syntactically valid literal can still overflow the double range
+        -- ("1e999" -> inf); non-finite numbers must not enter the data model.
+        if v ~= v or v == math.huge or v == -math.huge then err("number out of range") end
+        return v
     end
 
     local function parseArray()
         pos = pos + 1
+        depth = depth + 1
+        if depth > MAX_DEPTH then err("nesting too deep") end
         local arr = {}
         skip()
-        if s:sub(pos, pos) == "]" then pos = pos + 1; return arr end
+        if s:sub(pos, pos) == "]" then pos = pos + 1; depth = depth - 1; return arr end
         while true do
             arr[#arr + 1] = parseValue()
             skip()
@@ -191,14 +238,17 @@ function JSON.decode(str)
                 err("expected ',' or ']'")
             end
         end
+        depth = depth - 1
         return arr
     end
 
     local function parseObject()
         pos = pos + 1
+        depth = depth + 1
+        if depth > MAX_DEPTH then err("nesting too deep") end
         local obj = {}
         skip()
-        if s:sub(pos, pos) == "}" then pos = pos + 1; return obj end
+        if s:sub(pos, pos) == "}" then pos = pos + 1; depth = depth - 1; return obj end
         while true do
             skip()
             if s:sub(pos, pos) ~= '"' then err("expected string key") end
@@ -218,6 +268,7 @@ function JSON.decode(str)
                 err("expected ',' or '}'")
             end
         end
+        depth = depth - 1
         return obj
     end
 
@@ -235,7 +286,10 @@ function JSON.decode(str)
             if s:sub(pos, pos + 4) == "false" then pos = pos + 5; return false end
             err("invalid literal")
         elseif c == "n" then
-            if s:sub(pos, pos + 3) == "null" then pos = pos + 4; return nil end
+            -- Reject null outright rather than dropping it: a returned nil would
+            -- vanish from arrays (compacting them) and objects (key disappears),
+            -- silently corrupting the data. Parchment data never contains null.
+            if s:sub(pos, pos + 3) == "null" then err("null is not allowed") end
             err("invalid literal")
         else
             return parseNumber()

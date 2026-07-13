@@ -1,21 +1,44 @@
 -- Parchment - Initiative Tracker (logic)
 --
--- Owns the combat turn order: a list of combatants (name + initiative value),
--- the current turn index, and the round counter. State is persisted in the
--- addon DB so it survives a /reload mid-session. Pure state manipulation here;
--- the UI reads GetState and calls these mutators.
+-- Owns the combat turn order: a list of combatants (name + initiative value
+-- + optional tiebreaker stat value), the current turn index, and the round
+-- counter. NPC combatants may also carry DM-tracked hit points (hp/hpmax) -
+-- the DM's private bookkeeping. Combatants are inserted at their ordered
+-- position (initiative desc, then the system's initiative_tiebreaker stat)
+-- and never re-sorted, so the DM's manual reordering (Move) sticks.
+-- State is persisted in the addon DB so it survives a /reload mid-session.
+-- Pure state manipulation here; the UI reads GetState and calls the mutators.
 --
--- Sync is handled by the UI layer: the DM broadcasts state (INIT) and players
--- submit their own rolls back (INITSUBMIT); SetState applies a received state.
+-- Sync is handled by the UI layer: the DM broadcasts state (INIT, via
+-- WireState so NPC hit points never cross the wire) and players submit their
+-- own rolls back (INITSUBMIT); SetState applies a received state and accepts
+-- only name/init/isNPC, so remote data cannot smuggle fields in either.
+--
+-- A player submission is bound to its sender: SubmitFor records the submitter
+-- as the combatant's `owner` (DM-private, stripped from WireState) and refuses a
+-- second entry from the same player; EndTurnFor only advances when the active
+-- combatant is the one that sender submitted. So a player can neither submit nor
+-- end-turn for anyone else, and wire-sourced init/tb are floored and bounded.
 --
 -- Reads from: ns.Addon.db.global.initiative, ns.Dice (shared d20 roller).
--- Exposes on ns.InitiativeTracker: GetState, SetState, Add, AddRolled, Remove,
---   SetCurrent, Next, Prev, Start, Reset, RollD20, RequestRoll.
+-- Exposes on ns.InitiativeTracker: GetState, SetState, WireState, HasPlayer,
+--   Add, AddRolled, SubmitFor, EndTurnFor, Remove, Move, SetCurrent, Next,
+--   Prev, Start, Reset, AdjustHP, RollD20, RequestRoll.
 
 local ADDON, ns = ...
 
 ns.InitiativeTracker = ns.InitiativeTracker or {}
 local IT = ns.InitiativeTracker
+
+-- Bounds for wire-sourced player submissions (init and the tiebreaker stat).
+local SUBMIT_MIN, SUBMIT_MAX = -999, 999
+
+-- Length cap for combatant names. Numeric wire fields are clamped; names need
+-- the same treatment or a peer can persist a multi-KB string into the
+-- SavedVariables via INIT/INITSUBMIT. Applied in Add and SetState so local and
+-- wire paths hold the same line. (A multi-byte char may be cut mid-sequence -
+-- cosmetic at worst, and only on names this long.)
+local MAX_NAME = 64
 
 -- Returns the persisted initiative state, creating the default on first use.
 local function State()
@@ -24,15 +47,53 @@ local function State()
     return db.global.initiative
 end
 
--- Sorts combatants by initiative descending, breaking ties by name. Coerces
--- init defensively so a corrupt entry (e.g. persisted before sanitizing was
--- added) cannot make the comparator throw.
-local function SortDescending(state)
-    table.sort(state.combatants, function(a, b)
-        local ai, bi = tonumber(a.init) or 0, tonumber(b.init) or 0
-        if ai ~= bi then return ai > bi end
-        return tostring(a.name or "") < tostring(b.name or "")
-    end)
+-- True when combatant a outranks b in turn order: higher initiative first,
+-- ties broken by the system's initiative tiebreaker stat (the `tb` value
+-- captured when the combatant was added; absent counts lowest). Equal on
+-- both = no opinion - the DM resolves those by reordering (IT.Move).
+-- Fields are coerced defensively so corrupt entries cannot throw.
+local function Outranks(a, b)
+    local ai, bi = tonumber(a.init) or 0, tonumber(b.init) or 0
+    if ai ~= bi then return ai > bi end
+    return (tonumber(a.tb) or -math.huge) > (tonumber(b.tb) or -math.huge)
+end
+
+-- Inserts a combatant at its ordered position WITHOUT re-sorting the rest:
+-- existing rows keep their order, so a DM's manual tie-break reordering is
+-- never undone by a later add. Returns the insertion index.
+local function InsertOrdered(state, combatant)
+    local pos = #state.combatants + 1
+    for i, c in ipairs(state.combatants) do
+        if Outranks(combatant, c) then pos = i break end
+    end
+    table.insert(state.combatants, pos, combatant)
+    return pos
+end
+
+-- True when two player names refer to the same player (realm-suffix tolerant).
+-- Kept local so this pure module needs no ns.Comm dependency; mirrors
+-- Comm.SameName (Phase 2 centralizes the normalizer).
+local function SameOwner(a, b)
+    if not a or not b then return false end
+    local ka = tostring(a):match("^[^-]+")
+    local kb = tostring(b):match("^[^-]+")
+    return ka ~= nil and ka:lower() == (kb or ""):lower()
+end
+
+-- Coerce, floor, and bound a wire-sourced init/tiebreaker value. nil stays nil
+-- (no value submitted) so the tiebreaker remains optional.
+local function ClampSubmit(v)
+    v = tonumber(v)
+    if not v then return nil end
+    return math.max(SUBMIT_MIN, math.min(SUBMIT_MAX, math.floor(v)))
+end
+
+-- The index of the combatant `owner` submitted, or nil.
+local function IndexOwnedBy(state, owner)
+    for i, c in ipairs(state.combatants) do
+        if SameOwner(c.owner, owner) then return i end
+    end
+    return nil
 end
 
 function IT.GetState()
@@ -49,7 +110,7 @@ function IT.SetState(incoming)
     for _, c in ipairs(type(incoming.combatants) == "table" and incoming.combatants or {}) do
         if type(c) == "table" and type(c.name) == "string" and c.name ~= "" then
             combatants[#combatants + 1] = {
-                name = c.name,
+                name = string.sub(c.name, 1, MAX_NAME),
                 init = tonumber(c.init) or 0,
                 isNPC = c.isNPC and true or false,
             }
@@ -59,6 +120,49 @@ function IT.SetState(incoming)
     local current = math.floor(tonumber(incoming.current) or 0)
     state.current = math.max(0, math.min(current, #combatants))
     state.round = math.max(0, math.floor(tonumber(incoming.round) or 0))
+end
+
+-- The state as broadcast to players: combatants reduced to name/init/isNPC.
+-- NPC hit points are the DM's private bookkeeping and are stripped here, so
+-- players never receive them at all.
+function IT.WireState()
+    local state = State()
+    local out = { current = state.current, round = state.round, combatants = {} }
+    for i, c in ipairs(state.combatants) do
+        out.combatants[i] = { name = c.name, init = c.init, isNPC = c.isNPC and true or false }
+    end
+    return out
+end
+
+-- Sets or adjusts an NPC combatant's hit points from a user-typed string:
+--   "12"      sets current HP (and max HP too, while max is unset)
+--   "12/40"   sets current and max
+--   "+5"/"-7" adjusts current HP (clamped at 0; may exceed max - DM's call)
+-- Player rows are refused: their HP comes from their own live vitals.
+-- Returns ok, err.
+function IT.AdjustHP(index, text)
+    local c = State().combatants[index]
+    if not c then return false, "no combatant at that position." end
+    if not c.isNPC then return false, "player HP comes from their own sheet (live vitals)." end
+    text = strtrim(tostring(text or ""))
+    local cur, max = text:match("^(%d+)%s*/%s*(%d+)$")
+    if cur then
+        c.hp, c.hpmax = tonumber(cur), tonumber(max)
+        return true
+    end
+    local sign, n = text:match("^([+%-])(%d+)$")
+    if sign then
+        local delta = tonumber(n) * (sign == "-" and -1 or 1)
+        c.hp = math.max(0, (c.hp or 0) + delta)
+        return true
+    end
+    n = text:match("^(%d+)$")
+    if n then
+        c.hp = tonumber(n)
+        c.hpmax = c.hpmax or c.hp
+        return true
+    end
+    return false, "use a number, +N / -N, or current/max."
 end
 
 -- Rolls a d20 locally and adds a modifier (hidden from the group).
@@ -72,26 +176,46 @@ function IT.RequestRoll(modifier, onComplete)
     return ns.Dice.Request(modifier, onComplete)
 end
 
--- Adds a combatant with an explicit initiative total, then re-sorts. Returns
--- the combatant table. Ignores blank or non-string names; init is coerced to a
--- number (it may arrive over the wire via INITSUBMIT).
-function IT.Add(name, init, isNPC)
-    if type(name) ~= "string" then return nil end
-    name = strtrim(name)
-    if name == "" then return nil end
-    local state = State()
-    local combatant = { name = name, init = tonumber(init) or 0, isNPC = isNPC and true or false }
+-- True when a non-NPC combatant with this name is already in the order
+-- (case-insensitive). A player character may appear only once; NPC names may
+-- repeat (three "Wolf"s are a normal encounter).
+function IT.HasPlayer(name)
+    if type(name) ~= "string" then return false end
+    name = name:lower()
+    for _, c in ipairs(State().combatants) do
+        if not c.isNPC and (c.name or ""):lower() == name then return true end
+    end
+    return false
+end
 
-    -- The sort can shift indices; keep the active turn on the same combatant.
+-- Adds a combatant with an explicit initiative total at its ordered position.
+-- Returns the combatant table, or nil, err. Ignores blank or non-string
+-- names; a duplicate PLAYER entry is refused (see HasPlayer); init and tb
+-- (the tiebreaker stat value, see Outranks) are coerced - both may arrive
+-- over the wire via INITSUBMIT.
+function IT.Add(name, init, isNPC, tb)
+    if type(name) ~= "string" then return nil end
+    name = string.sub(strtrim(name), 1, MAX_NAME)
+    if name == "" then return nil end
+    if not isNPC and IT.HasPlayer(name) then
+        return nil, name .. " is already in the turn order."
+    end
+    local state = State()
+    local combatant = {
+        name = name, init = tonumber(init) or 0,
+        isNPC = isNPC and true or false, tb = tonumber(tb),
+    }
+
+    -- Insertion shifts indices; keep the active turn on the same combatant.
+    -- Before combat starts (current == 0) adding sets no pointer - Start (or
+    -- a first Next) begins round 1, so the round count and the turn timers
+    -- only run once the DM actually opens combat.
     local active = state.combatants[state.current]
-    table.insert(state.combatants, combatant)
-    SortDescending(state)
+    InsertOrdered(state, combatant)
     if active then
         for i, c in ipairs(state.combatants) do
             if c == active then state.current = i break end
         end
-    elseif state.current == 0 then
-        state.current = 1
     end
     return combatant
 end
@@ -99,13 +223,64 @@ end
 -- Adds a combatant whose initiative is rolled as d20 + modifier. The roll may be
 -- asynchronous (public rolls), so the combatant is delivered via onAdded(combatant,
 -- total, raw) rather than returned.
-function IT.AddRolled(name, modifier, isNPC, onAdded)
+function IT.AddRolled(name, modifier, isNPC, tb, onAdded)
     name = name and strtrim(name) or ""
     if name == "" then if onAdded then onAdded(nil) end return end
+    -- Refuse duplicate players BEFORE rolling - a public roll the group can
+    -- see must not happen for an add that will be rejected.
+    if not isNPC and IT.HasPlayer(name) then
+        if onAdded then onAdded(nil, nil, nil, name .. " is already in the turn order.") end
+        return
+    end
     IT.RequestRoll(modifier, function(total, raw)
-        local combatant = IT.Add(name, total, isNPC)
-        if onAdded then onAdded(combatant, total, raw) end
+        local combatant, err = IT.Add(name, total, isNPC, tb)
+        if onAdded then onAdded(combatant, total, raw, err) end
     end)
+end
+
+-- Applies a player's initiative submission on the DM-authoritative side, bound
+-- to its sender (`owner`, a canonical player name). One live submission per
+-- player: a resubmit from a player already in the order is refused. The
+-- wire-sourced init/tb are floored and bounded. Returns the combatant (with its
+-- clamped .init), or nil, err. The owner is DM-private (WireState strips it).
+function IT.SubmitFor(owner, name, init, tb)
+    if type(owner) ~= "string" or owner == "" then return nil, "unknown sender." end
+    if IndexOwnedBy(State(), owner) then
+        return nil, "you are already in the turn order."
+    end
+    local combatant, err = IT.Add(name, ClampSubmit(init) or 0, false, ClampSubmit(tb))
+    if combatant then combatant.owner = owner end
+    return combatant, err
+end
+
+-- Ends a player's OWN turn on the DM-authoritative side. Honoured only when the
+-- active combatant is the (non-NPC) one this sender submitted and the claimed
+-- name matches - so a player cannot force-advance anyone else. Advances the turn
+-- and returns the combatant whose turn ended, or nil when refused.
+function IT.EndTurnFor(owner, name)
+    if type(owner) ~= "string" or type(name) ~= "string" then return nil end
+    local state = State()
+    local c = state.combatants[state.current]
+    if not c or c.isNPC then return nil end
+    if not SameOwner(c.owner, owner) then return nil end
+    if (c.name or ""):lower() ~= name:lower() then return nil end
+    IT.Next()
+    return c
+end
+
+-- Swaps the combatant at index with its neighbour (delta -1 = up, +1 = down),
+-- keeping the active turn on the same combatant. The DM's manual tie-break:
+-- inserts never re-sort existing rows, so the new order sticks. Returns true
+-- when a swap happened.
+function IT.Move(index, delta)
+    local state = State()
+    local other = index + (delta < 0 and -1 or 1)
+    local a, b = state.combatants[index], state.combatants[other]
+    if not (a and b) then return false end
+    state.combatants[index], state.combatants[other] = b, a
+    if state.current == index then state.current = other
+    elseif state.current == other then state.current = index end
+    return true
 end
 
 -- Removes the combatant at index, keeping the current pointer valid. Entries
@@ -113,11 +288,14 @@ end
 function IT.Remove(index)
     local state = State()
     if not state.combatants[index] then return end
+    -- current == 0 is the pre-combat state (nobody's turn yet); a removal must
+    -- not promote it to an active turn, only keep an already-running pointer valid.
+    local running = state.current >= 1
     table.remove(state.combatants, index)
     if index < state.current then state.current = state.current - 1 end
     local n = #state.combatants
     if state.current > n then state.current = n end
-    if state.current < 1 and n > 0 then state.current = 1 end
+    if running and state.current < 1 and n > 0 then state.current = 1 end
 end
 
 -- Sets the current turn to a specific index.

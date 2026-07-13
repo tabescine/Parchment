@@ -6,10 +6,12 @@
 -- outgoing one. A picker (/pmt systems) chooses the active system from the
 -- library. Parchment ships no system, so the library starts empty.
 --
--- Reads from: ns.Addon.db.global (systemLibrary, systemSource), ns.Comm,
---   ns.Dialogs, ns.Print, ns.DeepCopy, ns.CharacterSheetUI, ns.PerkTreeUI.
---   Owns ParchmentSystemDB swaps.
--- Exposes on ns.Systems: Store, SetActive, OpenPicker, OpenDeletePicker,
+-- Reads from: ns.Addon.db.global (systemLibrary), ns.Comm, ns.ImportExport
+--   (StripMeta), ns.Print, ns.DeepCopy, ns.HubUI, ns.CharacterSheetUI,
+--   ns.PerkTreeUI.
+--   Owns ParchmentSystemDB swaps. The library is browsed/managed in the
+--   hub's Systems panel (UI/HubPanels.lua).
+-- Exposes on ns.Systems: Store, SetActive, GetLibrary, ConfirmDelete,
 --   Delete, RefreshAll.
 
 local ADDON, ns = ...
@@ -31,6 +33,7 @@ local function RefreshAll()
     if ns.PerkTreeUI and ns.PerkTreeUI.frame and ns.PerkTreeUI.frame:IsShown() then ns.PerkTreeUI.Open() end
     if ns.CharacterEditorUI and ns.CharacterEditorUI.RefreshIfShown then ns.CharacterEditorUI.RefreshIfShown() end
     if ns.CharacterWizardUI and ns.CharacterWizardUI.RefreshIfShown then ns.CharacterWizardUI.RefreshIfShown() end
+    if ns.HubUI then ns.HubUI.RefreshIfShown() end
 end
 Sys.RefreshAll = RefreshAll
 
@@ -47,13 +50,11 @@ end
 -- (if not already there) so nothing is lost.
 function Sys.SetActive(system, from)
     if type(system) ~= "table" then return end
-    local g = ns.Addon.db.global
     if type(ParchmentSystemDB) == "table" and ParchmentSystemDB.system_name
         and not Library()[ParchmentSystemDB.system_name] then
         Sys.Store(ParchmentSystemDB, "yours")
     end
     ParchmentSystemDB = ns.DeepCopy(system)
-    g.systemSource = "imported"
     Sys.Store(ParchmentSystemDB, from)
     RefreshAll()
 end
@@ -63,39 +64,10 @@ local function IsActiveName(name)
     return type(ParchmentSystemDB) == "table" and ParchmentSystemDB.system_name == name
 end
 
--- The library as sorted picker items, the active system marked.
-local function LibraryItems()
-    local items = {}
-    for name, entry in pairs(Library()) do
-        items[#items + 1] = {
-            id = name,
-            name = name .. (entry.from and ("  |cff888888(from " .. entry.from .. ")|r") or "")
-                .. (IsActiveName(name) and "  |cff66d966[active]|r" or ""),
-        }
-    end
-    table.sort(items, function(a, b) return a.id < b.id end)
-    return items
-end
-
--- Opens the system picker over the cached system library.
-function Sys.OpenPicker()
-    local items = LibraryItems()
-    if #items == 0 then
-        ns.Print("your system library is empty. Import one with /pmt import.")
-        return
-    end
-
-    ns.Dialogs.Pick({
-        title = "Systems", prompt = "Choose the active system", items = items, max = 1, selected = {},
-        onConfirm = function(ids)
-            local id = ids[1]
-            local entry = id and Library()[id]
-            if entry then
-                Sys.SetActive(entry.system, entry.from)
-                ns.Print("now using system '" .. id .. "'.")
-            end
-        end,
-    })
+-- The system library, keyed by system_name: { name, system, from, time }.
+-- Read-only for callers (the hub's Systems panel renders it).
+function Sys.GetLibrary()
+    return Library()
 end
 
 -- Deletes a system from the library. Deleting the active system also clears
@@ -106,7 +78,6 @@ function Sys.Delete(name)
     Library()[name] = nil
     if IsActiveName(name) then
         ParchmentSystemDB = {}
-        ns.Addon.db.global.systemSource = nil
         ns.Print("deleted system '" .. name .. "'. It was active - no system is loaded now.")
     else
         ns.Print("deleted system '" .. name .. "' from your library.")
@@ -114,25 +85,14 @@ function Sys.Delete(name)
     RefreshAll()
 end
 
--- Opens a picker to delete a system from the library (confirmed via popup).
-function Sys.OpenDeletePicker()
-    local items = LibraryItems()
-    if #items == 0 then
-        ns.Print("your system library is empty - nothing to delete.")
-        return
-    end
-
-    ns.Dialogs.Pick({
-        title = "Delete System", prompt = "Choose a system to delete", items = items, max = 1, selected = {},
-        onConfirm = function(ids)
-            local name = ids[1]
-            if not (name and Library()[name]) then return end
-            local note = IsActiveName(name)
-                and "It is your ACTIVE system - Parchment returns to the no-system state."
-                or "Your characters are not affected."
-            StaticPopup_Show("PARCHMENT_DELETE_SYSTEM", name, note, name)
-        end,
-    })
+-- Opens the delete confirmation for a library entry (the hub's Systems
+-- panel calls this from its per-row delete button).
+function Sys.ConfirmDelete(name)
+    if not Library()[name] then return end
+    local note = IsActiveName(name)
+        and "It is your ACTIVE system - Parchment returns to the no-system state."
+        or "Your characters are not affected."
+    StaticPopup_Show("PARCHMENT_DELETE_SYSTEM", name, note, name)
 end
 
 -- Confirm dialog for deleting a system (destructive once saved to disk).
@@ -140,7 +100,10 @@ StaticPopupDialogs["PARCHMENT_DELETE_SYSTEM"] = {
     text = "Delete system \"%s\"?\n\n%s",
     button1 = DELETE or "Delete",
     button2 = CANCEL,
-    OnAccept = function(_, name) Sys.Delete(name) end,
+    OnAccept = function(_, name)
+        Sys.Delete(name)
+        if ns.HubUI then ns.HubUI.RefreshIfShown("systems") end
+    end,
     timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
 }
 
@@ -169,6 +132,12 @@ if ns.Comm then
         -- the system they just shared.
         if ns.Comm.IsSelf(sender) then return end
         if type(system) ~= "table" or type(system.system_name) ~= "string" then return end
+        -- Same line as the local import path: strip '_'-prefixed metadata
+        -- before validating and storing, so remote metadata never persists into
+        -- the library / ParchmentSystemDB or round-trips into local exports.
+        if ns.ImportExport and ns.ImportExport.StripMeta then
+            system = ns.ImportExport.StripMeta(system)
+        end
         local ok = ns.Schema.ValidateSystem(system)
         if not ok then
             ns.Print((sender or "someone") .. " shared system '" .. system.system_name

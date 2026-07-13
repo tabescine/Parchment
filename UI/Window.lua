@@ -7,7 +7,8 @@
 -- behaviours common to every Parchment window.
 --
 -- Reads from: ns.Addon.db (for geometry persistence, keyed by opts.dbKey).
--- Exposes on ns.UI: .CreateWindow, .Signed, and the shared palette constants.
+-- Exposes on ns.UI: .CreateWindow, .Signed, .Debounce, .RebuildableFrame,
+--   .SetPlaceholder, and the shared palette constants.
 
 local ADDON, ns = ...
 
@@ -26,6 +27,77 @@ UI.HILITE = { 0.85, 0.72, 0.45, 0.18 }
 -- Formats a number with an explicit sign ("+2", "-1", "+0").
 function UI.Signed(n)
     return (n >= 0 and "+" or "") .. n
+end
+
+-- Returns holder.frame, rebuilding it when signatureFn() differs from the value
+-- captured at the last build. WoW cannot destroy a frame laid out for one system
+-- when the layout-defining set (e.g. attributes) changes, so the stale frame is
+-- hidden and orphaned and a fresh one is built. holder is the module table whose
+-- `.frame` field holds the singleton (editor and wizard share this logic).
+function UI.RebuildableFrame(holder, builder, signatureFn)
+    local sig = signatureFn()
+    local f = holder.frame
+    if f and f.attrSignature ~= sig then
+        f:Hide()
+        f:SetParent(nil)
+        holder.frame = nil
+    end
+    if not holder.frame then
+        holder.frame = builder()
+        holder.frame.attrSignature = sig
+    end
+    return holder.frame
+end
+
+-- Wraps fn in a debouncer: each call cancels any pending run and reschedules it
+-- `delay` seconds out, so only the last call in a burst (quiet for `delay`)
+-- actually runs fn. Used to collapse per-keystroke and per-resize-pixel work
+-- into a single trailing pass. Falls back to running immediately when C_Timer is
+-- unavailable (the out-of-client tests). Forwards the final call's arguments.
+function UI.Debounce(delay, fn)
+    local timer
+    return function(...)
+        if not (C_Timer and C_Timer.NewTimer) then return fn(...) end
+        local args, n = { ... }, select("#", ...)
+        if timer then timer:Cancel() end
+        timer = C_Timer.NewTimer(delay, function()
+            timer = nil
+            fn(unpack(args, 1, n))
+        end)
+    end
+end
+
+-- Adds grey placeholder text to an EditBox, shown while it is empty and
+-- unfocused. anchor defaults to "LEFT" (single-line boxes); pass "TOPLEFT"
+-- for multi-line ones (the hint then wraps to the box width). Uses
+-- HookScript so the box's own handlers keep running - call this AFTER all
+-- SetScript wiring on the box (SetScript replaces hooked chains).
+function UI.SetPlaceholder(editBox, text, anchor)
+    -- Multi-line boxes from InputScrollFrameTemplate ship a managed
+    -- placeholder (EditBox.Instructions, toggled by the template) - and the
+    -- template sizes the box after creation, which collapses a hand-anchored
+    -- hint to zero width. Prefer the native one there.
+    if editBox.Instructions and editBox.IsMultiLine and editBox:IsMultiLine() then
+        editBox.Instructions:SetText(text)
+        return editBox.Instructions
+    end
+    local hint = editBox:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+    if anchor == "TOPLEFT" then
+        hint:SetPoint("TOPLEFT", 2, -2)
+        hint:SetPoint("RIGHT", -2, 0)
+        hint:SetJustifyH("LEFT")
+    else
+        hint:SetPoint("LEFT", 2, 0)
+    end
+    hint:SetText(text)
+    local function Update()
+        hint:SetShown(editBox:GetText() == "" and not editBox:HasFocus())
+    end
+    editBox:HookScript("OnEditFocusGained", Update)
+    editBox:HookScript("OnEditFocusLost", Update)
+    editBox:HookScript("OnTextChanged", Update)
+    Update()
+    return hint
 end
 
 local BACKDROP = {

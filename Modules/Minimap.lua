@@ -1,8 +1,9 @@
 -- Parchment - Minimap
 --
--- A LibDataBroker launcher shown on the minimap via LibDBIcon. Left-click opens
--- the character sheet; right-click opens a menu of all Parchment windows and
--- actions. The button's shown/hidden state persists in db.profile.minimap.
+-- A LibDataBroker launcher shown on the minimap via LibDBIcon. Left-click
+-- opens the hub (the management window); right-click opens quick access to
+-- the play windows, the DM toggle, and Save to Disk. The button's
+-- shown/hidden state persists in db.profile.minimap.
 --
 -- Reads from: ns.OpenModule, ns.Sharing, ns.SaveToDisk, ns.Comm, ns.Addon.db.
 -- Exposes on ns.Minimap: Init, SetShown, Toggle.
@@ -17,26 +18,25 @@ local ICON = "Interface\\Icons\\inv_scroll_05"
 -- Builds the right-click menu (modern Menu API).
 local function BuildMenu(owner)
     if not MenuUtil then
-        ns.OpenModule("sheet")
+        ns.OpenModule("hub")
         return
     end
+    -- Play windows plus the hub entry; everything else (characters, systems,
+    -- import/export, cached sheets, settings) lives inside the hub.
     MenuUtil.CreateContextMenu(owner, function(_, root)
         root:CreateTitle("Parchment")
+        root:CreateButton("Menu (characters, settings, ...)", function() ns.OpenModule("hub") end)
+        root:CreateDivider()
         root:CreateButton("Character Sheet", function() ns.OpenModule("sheet") end)
-        root:CreateButton("Initiative", function() ns.OpenModule("initiative") end)
+        root:CreateButton("Combat", function() ns.OpenModule("initiative") end)
         root:CreateButton("Perks", function() ns.OpenModule("perks") end)
-        root:CreateButton("Character Editor", function() ns.OpenModule("edit") end)
-        root:CreateButton("New Character", function() ns.OpenModule("new") end)
-        root:CreateButton("Import / Export", function() ns.OpenModule("import") end)
         root:CreateButton("Party Overview", function() ns.OpenModule("party") end)
-        root:CreateButton("Cached Sheets", function() ns.Sharing.OpenCache() end)
         root:CreateDivider()
         root:CreateButton((ns.Comm.IsDM() and "DM mode: on" or "DM mode: off"), function()
             ns.Comm.SetDM(not ns.Comm.IsDM())
             if ns.InitiativeUI and ns.InitiativeUI.RefreshIfShown then ns.InitiativeUI.RefreshIfShown() end
             if ns.ConfigUI then ns.ConfigUI.RefreshIfShown() end
         end)
-        root:CreateButton("Settings", function() ns.OpenModule("config") end)
         root:CreateButton("Save to Disk", function() ns.SaveToDisk() end)
     end)
 end
@@ -49,13 +49,13 @@ local dataObject = {
         if button == "RightButton" then
             BuildMenu(self)
         else
-            ns.OpenModule("sheet")
+            ns.OpenModule("hub")
         end
     end,
     OnTooltipShow = function(tooltip)
         tooltip:AddLine("Parchment")
-        tooltip:AddLine("|cffeeeeeeLeft-click|r  character sheet", 0.9, 0.9, 0.9)
-        tooltip:AddLine("|cffeeeeeeRight-click|r  menu", 0.9, 0.9, 0.9)
+        tooltip:AddLine("|cffeeeeeeLeft-click|r  Parchment menu", 0.9, 0.9, 0.9)
+        tooltip:AddLine("|cffeeeeeeRight-click|r  quick access", 0.9, 0.9, 0.9)
     end,
 }
 

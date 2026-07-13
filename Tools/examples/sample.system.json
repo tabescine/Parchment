@@ -60,6 +60,11 @@
     "mana_attribute": "spirit",
     "mana_multiplier": 2,
     "movement_attribute": "wits",
+    "initiative_tiebreaker": "wits",
+    "init_attributes": [
+      "wits",
+      "spirit"
+    ],
     "movement_base": 12,
     "movement_per_step": 0.5,
     "ac_base": 10,
@@ -185,6 +190,16 @@
         "light",
         "thrown"
       ]
+    }
+  ],
+  "spell_schools": [
+    {
+      "id": "evocation",
+      "name": "Evocation"
+    },
+    {
+      "id": "warding",
+      "name": "Warding"
     }
   ],
   "racial_traits": [
@@ -385,12 +400,17 @@
         {
           "id": "arcane_focus",
           "name": "Arcane Focus",
-          "description": "Requires Spirit 7. +1 save DC and +2 max mana.",
+          "description": "Requires Spirit 7. +1 spell attack, +1 Evocation save DC, +2 max mana.",
           "req_attribute": "spirit",
           "attribute_req": 7,
           "effects": [
             {
+              "type": "spell_attack",
+              "value": 1
+            },
+            {
               "type": "save_dc",
+              "school": "evocation",
               "value": 1
             },
             {

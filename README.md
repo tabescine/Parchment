@@ -15,13 +15,17 @@ every window - sheet math included - adapts to it.
   modifiers, skills, saves, weapons, AC, HP/Mana, movement. Hover any total
   for a breakdown of where each bonus comes from. Editable current HP/Mana
   and Temp HP.
-- **Character creation** - a guided wizard (`/pmt new`: Identity →
-  Attributes → Traits → Proficiencies → Review) and a freeform point-buy
+- **Character creation** - a guided wizard (`/pmt new`: Identity → Traits →
+  Attributes → Proficiencies → Review) and a freeform point-buy
   editor (`/pmt edit`) with live warnings, plus level-up support.
 - **Perk trees** - a viewer/builder for your system's perk spheres with
-  prerequisites, exclusivity, ranks, perk-driven choices, and homebrew perks.
-- **Initiative tracker** - sort, rounds, turn pointer, roll-or-add; the DM
-  can sync the order to the group and players can submit their own rolls.
+  prerequisites, exclusivity, ranks, perk-driven choices, homebrew perks,
+  and live search across every sphere (by name or description).
+- **Combat tracker** - turn order with automatic tie-breaking (via the
+  system's `initiative_tiebreaker` stat) and manual DM reordering, rounds,
+  a turn/round stopwatch, and per-row HP: players' live vitals inline,
+  DM-private HP for NPCs. The DM syncs the order to the group; players
+  submit their own rolls and can end their own turn.
 - **Party tools** - live party overview (HP/Mana/AC), view another player's
   sheet on demand, dice rolls that are either private or party-visible.
 - **DM sharing with consent** - a DM can broadcast the active system to the
@@ -53,8 +57,10 @@ Type `/pmt` (or `/parchment`) for the full command list:
 
 | Command | Action |
 |---|---|
+| `/pmt hub` | The Parchment menu (characters, settings, ...) - also minimap left-click |
+| `/pmt characters` | Manage characters (select / delete / create) |
 | `/pmt sheet` | Open the character sheet |
-| `/pmt init` | Open the initiative tracker |
+| `/pmt combat` | Open the combat tracker (`/pmt init` still works) |
 | `/pmt perks` | Open the perk tree viewer |
 | `/pmt new` | Create a character (guided wizard) |
 | `/pmt edit` | Open the character editor |
@@ -90,6 +96,23 @@ HP, mana, AC, movement, and so on. Nothing is hard-coded - see
 its character-side counterpart. Import both with `/pmt import`; `Tools/`
 also holds an optional offline converter for version-controlled rulesets
 and SavedVariables recovery.
+
+## Development
+
+Parchment keeps its rules logic free of WoW APIs, so the data layer, codecs,
+schema, and the character/perk engines run - and are tested - under plain
+Lua 5.1, no game client or dependencies needed:
+
+```sh
+lua5.1 Tests/run.lua
+```
+
+The suite covers the data API and migrations, schema validation, the
+JSON/TOML codecs, sheet computation, the perk engine, comm version gating,
+the context-menu integration, and an end-to-end import of the sample files
+(whose documented numbers double as regression expectations). CI
+(`.github/workflows/ci.yml`) runs a syntax check plus this suite. UI code
+(frames, menus beyond their logic) is exercised in-game.
 
 ## License
 

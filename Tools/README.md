@@ -28,9 +28,8 @@ it top to bottom, and replace the contents.
 - `sample.character.toml` - **the annotated character reference** (Wren
   Ashdown, level 5): trait/perk selections, perk choices, accomplished
   skills/weapons/saves, a homebrew perk demonstrating `effects`,
-  `add_modifier`, `replaces`, and informational effect types, plus
-  `attack_lines` and the `_key` field a single-character in-game import
-  requires.
+  `add_modifier`, `replaces`, and informational effect types, plus the
+  `_key` field a single-character in-game import requires.
 - `sample.system.json` / `sample.character.json` - the same data in JSON
   (generated from the TOML; JSON allows no comments, so the TOML files are
   the documented ones). Both formats import identically.
@@ -38,8 +37,8 @@ it top to bottom, and replace the contents.
 **Getting data into the game: use `/pmt import`.** Paste the whole file -
 comments included - system first, then the character. The dialog
 auto-detects JSON/TOML/Lua, validates against the schema, and only commits
-on success; `/pmt export` produces the same formats back. No external
-tooling is needed.
+on success; the same dialog's Export buttons produce the formats back. No
+external tooling is needed.
 
 ## parchment_converter.py (optional)
 

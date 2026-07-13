@@ -95,11 +95,3 @@ add_modifier = "wits"
 [[custom_perks.effects]]
 type = "damage_reduction"   # informational: displayed, not computed
 value = 1
-
-# attack_lines: free-form attack rows shown in the sheet's ATTACKS section,
-# next to the automatic attack totals of accomplished weapons. Useful for
-# spells, consumables, or anything the weapon list does not cover.
-[[attack_lines]]
-name = "Thrown lantern oil"
-die = "1d4"
-modifier = 1

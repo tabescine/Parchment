@@ -1,12 +1,19 @@
 -- Parchment - Sharing
 --
 -- Character-sheet sharing, TRP3-style: request another player's active
--- character on demand and view it read-only. A "View Parchment Sheet" entry is
--- added to player right-click menus; it whispers a request, the target's addon
--- replies with their active character, and we open the sheet in view mode.
+-- character on demand and view it read-only. A "View sheet" entry is added
+-- to player right-click menus under the addon's own "Parchment" section; it
+-- whispers a request, the target's addon replies with their active
+-- character, and we open the sheet in view mode.
 --
--- Reads from: ns.Comm, ns.GetActiveCharacter, ns.CharacterSheetUI, ns.Print.
--- Exposes on ns.Sharing: Request, OpenCache, ClearCache.
+-- Received sheets are bounded before they reach SavedVariables: a sheet over a
+-- size cap is refused, and the cache keeps only the newest MAX_ENTRIES (oldest
+-- evicted by time). Name matching goes through the shared Comm normalizer.
+--
+-- Reads from: ns.Comm (send/normalize), ns.Addon (event registration),
+--   ns.GetActiveCharacter, ns.Schema, ns.JSON, ns.CharacterSheetUI, ns.Print.
+-- Exposes on ns.Sharing: Request, GetCache, OpenCache, RemoveCached,
+--   ConfirmRemoveCached, ClearCache.
 
 local ADDON, ns = ...
 
@@ -18,6 +25,13 @@ local function FullName(name, realm)
     if realm and realm ~= "" then return name .. "-" .. realm end
     return name
 end
+
+-- Bounds on the persistent cache: a received sheet over MAX_CHAR_BYTES (encoded)
+-- is refused before it touches SavedVariables, and the cache keeps at most
+-- MAX_ENTRIES, evicting the oldest by `time`. Together they stop a hostile or
+-- accidental flood of large/many sheets from bloating the saved file.
+local MAX_CHAR_BYTES = 256 * 1024
+local MAX_ENTRIES = 50
 
 -- Targets we are awaiting a reply from (prevents request pile-ups).
 local pending = {}
@@ -35,12 +49,34 @@ local function Cache()
     return g.sharedCache
 end
 
--- Compares two names ignoring realm and case ("Bob-Realm" == "bob").
+-- Compares two names ignoring realm and case ("Bob-Realm" == "bob"). Delegates
+-- to the one shared normalizer so name matching never diverges between modules.
 local function SameName(a, b)
-    if not a or not b then return false end
-    a = (a:match("^[^-]+") or a):lower()
-    b = (b:match("^[^-]+") or b):lower()
-    return a == b
+    return ns.Comm.SameName(a, b)
+end
+
+-- The encoded byte size of a received sheet, or nil when it cannot be encoded.
+-- Runs under pcall so a pathologically deep payload cannot throw here.
+local function EncodedSize(char)
+    local ok, enc = pcall(ns.JSON.encode, char)
+    if not ok or type(enc) ~= "string" then return nil end
+    return #enc
+end
+
+-- Evicts the oldest entries (by `time`) until the cache is within MAX_ENTRIES.
+local function EvictOldest(cache)
+    local n = 0
+    for _ in pairs(cache) do n = n + 1 end
+    while n > MAX_ENTRIES do
+        local oldestKey, oldestTime
+        for key, entry in pairs(cache) do
+            local t = tonumber(entry.time) or 0
+            if not oldestTime or t < oldestTime then oldestKey, oldestTime = key, t end
+        end
+        if not oldestKey then break end
+        cache[oldestKey] = nil
+        n = n - 1
+    end
 end
 
 -- Returns a cached entry whose key matches name (ignoring realm), or nil.
@@ -118,17 +154,14 @@ end
 -- show characters we receive. ShowCharacter is wrapped so a display error is
 -- reported rather than swallowed by AceComm's protected dispatch.
 if ns.Comm then
-    ns.Comm.On("REQ", function(payload, sender, distribution)
+    ns.Comm.On("REQ", function(payload, sender)
         if not ForMe(payload) then return end
         local char = ns.GetActiveCharacter()
         if not (char and sender) then return end
-        -- Mirror the request's path: a whispered request gets a whispered
-        -- reply (the requester may not be in our group at all).
-        if distribution == "WHISPER" then
-            ns.Comm.Whisper("CHAR", { char = char, to = sender }, sender)
-        else
-            SendTo("CHAR", { char = char }, sender)
-        end
+        -- The requester resolves directly, so whisper the reply straight to them
+        -- rather than broadcasting a (potentially large) sheet the whole group
+        -- would decode and discard. Whispers reach party members cross-realm.
+        ns.Comm.Whisper("CHAR", { char = char, to = sender }, sender)
     end)
     ns.Comm.On("CHAR", function(payload, sender)
         if type(payload) ~= "table" or type(payload.char) ~= "table" then return end
@@ -150,8 +183,20 @@ if ns.Comm then
             return
         end
 
-        Cache()[sender] = { char = payload.char, name = payload.char.name, time = (time and time()) or 0 }
+        -- Bound the size before it reaches SavedVariables, then store and cap the
+        -- entry count (oldest-out) so the cache cannot grow without limit.
+        local size = EncodedSize(payload.char)
+        if not size or size > MAX_CHAR_BYTES then
+            ns.Print((sender or "?") .. " sent an oversized character sheet; ignored.")
+            return
+        end
+        local cache = Cache()
+        cache[sender] = { char = payload.char, name = payload.char.name, time = (time and time()) or 0 }
+        EvictOldest(cache)
         ns.Print("received " .. (payload.char.name or "a character") .. " from " .. (sender or "?") .. ".")
+        -- A refetch updates the entry's time; re-render the Cached Sheets panel
+        -- so its "cached N ago" line reflects the new copy, not the stale one.
+        if ns.HubUI then ns.HubUI.RefreshIfShown("cached") end
         if ns.CharacterSheetUI then
             local ok, err = pcall(ns.CharacterSheetUI.ShowCharacter, payload.char, sender)
             if not ok then ns.Print("could not display the sheet: " .. tostring(err)) end
@@ -159,26 +204,43 @@ if ns.Comm then
     end)
 end
 
--- Opens a picker of cached sheets to view (works offline).
+-- The cache of received sheets, keyed by sender (read-only for the hub's
+-- Cached Sheets panel).
+function S.GetCache()
+    return Cache()
+end
+
+-- Opens the cached-sheets browser (the hub's Cached Sheets panel).
 function S.OpenCache()
+    if ns.HubUI then ns.HubUI.Open("cached") end
+end
+
+-- Removes one cached sheet by its exact key. Returns true when one was removed.
+function S.RemoveCached(key)
     local cache = Cache()
-    local items = {}
-    for key, entry in pairs(cache) do
-        items[#items + 1] = { id = key, name = (entry.name or "?") .. "  |cff888888(" .. key .. ")|r" }
-    end
-    if #items == 0 then
-        ns.Print("no cached sheets yet. View a player to cache theirs.")
-        return
-    end
-    ns.Dialogs.Pick({
-        title = "Cached Sheets", prompt = "View a cached character sheet", items = items, max = 1, selected = {},
-        onConfirm = function(ids)
-            local entry = ids[1] and cache[ids[1]]
-            if entry and ns.CharacterSheetUI then
-                ns.CharacterSheetUI.ShowCharacter(entry.char, ids[1] .. " (cached)")
-            end
-        end,
-    })
+    if cache[key] == nil then return false end
+    cache[key] = nil
+    return true
+end
+
+-- Confirm dialog for removing a single cached sheet. Light by design: a cached
+-- sheet is just a copy and can be re-requested, so this only guards a misclick.
+StaticPopupDialogs["PARCHMENT_REMOVE_CACHED"] = {
+    text = "Remove the cached sheet for %s?\n\nYou can view it again by requesting it.",
+    button1 = DELETE or "Remove",
+    button2 = CANCEL,
+    OnAccept = function(_, data)
+        if data and S.RemoveCached(data.key) and ns.HubUI then
+            ns.HubUI.RefreshIfShown("cached")
+        end
+    end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
+-- Prompts to remove a cached sheet; removal is keyed by the exact `key`, while
+-- `name` (the character name) is what the prompt shows.
+function S.ConfirmRemoveCached(key, name)
+    StaticPopup_Show("PARCHMENT_REMOVE_CACHED", name or key, nil, { key = key })
 end
 
 -- Clears all cached sheets.
@@ -189,8 +251,9 @@ function S.ClearCache()
     ns.Print("cleared " .. n .. " cached sheet(s).")
 end
 
--- Adds "View Parchment Sheet" to player right-click menus (modern Menu API,
--- retail 11.0+). Covers self, target, focus, unit frames, chat names, and lists.
+-- Adds a "View sheet" entry to player right-click menus (modern Menu API,
+-- retail 11.0+), under the addon's own "Parchment" section. Covers self,
+-- target, focus, unit frames, chat names, and lists.
 local UNIT_MENUS = {
     "MENU_UNIT_SELF", "MENU_UNIT_PLAYER", "MENU_UNIT_TARGET", "MENU_UNIT_FOCUS",
     "MENU_UNIT_PARTY", "MENU_UNIT_RAID_PLAYER", "MENU_UNIT_RAID",
@@ -213,12 +276,35 @@ local function ResolveName(contextData)
     return FullName(name, server)
 end
 
+-- Appends our entries under their own "Parchment" section (Menu-API menus
+-- are flat; a divider + title opens a section that runs until the next one).
+-- Deliberately NOT merged into TRP3's "Roleplay options" section: that
+-- placement depends on callback registration order, breaks silently when a
+-- TRP3 user disables its menu entries, and makes our button look like a
+-- TRP3 feature. An own section behaves identically with or without TRP3.
+local function AddMenuEntry(root, contextData)
+    local full = ResolveName(contextData)
+    if not full then return end
+    root:CreateDivider()
+    root:CreateTitle("Parchment")
+    root:CreateButton("View sheet", function() S.Request(full) end)
+end
+
+-- Registration is deferred to PLAYER_ENTERING_WORLD purely for stable menu
+-- ordering: ModifyMenu callbacks run in registration order, and registering
+-- after other addons' login-time hooks keeps the Parchment section at the
+-- bottom (after e.g. TRP3's "Roleplay options") instead of moving around
+-- with addon load order. Nothing breaks if another addon registers later.
 if Menu and Menu.ModifyMenu then
-    for _, tag in ipairs(UNIT_MENUS) do
-        Menu.ModifyMenu(tag, function(owner, root, contextData)
-            local full = ResolveName(contextData)
-            if not full then return end
-            root:CreateButton("View Parchment Sheet", function() S.Request(full) end)
-        end)
-    end
+    ns.Addon:RegisterEvent("PLAYER_ENTERING_WORLD", function()
+        ns.Addon:UnregisterEvent("PLAYER_ENTERING_WORLD")
+        for _, tag in ipairs(UNIT_MENUS) do
+            -- The closure must be fresh per registration: ModifyMenu keys
+            -- its registry on it, so a shared one would replace earlier
+            -- registrations.
+            Menu.ModifyMenu(tag, function(owner, root, contextData)
+                AddMenuEntry(root, contextData)
+            end)
+        end
+    end)
 end

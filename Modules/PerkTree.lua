@@ -11,7 +11,7 @@
 -- Reads from: ns.GetAttribute (for requirement messages). The caller passes the
 --   computed sheet so attribute requirements check final (post-trait) values.
 -- Exposes on ns.PerkTree: Status, CanAddRank, Select, Deselect, Points, Rank,
---   ReplacedBy, ChoiceMax, SetChoices.
+--   ReplacedBy, ChoiceMax, SetChoices, Search.
 
 local ADDON, ns = ...
 
@@ -246,6 +246,34 @@ end
 
 -- Returns invested, available perk points. One point is granted per level.
 -- Both selected sphere perks and DM-granted homebrew perks count as invested.
+-- Only ids that resolve in the active system count: after a system switch,
+-- char.perks can hold stale ids the player can neither see nor deselect in
+-- the tree UI, and counting those would warn about an overspend the player
+-- cannot fix (Compute already skips them for effects/display).
 function PT.Points(char)
-    return #(char.perks or {}) + #(char.custom_perks or {}), (char.level or 1)
+    local invested = 0
+    for _, id in ipairs(char.perks or {}) do
+        if FindPerkAnywhere(id) then invested = invested + 1 end
+    end
+    return invested + #(char.custom_perks or {}), (char.level or 1)
+end
+
+-- Searches trees for perks whose name or description contains the query
+-- (case-insensitive plain text, surrounding whitespace ignored). Takes the
+-- tree LIST rather than reading the system, so callers can include synthetic
+-- spheres (the viewer's Homebrew tree). Returns { { tree, perk }, ... } in
+-- tree order; an empty query returns no matches.
+function PT.Search(trees, query)
+    query = tostring(query or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+    local out = {}
+    if query == "" then return out end
+    for _, tree in ipairs(trees or {}) do
+        for _, perk in ipairs(tree.perks or {}) do
+            local hay = ((perk.name or "") .. "\n" .. (perk.description or "")):lower()
+            if hay:find(query, 1, true) then
+                out[#out + 1] = { tree = tree, perk = perk }
+            end
+        end
+    end
+    return out
 end

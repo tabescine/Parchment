@@ -8,9 +8,10 @@
 -- no active system until the user imports one (/pmt import) or adopts a
 -- DM-shared one. Windows that need a system show an empty state until then.
 --
--- This is the only file that knows about the live SavedVariables globals. The
--- modules never touch ParchmentSystemDB / ParchmentCharDB directly; they call
--- the ns.Get* helpers here so the data source can change without touching them.
+-- Core owns the live SavedVariables globals: modules read and write them only
+-- through the ns data API (Get*/Set*) so the data source can change without
+-- touching them. One sanctioned exception: Modules/Systems.lua owns
+-- ParchmentSystemDB swaps (activating systems from the library).
 --
 -- Reads from: ns.Schema.
 -- Exposes on ns: the data API (GetSystem, HasSystem, GetCharacter, ...),
@@ -30,12 +31,36 @@ local C_GOLD = "|cffc8a868"
 -- AceDB layout for addon settings (the data tables live in their own SVs).
 local DB_DEFAULTS = {
     global = { activeCharacter = nil },
-    profile = { minimap = { hide = false }, dm = false, publicRolls = false },
+    profile = { minimap = { hide = false }, dm = false, publicRolls = false, shareVitals = true },
+}
+
+-- Data-format versioning. DB_FORMAT describes the shape of everything
+-- Parchment stores: the active system, the characters, the system library,
+-- and the sharing cache. When a release changes any stored shape, bump
+-- DB_FORMAT and append a migration step to MIGRATIONS - users' data is then
+-- upgraded in place at load, and nobody ever deletes a SavedVariables file.
+-- The stamp lives in ParchmentDB.global (NOT inside the data tables, which
+-- are exactly what export produces - a format key there would leak into
+-- every exported file).
+local DB_FORMAT = 1
+
+-- MIGRATIONS[n] upgrades stored data from format n-1 to format n. Steps run
+-- in order, so any old version passes through every intermediate shape. Each
+-- step must be idempotent (WoW only flushes SavedVariables on logout/reload,
+-- so a crash can re-run a step against already-migrated data) and must cover
+-- every stored copy of the shape it changes: ParchmentSystemDB,
+-- ParchmentCharDB.characters, db.global.systemLibrary (full system copies),
+-- and db.global.sharedCache (full character copies).
+local MIGRATIONS = {
+    -- [2] = function(db) ... end,
 }
 
 -- Slash subcommand -> module id (nil routing falls through to help).
 local MODULE_COMMANDS = {
-    init = "initiative",
+    hub = "hub",
+    characters = "characters",
+    combat = "initiative",
+    init = "initiative",   -- legacy alias for /pmt combat
     sheet = "sheet",
     perks = "perks",
     import = "import",
@@ -107,14 +132,9 @@ function ns.SetCharacter(key, char)
     ns.GetCharacters()[key] = char
 end
 
--- Replaces the whole character database (full-roster import).
-function ns.SetCharacterDB(db)
-    ParchmentCharDB = db or {}
-end
-
 -- Returns the first free "<prefix>-N" character key (default prefix "Character").
 function ns.NextCharacterKey(prefix)
-    local chars, n, key = ns.GetCharacters(), 0, nil
+    local chars, n, key = ns.GetCharacters(), 0
     repeat
         n = n + 1
         key = (prefix or "Character") .. "-" .. n
@@ -137,6 +157,19 @@ function ns.SetActiveCharacter(key)
     if not ns.GetCharacter(key) then return false end
     Parchment.db.global.activeCharacter = key
     return true
+end
+
+-- Deletes a character by key, re-pointing a dangling active pointer at any
+-- remaining character (or nil when none are left - a state SetActiveCharacter
+-- refuses to produce, which is why deletion must live here in Core rather
+-- than callers reaching into the storage layout).
+function ns.DeleteCharacter(key)
+    local chars = ns.GetCharacters()
+    if chars[key] == nil then return end
+    chars[key] = nil
+    if Parchment.db.global.activeCharacter == key then
+        Parchment.db.global.activeCharacter = next(chars)
+    end
 end
 
 -- Finds a record by its `id` field in a list of records. Returns nil when
@@ -197,8 +230,11 @@ function ns.DerivedConfig()
         retroactive_hp     = d.retroactive_hp and true or false, -- changing hp_attribute re-grants HP for past levels
         spell_attributes   = d.spell_attributes or {},   -- primary among these => spellcaster
         mana_attribute     = d.mana_attribute,           -- mana source for non-casters
+        initiative_tiebreaker = d.initiative_tiebreaker, -- attr deciding equal initiative rolls
         mana_multiplier    = d.mana_multiplier or 2,
         movement_attribute = d.movement_attribute,       -- +per_step per positive modifier
+        ac_attributes      = d.ac_attributes,            -- candidate attrs for AC (pick or best)
+        init_attributes    = d.init_attributes,          -- candidate attrs for initiative
         movement_base      = d.movement_base or 12,
         movement_per_step  = d.movement_per_step or 0.5,
         ac_base            = d.ac_base or 10,
@@ -233,7 +269,8 @@ end
 -- Persistence. WoW only writes SavedVariables to disk on a UI reload or logout,
 -- so "save to disk" is a confirmed ReloadUI (which flushes the data).
 StaticPopupDialogs["PARCHMENT_SAVE_RELOAD"] = {
-    text = "Save all Parchment data to disk now?\n\nWoW only writes addon data on a UI reload or logout, so this will reload your interface.",
+    text = "Save all Parchment data to disk now?\n\n"
+        .. "WoW only writes addon data on a UI reload or logout, so this will reload your interface.",
     button1 = "Save & Reload",
     button2 = CANCEL,
     OnAccept = function() ReloadUI() end,
@@ -264,16 +301,19 @@ end
 
 local function PrintHelp()
     Print(C_GOLD .. "Adventures await. Commands:|r")
+    Print("  " .. C_GOLD .. "/pmt hub|r     - the Parchment menu (characters, settings, ...)")
+    Print("  " .. C_GOLD .. "/pmt characters|r - manage characters (select / delete)")
     Print("  " .. C_GOLD .. "/pmt sheet|r   - open the character sheet")
-    Print("  " .. C_GOLD .. "/pmt init|r    - open the initiative tracker")
+    Print("  " .. C_GOLD .. "/pmt combat|r  - open the combat tracker (initiative, HP, timer)")
     Print("  " .. C_GOLD .. "/pmt perks|r   - open the perk tree viewer")
     Print("  " .. C_GOLD .. "/pmt new|r     - create a character (guided wizard)")
     Print("  " .. C_GOLD .. "/pmt edit|r    - open the character editor")
     Print("  " .. C_GOLD .. "/pmt import|r  - open the import/export dialog")
     Print("  " .. C_GOLD .. "/pmt config|r  - open settings")
-    Print("  " .. C_GOLD .. "/pmt dm|r      - toggle DM mode (broadcast vs receive sync)")
+    Print("  " .. C_GOLD .. "/pmt dm|r      - toggle DM mode; |r" .. C_GOLD .. "dm who|r / |r"
+        .. C_GOLD .. "dm accept <name>|r query or set who you recognize")
     Print("  " .. C_GOLD .. "/pmt share|r   - DM: send your system to the group")
-    Print("  " .. C_GOLD .. "/pmt systems|r - choose the active system (|cffc8a868/pmt systems delete|r to remove one)")
+    Print("  " .. C_GOLD .. "/pmt systems|r - manage your system library (activate / delete)")
     Print("  " .. C_GOLD .. "/pmt rolls|r   - toggle public (party-visible) dice rolls")
     Print("  " .. C_GOLD .. "/pmt party|r   - live party overview (HP/Mana/AC of group members)")
     Print("  " .. C_GOLD .. "/pmt view <name>|r - view another player's character sheet")
@@ -322,6 +362,55 @@ local function RunValidation()
     end
 end
 
+-- Prints the DM-role toggle result and refreshes the windows that show it.
+local function AnnounceDMRole()
+    Print((ns.Comm.IsDM() and C_GREEN .. "DM mode ON" or C_YELLOW .. "DM mode OFF")
+        .. "|r - you " .. (ns.Comm.IsDM() and "broadcast" or "receive") .. " system and initiative sync.")
+    if ns.InitiativeUI and ns.InitiativeUI.RefreshIfShown then ns.InitiativeUI.RefreshIfShown() end
+    if ns.ConfigUI then ns.ConfigUI.RefreshIfShown() end
+end
+
+-- Handles /pmt dm [who | accept <name>]: toggle our own role (claim, with a
+-- take-over confirm when we already recognize someone else; or step down), query
+-- the recognized DM, or manually recognize a player (recovery).
+local function HandleDMRole(arg)
+    arg = strtrim(arg or "")
+    local sub = arg:lower():match("^(%S*)")
+
+    if sub == "who" then
+        local rec = ns.Comm.RecognizedDM()
+        if rec then Print("you recognize " .. C_GOLD .. rec .. "|r as DM.")
+        else Print(C_YELLOW .. "no DM recognized yet." .. "|r") end
+        return
+    end
+    if sub == "accept" then
+        local name = strtrim(arg:match("^%S+%s+(.*)$") or "")
+        if name == "" then Print(C_YELLOW .. "usage: /pmt dm accept <player name>" .. "|r"); return end
+        ns.Comm.SetRecognizedDM(name)
+        Print("now recognizing " .. C_GOLD .. name .. "|r as DM.")
+        if ns.InitiativeUI and ns.InitiativeUI.RefreshIfShown then ns.InitiativeUI.RefreshIfShown() end
+        return
+    end
+
+    -- No subcommand: step down if we are the DM, otherwise claim.
+    if ns.Comm.IsDM() then
+        ns.Comm.SetDM(false)
+        AnnounceDMRole()
+        return
+    end
+    -- Claiming while we already recognize a different DM is a take-over: confirm
+    -- first so a stray /pmt dm cannot silently fight an existing DM. Escape keeps
+    -- the current DM (non-destructive default).
+    local rec = ns.Comm.RecognizedDM()
+    if rec and not ns.Comm.SameName(rec, UnitName("player"))
+        and ns.Dialogs and ns.Dialogs.ConfirmDMTakeover then
+        ns.Dialogs.ConfirmDMTakeover(rec, function() ns.Comm.SetDM(true); AnnounceDMRole() end)
+        return
+    end
+    ns.Comm.SetDM(true)
+    AnnounceDMRole()
+end
+
 -- Dispatches a slash command line to the matching action.
 local function HandleSlash(input)
     input = strtrim(input or "")
@@ -341,18 +430,12 @@ local function HandleSlash(input)
     elseif cmd == "validate" then
         RunValidation()
     elseif cmd == "dm" then
-        ns.Comm.SetDM(not ns.Comm.IsDM())
-        Print((ns.Comm.IsDM() and C_GREEN .. "DM mode ON" or C_YELLOW .. "DM mode OFF")
-            .. "|r - you " .. (ns.Comm.IsDM() and "broadcast" or "receive") .. " system and initiative sync.")
-        if ns.InitiativeUI and ns.InitiativeUI.RefreshIfShown then ns.InitiativeUI.RefreshIfShown() end
-        if ns.ConfigUI then ns.ConfigUI.RefreshIfShown() end
+        HandleDMRole(arg)
     elseif cmd == "share" then
         ns.ShareSystem()
     elseif cmd == "systems" then
-        if ns.Systems then
-            if arg and strtrim(arg):lower() == "delete" then ns.Systems.OpenDeletePicker()
-            else ns.Systems.OpenPicker() end
-        end
+        -- The system library lives in the hub (activate / delete per row).
+        if ns.HubUI then ns.HubUI.Open("systems") end
     elseif cmd == "rolls" then
         local p = ns.Addon.db.profile
         p.publicRolls = not p.publicRolls
@@ -377,6 +460,22 @@ local function HandleSlash(input)
     end
 end
 
+-- Runs pending data-format migrations, then stamps the current format. Data
+-- from a NEWER Parchment (downgrade) is left untouched with a warning - we
+-- cannot know how to read it, and wiping would destroy good data.
+local function MigrateData(db)
+    local from = db.global.dataFormat or 1
+    if from > DB_FORMAT then
+        Print(C_YELLOW .. "your saved data is from a newer Parchment (data format " .. from
+            .. ", this addon reads " .. DB_FORMAT .. "). Update the addon; the data is untouched." .. "|r")
+        return
+    end
+    for v = from + 1, DB_FORMAT do
+        if MIGRATIONS[v] then MIGRATIONS[v](db) end
+    end
+    db.global.dataFormat = DB_FORMAT
+end
+
 -- AceAddon lifecycle.
 
 function Parchment:OnInitialize()
@@ -387,6 +486,9 @@ function Parchment:OnInitialize()
     -- No ruleset ships with Parchment: the system stays empty until the user
     -- imports one (/pmt import) or adopts a DM-shared one.
     ParchmentSystemDB = ParchmentSystemDB or {}
+
+    -- Upgrade stored data written by older releases (see MIGRATIONS above).
+    MigrateData(self.db)
 
     if not g.activeCharacter then
         g.activeCharacter = next(ns.GetCharacters())

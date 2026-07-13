@@ -3,6 +3,7 @@
 -- A live overview of the group's characters (aimed at the DM, useful to
 -- anyone): one pooled row per member showing level, HP (current/max plus
 -- temp), Mana, AC and initiative modifier from received VITALS snapshots.
+-- Members with DM mode on carry a gold "(DM)" tag after their name.
 -- Refresh asks the whole group to re-send; rows dim when their snapshot goes
 -- stale. Clicking a row requests that member's full sheet via Sharing.
 --
@@ -83,22 +84,28 @@ local function RenderRows(self)
         row.sender, row.charName = entry.sender, v.name
         row.age = v.time and math.floor(now - v.time) or nil
 
+        -- Coerce every numeric field here too: vitals are coerced on receipt, but
+        -- an own-snapshot or future caller must never make a concat/compare throw.
+        local hp, hpmax, temp = tonumber(v.hp) or 0, tonumber(v.hpmax) or 0, tonumber(v.temp) or 0
+        local mana, manamax = tonumber(v.mana) or 0, tonumber(v.manamax) or 0
+        local ac, init = tonumber(v.ac) or 0, tonumber(v.init) or 0
+
         row:ClearAllPoints()
         row:SetPoint("TOPLEFT", content, "TOPLEFT", 2, y)
         row:SetPoint("TOPRIGHT", content, "TOPRIGHT", -2, y)
 
-        row.name:SetText(v.name)
-        row.level:SetText(tostring(v.level))
-        row.hp:SetText(v.hp .. " / " .. v.hpmax .. (v.temp > 0 and (" |cff8ec6ff+" .. v.temp .. "|r") or ""))
-        row.mana:SetText(v.manamax > 0 and (v.mana .. " / " .. v.manamax) or "-")
-        row.ac:SetText(tostring(v.ac))
-        row.init:SetText((v.init >= 0 and "+" or "") .. v.init)
+        row.name:SetText(v.name .. (v.dm and "  |cffc8a868(DM)|r" or ""))
+        row.level:SetText(tostring(tonumber(v.level) or 0))
+        row.hp:SetText(hp .. " / " .. hpmax .. (temp > 0 and (" |cff8ec6ff+" .. temp .. "|r") or ""))
+        row.mana:SetText(manamax > 0 and (mana .. " / " .. manamax) or "-")
+        row.ac:SetText(tostring(ac))
+        row.init:SetText((init >= 0 and "+" or "") .. init)
 
         -- Colour: name gold, HP red when hurt, all dimmed when stale.
         local stale = row.age and row.age > STALE_AFTER
         local nameC = stale and UI.DIM or UI.GOLD
         row.name:SetTextColor(nameC[1], nameC[2], nameC[3])
-        local hurtC = (v.hpmax > 0 and v.hp / v.hpmax or 1) < 0.35 and UI.RED or UI.TEXT
+        local hurtC = (hpmax > 0 and hp / hpmax or 1) < 0.35 and UI.RED or UI.TEXT
         local valueC = stale and UI.DIM or hurtC
         row.hp:SetTextColor(valueC[1], valueC[2], valueC[3])
         local restC = stale and UI.DIM or UI.TEXT

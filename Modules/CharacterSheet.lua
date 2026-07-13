@@ -14,10 +14,16 @@
 --   modifier          = system modifier_table[final]
 --   skill / save total= attribute modifier + (accomplished and accomplishment)
 --   AC                = ac_base + AC-attribute modifier + trait AC bonuses
+--                       (AC/init attribute: the character's pick, constrained
+--                       to derived_stats.ac_attributes/init_attributes when
+--                       declared; no/invalid pick = best candidate)
 --   hit die           = band for the hit_die_attribute's modifier
 --   mana (max)        = mana_multiplier x spell-source modifier
 --   movement          = movement_base + per_step per positive movement modifier
 --   save DC (primary) = save_dc_base + primary modifier + accomplishment bonus
+--                       (casters only; non-casters carry no save DC)
+--   spell attack      = primary modifier + accomplishment (casters; per-school
+--                       rows fold school-targeted effects)
 -- Which attribute fills each role is configured per system (see ns.DerivedConfig);
 -- an unset role contributes 0, so no specific attribute id is ever assumed.
 --
@@ -52,7 +58,9 @@ end
 --   attribute(id)          all_attributes
 --   skill(skill|id)        skill(skill|id, add_modifier = attrId)   all_skills
 --   save(id)               save(id, add_modifier = attrId)
---   ac  attack_rolls  initiative  movement  actions  save_dc  max_hp  max_mana
+--   ac  attack_rolls  initiative  movement  actions  max_hp  max_mana
+--   spell_attack(school?)  save_dc(school?)  - a school-targeted entry
+--   adjusts only that school's spellcasting row
 -- add_modifier adds a copy of an attribute's modifier to that skill/save, which
 -- is how "twice your X modifier on skill Y" is expressed. Any other type
 -- (attribute_points, damage_reduction, ...) is informational and ignored here.
@@ -62,7 +70,8 @@ local function NewAccumulator()
     return {
         attr = {}, attrSources = {}, allAttr = 0,
         ac = 0, attack = 0, initiative = 0, movement = 0, actions = 0,
-        saveDC = 0, maxHP = 0, maxMana = 0,
+        saveDC = 0, saveDCSchool = {}, spellAttack = 0, spellAttackSchool = {},
+        maxHP = 0, maxMana = 0,
         skill = {}, allSkill = 0, skillAddMod = {}, skillSources = {},
         save = {}, saveAddMod = {}, saveSources = {},
     }
@@ -91,7 +100,18 @@ local function ApplyEffect(acc, e, source)
     elseif t == "initiative" then acc.initiative = acc.initiative + v
     elseif t == "movement" then acc.movement = acc.movement + v
     elseif t == "actions" then acc.actions = acc.actions + v
-    elseif t == "save_dc" then acc.saveDC = acc.saveDC + v
+    elseif t == "save_dc" then
+        if e.school then
+            acc.saveDCSchool[e.school] = (acc.saveDCSchool[e.school] or 0) + v
+        else
+            acc.saveDC = acc.saveDC + v
+        end
+    elseif t == "spell_attack" then
+        if e.school then
+            acc.spellAttackSchool[e.school] = (acc.spellAttackSchool[e.school] or 0) + v
+        else
+            acc.spellAttack = acc.spellAttack + v
+        end
     elseif t == "max_hp" then acc.maxHP = acc.maxHP + v
     elseif t == "max_mana" then acc.maxMana = acc.maxMana + v
     elseif t == "all_skills" then acc.allSkill = acc.allSkill + v
@@ -215,10 +235,14 @@ function CharacterSheet.Compute(char, system)
                     if choice.apply == "accomplished" then
                         extraSkills[cid] = true
                     elseif choice.apply == "double_accomplishment" then
-                        choiceEffects[#choiceEffects + 1] = { { type = "skill", skill = cid, value = accomplishment }, perk.name }
+                        choiceEffects[#choiceEffects + 1] =
+                            { { type = "skill", skill = cid, value = accomplishment }, perk.name }
                     else
                         local n = tonumber(tostring(choice.apply):match("skill_bonus:(%d+)"))
-                        if n then choiceEffects[#choiceEffects + 1] = { { type = "skill", skill = cid, value = n }, perk.name } end
+                        if n then
+                            choiceEffects[#choiceEffects + 1] =
+                                { { type = "skill", skill = cid, value = n }, perk.name }
+                        end
                     end
                 elseif choice.kind == "weapon" then
                     names[#names + 1] = NameInList(system.weapons, cid)
@@ -240,13 +264,12 @@ function CharacterSheet.Compute(char, system)
     for _, ce in ipairs(choiceEffects) do ApplyEffect(fx, ce[1], ce[2]) end
 
     -- Attributes: base + trait bonus + global all-attribute adjustment.
-    local final, modifier = {}, {}
+    local modifier = {}
     local attributes = {}
     for _, attr in ipairs(system.attributes or {}) do
         local base = (char.attributes or {})[attr.id] or 0
         local bonus = (fx.attr[attr.id] or 0) + fx.allAttr
         local value = base + bonus
-        final[attr.id] = value
         modifier[attr.id] = ns.GetModifier(value)
         attributes[#attributes + 1] = {
             id = attr.id, name = attr.name,
@@ -329,29 +352,84 @@ function CharacterSheet.Compute(char, system)
     local spellMod = isCaster and (modifier[primary] or 0)
         or (cfg.mana_attribute and (modifier[cfg.mana_attribute] or 0)) or 0
 
-    local acMod = modifier[char.ac_attribute] or 0
-    local initMod = modifier[char.init_attribute] or 0
+    -- AC / initiative attributes. A system may constrain them to candidate
+    -- lists (derived_stats.ac_attributes / init_attributes, e.g. "Agility,
+    -- Sense or Luck"): an explicit character pick is honored when it is one
+    -- of the candidates, anything else (including no pick at all) falls to
+    -- the best candidate modifier - a fresh character is correct without
+    -- choosing. Without a list, the character's pick alone rules.
+    local function EffectiveAttr(pick, candidates)
+        if not candidates or #candidates == 0 then return pick end
+        local bestId, bestMod
+        for _, id in ipairs(candidates) do
+            if id == pick then return pick end
+            local m = modifier[id]
+            if m and (not bestMod or m > bestMod) then bestId, bestMod = id, m end
+        end
+        return bestId
+    end
+    local acAttr = EffectiveAttr(char.ac_attribute, cfg.ac_attributes)
+    local initAttr = EffectiveAttr(char.init_attribute, cfg.init_attributes)
+    local acMod = modifier[acAttr] or 0
+    local initMod = modifier[initAttr] or 0
     local moveMod = cfg.movement_attribute and (modifier[cfg.movement_attribute] or 0) or 0
     local hitDieMod = cfg.hit_die_attribute and (modifier[cfg.hit_die_attribute] or 0) or 0
+
+    -- Stored max mana wins when set; otherwise the system's mana formula. This is
+    -- the fx-free base (trait/perk effects are added as `mana.max` in derived).
+    local manaBase = char.max_mana or math.max(0, cfg.mana_multiplier * spellMod)
 
     local derived = {
         accomplishment = accomplishment,
         primary_attribute = primary,
         hit_dice = level .. ns.GetHitDie(hitDieMod),
         hp = { current = char.current_hp, max = (char.max_hp or 0) + fx.maxHP, temp = char.temp_hp },
-        mana = { current = char.current_mana, max = (char.max_mana or math.max(0, cfg.mana_multiplier * spellMod)) + fx.maxMana },
+        -- `base` is the stored (fx-free) maximum; `max` adds the live trait/perk
+        -- effect on top. Creation persists `base`, never `max`, so an effect is
+        -- not baked into the stored value and then re-added on every Compute.
+        mana = {
+            current = char.current_mana,
+            base = manaBase,
+            max = manaBase + fx.maxMana,
+        },
         ac = cfg.ac_base + acMod + fx.ac,
-        ac_attribute = char.ac_attribute,
+        ac_attribute = acAttr,       -- the EFFECTIVE attribute (pick or best candidate)
         initiative = initMod + fx.initiative,
-        init_attribute = char.init_attribute,
+        init_attribute = initAttr,   -- ditto
         movement = cfg.movement_base + math.max(0, moveMod) * cfg.movement_per_step + fx.movement,
         actions = cfg.actions_base + fx.actions,
-        save_dc = cfg.save_dc_base + (modifier[primary] or 0) + accomplishment + fx.saveDC,
+        -- The save DC is a spellcasting number: non-casters carry none (the
+        -- sheet hides the row), so a martial's primary cannot fake one.
+        save_dc = isCaster and (cfg.save_dc_base + (modifier[primary] or 0) + accomplishment + fx.saveDC) or nil,
         attack_modifier = fx.attack,
     }
     -- Level-granted extra actions (and any other level_bonuses.actions).
     for lvl, bonus in pairs(system.level_bonuses or {}) do
         if lvl <= level and bonus.actions then derived.actions = derived.actions + bonus.actions end
+    end
+
+    -- Spellcasting (casters only): spell attack = primary modifier +
+    -- accomplishment + spell_attack effects. When the system declares
+    -- spell_schools (records or plain strings), one row per school folds in
+    -- the school-targeted spell_attack / save_dc effects.
+    if isCaster then
+        local spell = {
+            attack = (modifier[primary] or 0) + accomplishment + fx.spellAttack,
+            dc = derived.save_dc,
+            schools = {},
+        }
+        for _, s in ipairs(system.spell_schools or {}) do
+            local id = type(s) == "table" and s.id or s
+            local name = (type(s) == "table" and s.name) or tostring(s)
+            if id then
+                spell.schools[#spell.schools + 1] = {
+                    id = id, name = name,
+                    attack = spell.attack + (fx.spellAttackSchool[id] or 0),
+                    dc = spell.dc + (fx.saveDCSchool[id] or 0),
+                }
+            end
+        end
+        derived.spell = spell
     end
 
     return {
@@ -365,6 +443,5 @@ function CharacterSheet.Compute(char, system)
         traits = traits,
         sphere_perks = spherePerks,
         custom_perks = char.custom_perks or {},
-        attack_lines = char.attack_lines or {},
     }
 end
