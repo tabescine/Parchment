@@ -68,7 +68,7 @@ end
 
 -- Returns the next pooled hover button (transparent, spans a row) used to show
 -- a breakdown tooltip and/or roll a check. Scripts read btn.tip(GameTooltip)
--- and btn.roll = { label, modifier, who } (set fresh on every render).
+-- and btn.roll = { label, modifier } (set fresh on every render).
 local function AcquireBtn(content)
     content.btnUsed = content.btnUsed + 1
     local b = content.btnPool[content.btnUsed]
@@ -92,7 +92,7 @@ local function AcquireBtn(content)
             if self.roll.click then
                 self.roll.click()
             else
-                ns.Dice.Check(self.roll.label, self.roll.modifier, self.roll.who)
+                ns.Dice.Check(self.roll.label, self.roll.modifier)
             end
         end)
         content.btnPool[content.btnUsed] = b
@@ -171,7 +171,7 @@ end
 -- label) alternate a faint background stripe so the eye tracks each label to
 -- its value; continuation rows (empty label) are left unstriped. When `tip` is
 -- given, a hover button over the row shows tip(GameTooltip); when `roll`
--- ({ label, modifier, who }) is given, clicking the row rolls that check.
+-- ({ label, modifier }) is given, clicking the row rolls that check.
 local function Row(content, label, value, indent, valColor, tip, roll)
     if label and label ~= "" then
         content.rowIndex = content.rowIndex + 1
@@ -261,7 +261,7 @@ local function RenderOverview(content, sheet, ctx)
         aName(d.init_attribute) .. " modifier " .. Signed(aMod(d.init_attribute))
         .. fxTerm(d.initiative - aMod(d.init_attribute))),
         (not ctx.viewChar) and {
-            label = "Initiative", modifier = d.initiative, who = sheet.name,
+            label = "Initiative", modifier = d.initiative,
             hint = "Click: roll initiative and join the combat tracker",
             click = function() if ns.InitiativeUI then ns.InitiativeUI.AddSelf() end end,
         } or nil)
@@ -557,7 +557,7 @@ local function RenderBody(self)
     -- are not yours to roll.
     function ctx.rollSpec(label, mod)
         if ctx.viewChar then return nil end
-        return { label = label, modifier = mod or 0, who = sheet.name }
+        return { label = label, modifier = mod or 0 }
     end
 
     RenderOverview(content, sheet, ctx)
