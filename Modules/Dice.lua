@@ -92,17 +92,15 @@ end
 -- Rolls a named d20 check (e.g. "Perception", +5) and announces the result:
 -- always printed locally; with public rolls on and a group, the breakdown is
 -- also sent to party/raid chat, where the preceding RandomRoll system line
--- lets everyone verify the raw die. `who` (optional, e.g. the character name)
--- prefixes the group announcement only.
-function Dice.Check(label, modifier, who)
+-- lets everyone verify the raw die.
+function Dice.Check(label, modifier)
     modifier = modifier or 0
     Dice.Request(modifier, function(total, raw)
         local line = string.format("%s: %d (d20) %s %d = %d", label, raw,
             modifier >= 0 and "+" or "-", math.abs(modifier), total)
         ns.Print(line)
         if PublicEnabled() and IsInGroup() then
-            local prefix = (who and who ~= "" and who .. " - ") or ""
-            SendChatMessage("Parchment: " .. prefix .. line, IsInRaid() and "RAID" or "PARTY")
+            SendChatMessage(line, IsInRaid() and "RAID" or "PARTY")
         end
     end)
 end
