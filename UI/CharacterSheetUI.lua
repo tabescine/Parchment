@@ -66,9 +66,10 @@ local function CanvasReset(content)
     content.rowIndex = 0
 end
 
--- Returns the next pooled hover button (transparent, spans a row) used to show
--- a breakdown tooltip and/or roll a check. Scripts read btn.tip(GameTooltip)
--- and btn.roll = { label, modifier } (set fresh on every render).
+-- Returns the next pooled hover button (transparent, spans a row or paragraph)
+-- used to show a breakdown tooltip and/or handle a click (roll a check, post a
+-- perk). Scripts read btn.tip(GameTooltip) and btn.roll = { label, modifier }
+-- or { hint, click } (set fresh on every render).
 local function AcquireBtn(content)
     content.btnUsed = content.btnUsed + 1
     local b = content.btnPool[content.btnUsed]
@@ -208,8 +209,9 @@ local function Row(content, label, value, indent, valColor, tip, roll)
 end
 
 -- Adds a full-width wrapped paragraph (descriptions, notes). title is bolded
--- gold inline; body wraps beneath the available width.
-local function Paragraph(content, title, body, color)
+-- gold inline; body wraps beneath the available width. When `roll` ({ hint,
+-- click }) is given, a hover button over the paragraph handles the click.
+local function Paragraph(content, title, body, color, roll)
     local width = content:GetWidth() - PAD * 2
     local fs = Acquire(content, "GameFontHighlightSmall")
     fs:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, content.y)
@@ -219,7 +221,15 @@ local function Paragraph(content, title, body, color)
     fs:SetTextColor(c[1], c[2], c[3])
     local text = title and ("|cffc8a868" .. title .. "|r  " .. (body or "")) or (body or "")
     fs:SetText(text)
-    content.y = content.y - fs:GetStringHeight() - 6
+    local h = fs:GetStringHeight()
+    if roll then
+        local b = AcquireBtn(content)
+        b:SetPoint("TOPLEFT", content, "TOPLEFT", 4, content.y + 2)
+        b:SetPoint("TOPRIGHT", content, "TOPRIGHT", -4, content.y + 2)
+        b:SetHeight(h + 4)
+        b.roll = roll
+    end
+    content.y = content.y - h - 6
 end
 
 -- Section renderers. Each draws one block of the sheet into the body canvas,
@@ -501,14 +511,39 @@ local function RenderSpellcasting(content, sheet, ctx)
     end
 end
 
+-- Sends prose to group chat, chunked under the client's 255-byte message cap:
+-- split on newlines, then on word boundaries. Colour escapes are stripped
+-- (SendChatMessage rejects them); outside a group the text just prints locally.
+local CHAT_MAX = 240
+local function PostToChat(text)
+    text = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+    if not IsInGroup() then
+        ns.Print(text)
+        return
+    end
+    local channel = IsInRaid() and "RAID" or "PARTY"
+    for line in text:gmatch("[^\n]+") do
+        while #line > CHAT_MAX do
+            local cut = line:sub(1, CHAT_MAX):match(".*()%s")
+            if not cut or cut <= 1 then cut = CHAT_MAX + 1 end
+            SendChatMessage(line:sub(1, cut - 1), channel)
+            line = line:sub(cut):gsub("^%s+", "")
+        end
+        if line ~= "" then SendChatMessage(line, channel) end
+    end
+end
+
 -- Prose blocks: traits, selected sphere perks, the homebrew ability path, and
 -- notes. Each is a titled list of wrapped paragraphs, shown only when non-empty.
-local function RenderProse(content, sheet)
+-- On the own sheet, trait/perk/ability paragraphs are clickable to post their
+-- text to group chat (ctx.postSpec, nil on viewed sheets); notes stay private.
+local function RenderProse(content, sheet, ctx)
     -- Traits.
     if #sheet.traits > 0 then
         Header(content, "TRAITS")
         for _, t in ipairs(sheet.traits) do
-            Paragraph(content, t.name .. ":", t.description, C_DIM)
+            Paragraph(content, t.name .. ":", t.description, C_DIM,
+                ctx.postSpec(t.name .. ": " .. (t.description or "")))
         end
     end
 
@@ -519,7 +554,8 @@ local function RenderProse(content, sheet)
             local title = p.name .. (p.rank > 1 and (" x" .. p.rank) or "")
                 .. (p.choices and #p.choices > 0 and ("  |cff8ec6ff[" .. table.concat(p.choices, ", ") .. "]|r") or "")
                 .. (p.sphere and ("  |cff8ec6ff(" .. p.sphere .. ")|r") or "")
-            Paragraph(content, title .. ":", p.description, C_DIM)
+            Paragraph(content, title .. ":", p.description, C_DIM,
+                ctx.postSpec(title .. ": " .. (p.description or "")))
         end
     end
 
@@ -527,7 +563,9 @@ local function RenderProse(content, sheet)
     if #sheet.custom_perks > 0 then
         Header(content, "ABILITY PATH")
         for _, p in ipairs(sheet.custom_perks) do
-            Paragraph(content, "Lv" .. (p.level or "?") .. " " .. p.name .. ":", p.description, C_DIM)
+            local title = "Lv" .. (p.level or "?") .. " " .. p.name
+            Paragraph(content, title .. ":", p.description, C_DIM,
+                ctx.postSpec(title .. ": " .. (p.description or "")))
         end
     end
 
@@ -559,13 +597,19 @@ local function RenderBody(self)
         if ctx.viewChar then return nil end
         return { label = label, modifier = mod or 0 }
     end
+    -- Click-to-post spec (share a prose block to group chat), or nil for a
+    -- viewed sheet.
+    function ctx.postSpec(text)
+        if ctx.viewChar then return nil end
+        return { hint = "Click: post to chat", click = function() PostToChat(text) end }
+    end
 
     RenderOverview(content, sheet, ctx)
     RenderAttributes(content, sheet, ctx)
     RenderSkills(content, sheet, ctx)
     RenderWeapons(content, sheet, ctx)
     RenderSpellcasting(content, sheet, ctx)
-    RenderProse(content, sheet)
+    RenderProse(content, sheet, ctx)
 
     CanvasFinish(content)
 end
