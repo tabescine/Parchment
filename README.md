@@ -20,7 +20,9 @@ every window - sheet math included - adapts to it.
   editor (`/pmt edit`) with live warnings, plus level-up support.
 - **Perk trees** - a viewer/builder for your system's perk spheres with
   prerequisites, exclusivity, ranks, perk-driven choices, homebrew perks,
-  and live search across every sphere (by name or description).
+  and live search across every sphere (by name or description). Homebrew
+  perks are written in game with a stepped wizard (`/pmt perkwizard`:
+  Basics → Effects → Review) whose effects fold into the sheet's totals.
 - **Combat tracker** - turn order with automatic tie-breaking (via the
   system's `initiative_tiebreaker` stat) and manual DM reordering, rounds,
   a turn/round stopwatch, and per-row HP: players' live vitals inline,
@@ -76,6 +78,7 @@ Type `/pmt` (or `/parchment`) for the full command list:
 | `/pmt sheet` | Open the character sheet |
 | `/pmt combat` | Open the combat tracker (`/pmt init` still works) |
 | `/pmt perks` | Open the perk tree viewer |
+| `/pmt perkwizard` | Write a homebrew perk for the active character |
 | `/pmt new` | Create a character (guided wizard) |
 | `/pmt edit` | Open the character editor |
 | `/pmt import` | Open the import/export dialog |

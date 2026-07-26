@@ -3,6 +3,7 @@
 local T = dofile((TEST_ROOT or "") .. "Tests/wow_stubs.lua")
 T.InstallLifecycleStubs({})
 local ns = T.load({}, "Core.lua")
+T.load(ns, "Modules/CharacterSheet.lua")   -- PerkTree asks it which homebrew perks are gained
 T.load(ns, "Modules/PerkTree.lua")
 local PT = ns.PerkTree
 
@@ -87,6 +88,13 @@ assert(not ok and reason:find("Homebrew"), tostring(reason))
 -- Points: sphere perks and homebrew both invest; one point per level.
 local invested, available = PT.Points({ level = 4, perks = { "base", "multi" }, custom_perks = { {} } })
 assert(invested == 3 and available == 4)
+
+-- Only homebrew perks already gained are invested: one planned for a later
+-- level has not been paid for yet (no level at all counts as level 1).
+invested, available = PT.Points({ level = 2, perks = { "base" }, custom_perks = {
+    { name = "Now", level = 1 }, { name = "Later", level = 5 }, { name = "Unlevelled" },
+} })
+assert(invested == 3 and available == 2, "pending homebrew perks must not count as invested")
 
 -- Search: case-insensitive plain text over name + description, across the
 -- given tree list (synthetic trees included), tree order preserved.

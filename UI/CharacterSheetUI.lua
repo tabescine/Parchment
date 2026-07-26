@@ -7,9 +7,13 @@
 -- and notes.
 --
 -- All layout is data-driven from ns.CharacterSheet.Compute; nothing here knows
--- any specific ruleset, so whatever system the user imports renders too.
+-- any specific ruleset, so whatever system the user imports renders too. The
+-- ability path renders Compute's entries as they come: a homebrew perk it flags
+-- pending (gained at a level the character has not reached) is dimmed and
+-- labelled instead of hidden.
 --
--- Reads from: ns.GetActiveCharacter, ns.GetSystem, ns.CharacterSheet.Compute.
+-- Reads from: ns.GetActiveCharacter, ns.GetSystem, ns.CharacterSheet.Compute,
+--   ns.PerkWizardUI (the ability-path header shortcut).
 -- Exposes on ns.CharacterSheetUI: Open, Toggle, RefreshIfShown, and
 --   ShowCharacter (read-only view of a received/cached character).
 -- Registers the "sheet" module opener with Core.
@@ -150,13 +154,27 @@ local function CanvasFinish(content)
 end
 
 -- Adds a gold section header followed by a thin divider rule. Resets the row
--- stripe parity so each section starts its banding fresh.
-local function Header(content, text)
+-- stripe parity so each section starts its banding fresh. When `action`
+-- ({ text, hint, click }) is given, its label sits right-aligned on the header
+-- line with a pooled hover button over it - the same pools every other row
+-- uses, so a header affordance costs no new widget class.
+local function Header(content, text, action)
     content.y = content.y - 12
     local fs = Acquire(content, "GameFontNormal")
     fs:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, content.y)
     fs:SetTextColor(C_GOLD[1], C_GOLD[2], C_GOLD[3])
     fs:SetText(text)
+    if action then
+        local a = Acquire(content, "GameFontHighlightSmall")
+        a:SetPoint("TOPRIGHT", content, "TOPRIGHT", -PAD, content.y - 2)
+        a:SetJustifyH("RIGHT")
+        a:SetTextColor(C_GOLD[1], C_GOLD[2], C_GOLD[3])
+        a:SetText(action.text)
+        local b = AcquireBtn(content)
+        b:SetPoint("TOPRIGHT", content, "TOPRIGHT", -PAD + 4, content.y)
+        b:SetSize(90, 16)
+        b.roll = { hint = action.hint, click = action.click }
+    end
     content.y = content.y - 18
 
     local line = AcquireTex(content)
@@ -559,13 +577,26 @@ local function RenderProse(content, sheet, ctx)
         end
     end
 
-    -- Homebrew ability path.
+    -- Homebrew ability path. On the own sheet the header carries a shortcut to
+    -- the perk wizard (a character with none yet reaches it from the perk tree's
+    -- Homebrew sphere, which is where this section would be empty anyway).
+    -- Perks written for a level the character has not reached are marked pending
+    -- and dimmed title and all: the plan stays readable without looking active.
     if #sheet.custom_perks > 0 then
-        Header(content, "ABILITY PATH")
+        Header(content, "ABILITY PATH", (not ctx.viewChar) and ns.PerkWizardUI and {
+            text = "+ new perk", hint = "Click: write a homebrew perk",
+            click = function() ns.PerkWizardUI.Open() end,
+        } or nil)
         for _, p in ipairs(sheet.custom_perks) do
             local title = "Lv" .. (p.level or "?") .. " " .. p.name
-            Paragraph(content, title .. ":", p.description, C_DIM,
-                ctx.postSpec(title .. ": " .. (p.description or "")))
+                .. (p.pending and " (pending)" or "")
+            local post = ctx.postSpec(title .. ": " .. (p.description or ""))
+            if p.pending then
+                Paragraph(content, nil,
+                    "|cff9e998c" .. title .. ":|r  " .. (p.description or ""), C_DIM, post)
+            else
+                Paragraph(content, title .. ":", p.description, C_DIM, post)
+            end
         end
     end
 

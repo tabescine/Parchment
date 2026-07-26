@@ -63,6 +63,7 @@ local MODULE_COMMANDS = {
     init = "initiative",   -- legacy alias for /pmt combat
     sheet = "sheet",
     perks = "perks",
+    perkwizard = "perkwizard",
     import = "import",
     edit = "edit",
     new = "new",
@@ -306,6 +307,7 @@ local function PrintHelp()
     Print("  " .. C_GOLD .. "/pmt sheet|r   - open the character sheet")
     Print("  " .. C_GOLD .. "/pmt combat|r  - open the combat tracker (initiative, HP, timer)")
     Print("  " .. C_GOLD .. "/pmt perks|r   - open the perk tree viewer")
+    Print("  " .. C_GOLD .. "/pmt perkwizard|r - write a homebrew perk for the active character")
     Print("  " .. C_GOLD .. "/pmt new|r     - create a character (guided wizard)")
     Print("  " .. C_GOLD .. "/pmt edit|r    - open the character editor")
     Print("  " .. C_GOLD .. "/pmt import|r  - open the import/export dialog")

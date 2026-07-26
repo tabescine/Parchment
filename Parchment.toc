@@ -44,5 +44,6 @@ Modules\CharacterEditor.lua
 UI\CharacterForm.lua
 UI\CharacterEditorUI.lua
 UI\CharacterWizardUI.lua
+UI\PerkWizardUI.lua
 UI\ConfigUI.lua
 Modules\Minimap.lua

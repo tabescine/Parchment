@@ -8,10 +8,18 @@
 -- A repeatable perk appears once per rank, so its rank is simply how many times
 -- its id occurs in the list. This keeps the JSON/TOML schema a plain string list.
 --
--- Reads from: ns.GetAttribute (for requirement messages). The caller passes the
---   computed sheet so attribute requirements check final (post-trait) values.
+-- Homebrew perks (char.custom_perks) are authored in game by the perk wizard;
+-- CommitPerk/DeletePerk are the single seam through which they reach a
+-- character, so a later decoupled perk library replaces only those two. They
+-- carry the level they are gained at: one written ahead of the character's
+-- level is pending (see ns.CharacterSheet.PerkActive) and costs no point yet.
+--
+-- Reads from: ns.GetAttribute (for requirement messages),
+--   ns.CharacterSheet.PerkActive (the shared homebrew active/pending test).
+--   The caller passes the computed sheet so attribute requirements check final
+--   (post-trait) values.
 -- Exposes on ns.PerkTree: Status, CanAddRank, Select, Deselect, Points, Rank,
---   ReplacedBy, ChoiceMax, SetChoices, Search.
+--   ReplacedBy, ChoiceMax, SetChoices, Search, CommitPerk, DeletePerk.
 
 local ADDON, ns = ...
 
@@ -245,7 +253,9 @@ function PT.SetChoices(char, perk, ids)
 end
 
 -- Returns invested, available perk points. One point is granted per level.
--- Both selected sphere perks and DM-granted homebrew perks count as invested.
+-- Both selected sphere perks and DM-granted homebrew perks count as invested,
+-- the homebrew ones only once gained: a perk planned for a higher level has not
+-- been paid for yet, so it must not read as an overspend today.
 -- Only ids that resolve in the active system count: after a system switch,
 -- char.perks can hold stale ids the player can neither see nor deselect in
 -- the tree UI, and counting those would warn about an overspend the player
@@ -255,7 +265,37 @@ function PT.Points(char)
     for _, id in ipairs(char.perks or {}) do
         if FindPerkAnywhere(id) then invested = invested + 1 end
     end
-    return invested + #(char.custom_perks or {}), (char.level or 1)
+    for _, perk in ipairs(char.custom_perks or {}) do
+        if ns.CharacterSheet.PerkActive(char, perk) then invested = invested + 1 end
+    end
+    return invested, (char.level or 1)
+end
+
+-- Commits a homebrew perk record onto a character's custom_perks: appended when
+-- index is nil, replacing that entry when index names an existing one. The
+-- record is stored as given (it is self-contained: name, level, description,
+-- effects), which is what keeps this the only step a later perk library has to
+-- change. Returns the index the perk landed at, or nil when the arguments are
+-- unusable.
+function PT.CommitPerk(char, perk, index)
+    if type(char) ~= "table" or type(perk) ~= "table" then return nil end
+    char.custom_perks = char.custom_perks or {}
+    local list = char.custom_perks
+    if index and list[index] then
+        list[index] = perk
+        return index
+    end
+    list[#list + 1] = perk
+    return #list
+end
+
+-- Removes the homebrew perk at index (later entries shift down). Returns true
+-- when one was removed, false when the index holds nothing.
+function PT.DeletePerk(char, index)
+    local list = type(char) == "table" and char.custom_perks
+    if type(list) ~= "table" or index == nil or list[index] == nil then return false end
+    table.remove(list, index)
+    return true
 end
 
 -- Searches trees for perks whose name or description contains the query

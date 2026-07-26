@@ -27,11 +27,20 @@
 -- Which attribute fills each role is configured per system (see ns.DerivedConfig);
 -- an unset role contributes 0, so no specific attribute id is ever assumed.
 --
--- Homebrew per-character perks (custom_perks) and conditional racial effects are
--- NOT folded into these totals - they are surfaced for the player to apply.
+-- Homebrew per-character perks (custom_perks, written in game by the perk
+-- wizard) carry the same machine-readable effects as traits, but they are
+-- level-gated: a perk folds into these totals only once the character has
+-- reached the level it is gained at (see .PerkActive). A perk written ahead of
+-- time stays on the sheet as pending and contributes nothing until then.
+-- Conditional racial effects are never folded - they are surfaced for the
+-- player to apply.
 --
 -- Reads from: ns.GetModifier, ns.GetHitDie, ns.GetAccomplishmentBonus, system.
--- Exposes on ns.CharacterSheet: .Compute
+-- Exposes on ns.CharacterSheet: .Compute, .PerkActive (the one active/pending
+--   test for homebrew perks, shared with PerkTree.Points and the UIs),
+--   .EFFECT_TYPES and .EffectType (the effect vocabulary, which the perk wizard
+--   generates its pickers, labels and validation from - see the table for the
+--   per-entry fields).
 
 local ADDON, ns = ...
 
@@ -53,18 +62,6 @@ local function SelectedTraits(char, system)
     return out
 end
 
--- Effect vocabulary, shared by trait bonuses/penalties and custom-perk effects.
--- Each effect is { type = ..., value = N, ... }:
---   attribute(id)          all_attributes
---   skill(skill|id)        skill(skill|id, add_modifier = attrId)   all_skills
---   save(id)               save(id, add_modifier = attrId)
---   ac  attack_rolls  initiative  movement  actions  max_hp  max_mana
---   spell_attack(school?)  save_dc(school?)  - a school-targeted entry
---   adjusts only that school's spellcasting row
--- add_modifier adds a copy of an attribute's modifier to that skill/save, which
--- is how "twice your X modifier on skill Y" is expressed. Any other type
--- (attribute_points, damage_reduction, ...) is informational and ignored here.
-
 -- Creates an empty effect accumulator.
 local function NewAccumulator()
     return {
@@ -85,58 +82,118 @@ local function AddUnique(list, value)
     list[#list + 1] = value
 end
 
+-- Effect vocabulary, shared by trait bonuses/penalties and custom-perk effects.
+-- Each effect is a record { type = <id>, value = N, ... }; this table is the one
+-- place that says what a type means, so the perk wizard's pickers, labels and
+-- validation are generated from it instead of a hand-kept copy.
+--
+-- Per entry:
+--   id          the effect `type` string stored in the data
+--   label       display name (wizard pickers, review summary)
+--   target      what the effect points at: "none", "attribute", "skill", or
+--               "school" (school is OPTIONAL - no school means every school)
+--   target_key  the effect field holding that target (absent for "none")
+--   add_modifier  true when the type also accepts add_modifier = <attribute id>,
+--               which adds a copy of that attribute's modifier to the skill/save
+--               ("twice your X modifier on skill Y")
+--   apply(acc, e, v, source)  folds the effect into the accumulator; v is the
+--               effect's numeric value and source the trait/perk name
+--
+-- Any type outside this table (attribute_points, damage_reduction, ...) is
+-- informational: it is surfaced to the player but never folded into totals.
+local EFFECT_TYPES = {
+    { id = "attribute", label = "Attribute", target = "attribute", target_key = "id",
+      apply = function(acc, e, v, source)
+          acc.attr[e.id] = (acc.attr[e.id] or 0) + v
+          acc.attrSources[e.id] = acc.attrSources[e.id] or {}
+          table.insert(acc.attrSources[e.id], (v >= 0 and "+" or "") .. v .. " " .. source)
+      end },
+    { id = "all_attributes", label = "All attributes", target = "none",
+      apply = function(acc, _, v) acc.allAttr = acc.allAttr + v end },
+    { id = "ac", label = "Armor Class", target = "none",
+      apply = function(acc, _, v) acc.ac = acc.ac + v end },
+    { id = "attack_rolls", label = "Attack rolls", target = "none",
+      apply = function(acc, _, v) acc.attack = acc.attack + v end },
+    { id = "initiative", label = "Initiative", target = "none",
+      apply = function(acc, _, v) acc.initiative = acc.initiative + v end },
+    { id = "movement", label = "Movement", target = "none",
+      apply = function(acc, _, v) acc.movement = acc.movement + v end },
+    { id = "actions", label = "Actions", target = "none",
+      apply = function(acc, _, v) acc.actions = acc.actions + v end },
+    { id = "save_dc", label = "Save DC", target = "school", target_key = "school",
+      apply = function(acc, e, v)
+          if e.school then
+              acc.saveDCSchool[e.school] = (acc.saveDCSchool[e.school] or 0) + v
+          else
+              acc.saveDC = acc.saveDC + v
+          end
+      end },
+    { id = "spell_attack", label = "Spell attack", target = "school", target_key = "school",
+      apply = function(acc, e, v)
+          if e.school then
+              acc.spellAttackSchool[e.school] = (acc.spellAttackSchool[e.school] or 0) + v
+          else
+              acc.spellAttack = acc.spellAttack + v
+          end
+      end },
+    { id = "max_hp", label = "Maximum HP", target = "none",
+      apply = function(acc, _, v) acc.maxHP = acc.maxHP + v end },
+    { id = "max_mana", label = "Maximum Mana", target = "none",
+      apply = function(acc, _, v) acc.maxMana = acc.maxMana + v end },
+    { id = "all_skills", label = "All skills", target = "none",
+      apply = function(acc, _, v) acc.allSkill = acc.allSkill + v end },
+    { id = "skill", label = "Skill", target = "skill", target_key = "skill", add_modifier = true,
+      apply = function(acc, e, v, source)
+          -- Authored data uses either `skill` or the generic `id` for the target.
+          local id = e.skill or e.id
+          if not id then return end
+          if v ~= 0 then acc.skill[id] = (acc.skill[id] or 0) + v end
+          if e.add_modifier then
+              acc.skillAddMod[id] = acc.skillAddMod[id] or {}
+              table.insert(acc.skillAddMod[id], e.add_modifier)
+          end
+          acc.skillSources[id] = acc.skillSources[id] or {}
+          AddUnique(acc.skillSources[id], source)
+      end },
+    { id = "save", label = "Saving throw", target = "attribute", target_key = "id", add_modifier = true,
+      apply = function(acc, e, v, source)
+          if not e.id then return end
+          if v ~= 0 then acc.save[e.id] = (acc.save[e.id] or 0) + v end
+          if e.add_modifier then
+              acc.saveAddMod[e.id] = acc.saveAddMod[e.id] or {}
+              table.insert(acc.saveAddMod[e.id], e.add_modifier)
+          end
+          acc.saveSources[e.id] = acc.saveSources[e.id] or {}
+          AddUnique(acc.saveSources[e.id], source)
+      end },
+}
+CharacterSheet.EFFECT_TYPES = EFFECT_TYPES
+
+-- id -> entry, for dispatch and for the wizard's lookups.
+local EFFECT_BY_ID = {}
+for _, spec in ipairs(EFFECT_TYPES) do EFFECT_BY_ID[spec.id] = spec end
+
+-- Returns the vocabulary entry for an effect type id, or nil when the type is
+-- informational (outside the vocabulary).
+function CharacterSheet.EffectType(id)
+    return EFFECT_BY_ID[id]
+end
+
+-- True when a homebrew perk has already been gained: its level (absent or
+-- non-numeric means 1, so an unlevelled perk is always active) is at or below
+-- the character's. The single place the active/pending line is drawn - Compute,
+-- PerkTree.Points and the UIs all ask here.
+function CharacterSheet.PerkActive(char, perk)
+    local gainedAt = tonumber(type(perk) == "table" and perk.level) or 1
+    return gainedAt <= ((type(char) == "table" and char.level) or 1)
+end
+
 -- Folds a single effect entry into the accumulator. source is the trait/perk
 -- name, recorded for attribute bonus provenance.
 local function ApplyEffect(acc, e, source)
-    local t = e.type
-    local v = e.value or 0
-    if t == "attribute" then
-        acc.attr[e.id] = (acc.attr[e.id] or 0) + v
-        acc.attrSources[e.id] = acc.attrSources[e.id] or {}
-        table.insert(acc.attrSources[e.id], (v >= 0 and "+" or "") .. v .. " " .. source)
-    elseif t == "all_attributes" then acc.allAttr = acc.allAttr + v
-    elseif t == "ac" then acc.ac = acc.ac + v
-    elseif t == "attack_rolls" then acc.attack = acc.attack + v
-    elseif t == "initiative" then acc.initiative = acc.initiative + v
-    elseif t == "movement" then acc.movement = acc.movement + v
-    elseif t == "actions" then acc.actions = acc.actions + v
-    elseif t == "save_dc" then
-        if e.school then
-            acc.saveDCSchool[e.school] = (acc.saveDCSchool[e.school] or 0) + v
-        else
-            acc.saveDC = acc.saveDC + v
-        end
-    elseif t == "spell_attack" then
-        if e.school then
-            acc.spellAttackSchool[e.school] = (acc.spellAttackSchool[e.school] or 0) + v
-        else
-            acc.spellAttack = acc.spellAttack + v
-        end
-    elseif t == "max_hp" then acc.maxHP = acc.maxHP + v
-    elseif t == "max_mana" then acc.maxMana = acc.maxMana + v
-    elseif t == "all_skills" then acc.allSkill = acc.allSkill + v
-    elseif t == "skill" then
-        local id = e.skill or e.id
-        if id then
-            if v ~= 0 then acc.skill[id] = (acc.skill[id] or 0) + v end
-            if e.add_modifier then
-                acc.skillAddMod[id] = acc.skillAddMod[id] or {}
-                table.insert(acc.skillAddMod[id], e.add_modifier)
-            end
-            acc.skillSources[id] = acc.skillSources[id] or {}
-            AddUnique(acc.skillSources[id], source)
-        end
-    elseif t == "save" then
-        if e.id then
-            if v ~= 0 then acc.save[e.id] = (acc.save[e.id] or 0) + v end
-            if e.add_modifier then
-                acc.saveAddMod[e.id] = acc.saveAddMod[e.id] or {}
-                table.insert(acc.saveAddMod[e.id], e.add_modifier)
-            end
-            acc.saveSources[e.id] = acc.saveSources[e.id] or {}
-            AddUnique(acc.saveSources[e.id], source)
-        end
-    end
+    local spec = EFFECT_BY_ID[e.type]
+    if not spec then return end
+    spec.apply(acc, e, e.value or 0, source)
 end
 
 -- Accumulates every effect from the selected traits and the character's custom
@@ -255,10 +312,24 @@ function CharacterSheet.Compute(char, system)
         end
     end
 
-    -- Effects come from traits, homebrew perks, selected sphere perks that carry
-    -- machine-readable effects, and the choice-derived effects above.
+    -- Homebrew perks: a display entry each (in authored order), but only the
+    -- ones already gained at this level contribute effects - the rest are
+    -- flagged pending, so a whole ability path can be written up front.
+    local customPerks, activeCustom = {}, {}
+    for _, p in ipairs(char.custom_perks or {}) do
+        local entry = { name = p.name, description = p.description, level = p.level }
+        if CharacterSheet.PerkActive(char, p) then
+            activeCustom[#activeCustom + 1] = p
+        else
+            entry.pending = true
+        end
+        customPerks[#customPerks + 1] = entry
+    end
+
+    -- Effects come from traits, gained homebrew perks, selected sphere perks
+    -- that carry machine-readable effects, and the choice-derived effects above.
     local effectPerks = {}
-    for _, p in ipairs(char.custom_perks or {}) do effectPerks[#effectPerks + 1] = p end
+    for _, p in ipairs(activeCustom) do effectPerks[#effectPerks + 1] = p end
     for _, p in ipairs(takenForEffects) do effectPerks[#effectPerks + 1] = p end
     local fx = AccumulateEffects(traits, effectPerks)
     for _, ce in ipairs(choiceEffects) do ApplyEffect(fx, ce[1], ce[2]) end
@@ -442,6 +513,6 @@ function CharacterSheet.Compute(char, system)
         derived = derived,
         traits = traits,
         sphere_perks = spherePerks,
-        custom_perks = char.custom_perks or {},
+        custom_perks = customPerks,   -- display entries, pending ones flagged
     }
 end
