@@ -12,8 +12,16 @@
 -- per-sphere match counts elsewhere - click it to cycle to the next sphere
 -- with a match. The synthetic Homebrew sphere is searched too.
 --
+-- The Homebrew sphere is the character's own custom_perks: it is always listed
+-- for an active character (empty included), its nodes open the perk wizard on
+-- left-click and offer deletion on right-click, and a "+ New perk" button
+-- replaces the status legend while it is shown. A homebrew perk gained at a
+-- level the character has not reached shows as locked (the tooltip says when it
+-- turns on), but stays editable and deletable like any other.
+--
 -- Reads from: ns.GetSystem, ns.GetActiveCharacter, ns.CharacterSheet.Compute,
---   ns.GetAttribute, ns.PerkTree, ns.UI.
+--   ns.CharacterSheet.PerkActive, ns.GetAttribute, ns.PerkTree,
+--   ns.PerkWizardUI, ns.UI.
 -- Exposes on ns.PerkTreeUI: Open, Toggle, and .frame (checked by callers that
 --   re-render the viewer only when it is already shown).
 -- Registers the "perks" module opener with Core.
@@ -22,6 +30,7 @@ local ADDON, ns = ...
 
 local UI = ns.UI
 local PT = ns.PerkTree
+local CS = ns.CharacterSheet
 
 local NODE_W, NODE_H = 128, 36
 local ROW_H, TOP_PAD = 62, 12
@@ -86,12 +95,23 @@ local function ShowTooltip(self, node)
     GameTooltip:SetOwner(node, "ANCHOR_RIGHT")
     GameTooltip:AddLine(perk.name, UI.GOLD[1], UI.GOLD[2], UI.GOLD[3])
 
-    -- Homebrew perks are DM-granted; show level instead of requirements.
+    -- Homebrew perks are DM-granted or self-authored; show level instead of
+    -- requirements, and how to edit them. One written for a later level reads as
+    -- locked with the level it turns on at, not as taken.
     if tree.homebrew then
         if perk.level then GameTooltip:AddLine("Homebrew - gained at level " .. perk.level, 0.9, 0.9, 0.9) end
-        GameTooltip:AddLine("Taken", STATUS.taken.border[1], STATUS.taken.border[2], STATUS.taken.border[3])
+        if CS.PerkActive(self.char, perk) then
+            local tc = STATUS.taken
+            GameTooltip:AddLine("Taken", tc.border[1], tc.border[2], tc.border[3])
+        else
+            local lc = STATUS.locked
+            GameTooltip:AddLine("Gained at level " .. (perk.level or 1)
+                .. " - not yet active (character is level " .. (self.char.level or 1) .. ")",
+                lc.border[1], lc.border[2], lc.border[3])
+        end
         GameTooltip:AddLine(" ")
         GameTooltip:AddLine(perk.description or "", 0.82, 0.80, 0.74, true)
+        GameTooltip:AddLine("Left-click to edit, right-click to delete.", 0.56, 0.78, 1)
         GameTooltip:Show()
         return
     end
@@ -166,8 +186,15 @@ end
 -- a choice prompt for it (and let you edit the choice when already taken).
 local function OnNodeClick(self, node, button)
     local perk, tree = node.perk, node.tree
+    -- Homebrew perks are edited, not selected: the wizard owns both paths.
     if tree.homebrew then
-        SetMsg(self, "Homebrew perks are set via import or the character sheet.", false)
+        if not ns.PerkWizardUI then
+            SetMsg(self, "Homebrew perks are set via import.", false)
+        elseif button == "RightButton" then
+            ns.PerkWizardUI.Delete(perk.index)
+        else
+            ns.PerkWizardUI.Open(perk.index)
+        end
         return
     end
 
@@ -251,15 +278,19 @@ local function AcquireLine(self)
 end
 
 -- Builds the spheres shown in the cycler: the system trees, plus a synthetic
--- read-only "Homebrew" sphere built from the character's custom perks.
+-- "Homebrew" sphere built from the character's custom perks. The sphere is
+-- always present for an active character (even with no perks yet): it is where
+-- the perk wizard is reached from, and an empty one shows that invitation.
+-- Each synthetic perk records the custom_perks index it came from, which is
+-- what the edit/delete clicks hand to the wizard.
 local function BuildTreeList(char)
     local trees = {}
     for _, t in ipairs(ns.GetSystem().perk_trees or {}) do trees[#trees + 1] = t end
-    if char and char.custom_perks and #char.custom_perks > 0 then
+    if char then
         local perks, rows = {}, {}
-        for i, p in ipairs(char.custom_perks) do
+        for i, p in ipairs(char.custom_perks or {}) do
             local id = "homebrew_" .. i
-            perks[#perks + 1] = { id = id, name = p.name, description = p.description,
+            perks[#perks + 1] = { id = id, index = i, name = p.name, description = p.description,
                 level = p.level, attribute_req = 0, prerequisites = {}, exclusive_with = {} }
             rows[#rows + 1] = { perks = { id } }
         end
@@ -292,8 +323,14 @@ local function RenderGraph(self)
                 node.replacement = (not tree.homebrew) and PT.ReplacedBy(self.char, perk.id) or nil
                 node.label:SetText(node.replacement and node.replacement.name or perk.name)
 
-                local status = (tree.homebrew or node.replacement) and "taken"
-                    or PT.Status(self.char, self.sheet, tree, perk)
+                local status
+                if tree.homebrew then
+                    status = CS.PerkActive(self.char, perk) and "taken" or "locked"
+                elseif node.replacement then
+                    status = "taken"
+                else
+                    status = PT.Status(self.char, self.sheet, tree, perk)
+                end
                 local sc = STATUS[status]
                 local bg = SPHERE_BG[perk.color] or sc.bg
                 node:SetBackdropColor(bg[1], bg[2], bg[3], 0.9)
@@ -435,6 +472,7 @@ Refresh = function(self)
         self.sphereLabel:SetText("")
         self.points:SetText("")
         self.searchInfo:Hide()
+        self.newPerkBtn:Hide()
         blank()
         ns.UI.NoSystem(self)
         return
@@ -446,6 +484,7 @@ Refresh = function(self)
         self.sphereLabel:SetText("")
         self.points:SetText("")
         self.searchInfo:Hide()
+        self.newPerkBtn:Hide()
         blank()
         ns.UI.Empty(self, "No character yet.\n\nCreate one to choose perks, or import an existing one.",
             "Create a character", function() ns.OpenModule("new") end,
@@ -459,6 +498,17 @@ Refresh = function(self)
     if self.treeIndex > #self.trees then self.treeIndex = 1 end
     local tree = self.trees[self.treeIndex]
     self.sphereLabel:SetText(tree and tree.name or "No spheres")
+
+    -- The Homebrew sphere swaps the status legend for the wizard button, and
+    -- says how its nodes behave (an empty one is an invitation, not a dead end).
+    local homebrew = (tree and tree.homebrew) and true or false
+    self.legend:SetShown(not homebrew)
+    self.newPerkBtn:SetShown(homebrew and ns.PerkWizardUI ~= nil)
+    if homebrew then
+        SetMsg(self, #tree.perks == 0
+            and "No homebrew perks yet - write one with '+ New perk'."
+            or "Left-click a perk to edit it, right-click to delete it.", false)
+    end
 
     local invested, available = PT.Points(char)
     self.points:SetText("Points: " .. invested .. " / " .. available)
@@ -528,14 +578,25 @@ local function BuildFrame()
     end)
     UI.SetPlaceholder(f.searchBox, "Search perks")
 
-    -- Legend and message line.
-    local legend = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    legend:SetPoint("TOPLEFT", 16, -72)
-    legend:SetPoint("RIGHT", f.searchBox, "LEFT", -12, 0)
-    legend:SetJustifyH("LEFT")
-    legend:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
-    legend:SetText("|cff66d966Taken|r  |cffc8a868Available|r  |cff999999Locked|r  |cfff28c26Blocked|r"
+    -- Legend and message line. The legend describes the status colours, which
+    -- the Homebrew sphere has none of: there the row carries the perk-wizard
+    -- button instead (see Refresh).
+    f.legend = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    f.legend:SetPoint("TOPLEFT", 16, -72)
+    f.legend:SetPoint("RIGHT", f.searchBox, "LEFT", -12, 0)
+    f.legend:SetJustifyH("LEFT")
+    f.legend:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
+    f.legend:SetText("|cff66d966Taken|r  |cffc8a868Available|r  |cff999999Locked|r  |cfff28c26Blocked|r"
         .. "   -   left-click select, right-click remove")
+
+    f.newPerkBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    f.newPerkBtn:SetSize(110, 20)
+    f.newPerkBtn:SetPoint("TOPLEFT", 14, -70)
+    f.newPerkBtn:SetText("+ New perk")
+    f.newPerkBtn:SetScript("OnClick", function()
+        if ns.PerkWizardUI then ns.PerkWizardUI.Open() end
+    end)
+    f.newPerkBtn:Hide()
 
     f.msg = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     f.msg:SetPoint("TOPLEFT", 16, -90)

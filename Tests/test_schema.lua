@@ -213,3 +213,42 @@ for _, mutate in ipairs({
     mutate(c)
     reports(Schema.ValidateCharacter, c, badCharSys)  -- must not throw; verdict is irrelevant
 end
+
+-- Homebrew perks written in game (UI/PerkWizardUI): the shapes the wizard
+-- produces must validate clean against the system its pickers were drawn from.
+local wizSys = MinimalSystem()
+wizSys.skills = { { id = "s1", name = "S1", attribute = "a" } }
+wizSys.spell_schools = { { id = "ev", name = "Evocation" } }
+local function wizChar(effects)
+    return {
+        name = "C", level = 3, attributes = { a = 1 },
+        custom_perks = { { id = "hb-1", name = "Wizard Perk", level = 3,
+            description = "Written in game.", effects = effects } },
+    }
+end
+ok, issues = Schema.ValidateCharacter(wizChar({
+    { type = "attribute", id = "a", value = 2 },
+    { type = "all_attributes", value = 1 },
+    { type = "skill", skill = "s1", value = 2 },
+    { type = "skill", skill = "s1", add_modifier = "b" },
+    { type = "save", id = "b", value = 1, add_modifier = "a" },
+    { type = "save_dc", school = "ev", value = 1 },
+    { type = "spell_attack", value = 1 },
+    { type = "ac", value = -1 },
+    { type = "max_hp", value = 5 },
+}), wizSys)
+assert(ok, "wizard-shaped custom perk should validate: " .. tostring(issues and issues[1]))
+-- A perk with no effects at all (text only) is legal.
+assert(Schema.ValidateCharacter(wizChar({}), wizSys))
+
+-- Targets the wizard's pickers cannot produce, but a hand-edited paste or a
+-- wire payload can: reported, never thrown.
+for _, bad in ipairs({
+    { { type = "skill", skill = "ghost", value = 1 } },
+    { { type = "attribute", id = "ghost", value = 1 } },
+    { { type = "save", id = "ghost", value = 1 } },
+    { { type = "skill", skill = "s1", add_modifier = "ghost" } },
+}) do
+    assert(not reports(Schema.ValidateCharacter, wizChar(bad), wizSys),
+        "unknown custom-perk target not reported")
+end
