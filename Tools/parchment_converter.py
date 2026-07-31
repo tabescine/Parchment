@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Parchment converter.
 
-Reads a JSON or TOML file describing a Parchment *system definition* or a
-*character* and emits a Lua SavedVariables file that can be dropped straight
-into:
+Reads a JSON or TOML file describing a Parchment *system definition*, a
+*character* or an *item library* and emits a Lua SavedVariables file that can
+be dropped straight into:
 
     WTF/Account/<ACCOUNT>/SavedVariables/ParchmentSystemDB.lua
     WTF/Account/<ACCOUNT>/SavedVariables/ParchmentCharDB.lua
+    WTF/Account/<ACCOUNT>/SavedVariables/ParchmentItemDB.lua
 
 The schema is the same one the addon uses (see Tools/examples/). The converter
 is deliberately generic: it does not hardcode any ruleset's attributes or
@@ -15,12 +16,13 @@ applies is that object keys which look like integers (e.g. a level_bonuses map
 keyed "3", "9") become Lua numeric keys, so the addon's numeric lookups work.
 
 Usage:
-    python parchment_converter.py INPUT [-o OUTPUT] [-t system|character|auto]
+    python parchment_converter.py INPUT [-o OUTPUT] [-t system|character|items|auto]
                                         [-k KEY] [--var VARNAME]
 
 Examples:
     python parchment_converter.py examples/sample.system.json
     python parchment_converter.py examples/sample.character.json -o ParchmentCharDB.lua
+    python parchment_converter.py examples/sample.items.json
 """
 
 import argparse
@@ -122,14 +124,20 @@ def strip_meta(data):
 
 
 def detect_type(data):
-    """Guesses 'system' or 'character' from the structure."""
+    """Guesses 'system', 'character' or 'items' from the structure.
+
+    Mirrors the addon's own detection order (Modules/ImportExport.lua): `items`
+    is checked last, so it only marks a library on a file that is nothing else.
+    """
     if "characters" in data:
         return "character"
     if "system_name" in data or "perk_trees" in data or "modifier_table" in data:
         return "system"
     if "name" in data and ("attributes" in data or "level" in data):
         return "character"
-    sys.exit("could not auto-detect type; pass -t system or -t character.")
+    if "items" in data:
+        return "items"
+    sys.exit("could not auto-detect type; pass -t system, -t character or -t items.")
 
 
 def build_system(data):
@@ -151,11 +159,22 @@ def build_character(data, key_override):
     return "ParchmentCharDB", {"characters": {key: strip_meta(data)}}
 
 
+def build_items(data):
+    """Returns (varname, lua_table_value) for an item library.
+
+    The library is stored under an `items` key ({"items": {id: item}}), the
+    same wrapper the in-game export writes, so a file round-trips between the
+    converter and /pmt import unchanged.
+    """
+    return "ParchmentItemDB", strip_meta(data)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Convert JSON/TOML to Parchment SavedVariables Lua.")
     parser.add_argument("input", help="input .json or .toml file")
     parser.add_argument("-o", "--output", help="output .lua file (default: <VARNAME>.lua)")
-    parser.add_argument("-t", "--type", choices=["system", "character", "auto"], default="auto")
+    parser.add_argument("-t", "--type", choices=["system", "character", "items", "auto"],
+                        default="auto")
     parser.add_argument("-k", "--key", help="SavedVariables key for a single character")
     parser.add_argument("--var", help="override the global variable name")
     args = parser.parse_args()
@@ -167,6 +186,8 @@ def main():
     kind = args.type if args.type != "auto" else detect_type(data)
     if kind == "system":
         varname, table = build_system(data)
+    elif kind == "items":
+        varname, table = build_items(data)
     else:
         varname, table = build_character(data, args.key)
     if args.var:

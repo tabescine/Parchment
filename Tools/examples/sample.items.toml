@@ -1,0 +1,60 @@
+# =============================================================================
+# Parchment Sample - annotated example item library (for sample.character.toml).
+#
+# The item library is GLOBAL: one library per install, shared by every
+# character and independent of the loaded system. Characters do not copy items,
+# they reference them (see the `inventory` block in sample.character.toml), so
+# editing an item here updates every character carrying it.
+#
+# Import it with /pmt import (paste the whole file) - order does not matter,
+# but system -> items -> character gives a demo where everything resolves at
+# once. Importing MERGES by id: an item you already have under the same id is
+# overwritten, everything else is left alone.
+#
+# Each item is a table under [items.<id>], and the id must appear BOTH as the
+# table key and as the record's `id` field (inventories resolve by key, so the
+# two disagreeing would silently point at a different item).
+#
+# Required fields: id, name, kind. `kind` is one of:
+#   weapon    - equippable; `bonus` adds to the linked weapon's attack rolls
+#   equipment - equippable; `ac_bonus` adds to AC while worn (bonuses stack)
+#   gear      - not equippable; carries the per-character counter instead
+# Everything else is optional.
+# =============================================================================
+
+# A weapon item. `weapon_id` links it to a weapon in the loaded system
+# (sample.system.toml's "bow"); the link is soft - an item whose weapon_id
+# names nothing in your system still shows, it just has no attack roll to
+# boost. `bonus` is the magic +X on attack rolls only (damage is unchanged).
+[items.itm_1]
+id = "itm_1"
+name = "Hunter's Bow"
+kind = "weapon"
+description = "A well-kept shortbow of ash and sinew. Its draw is quick and forgiving."
+icon = "inv_weapon_bow_08"   # plain texture name (letters, digits, '_' and '-')
+weapon_id = "bow"
+bonus = 1
+version = 1                  # bumped on every save; used by future item transfer
+
+# An equipment item. `ac_bonus` is added to AC for every equipped piece - they
+# stack, so a second worn item adds its own bonus on top.
+[items.itm_2]
+id = "itm_2"
+name = "Traveller's Leathers"
+kind = "equipment"
+description = "Scuffed riding leathers, oiled against the weather."
+icon = "inv_chest_leather_09"
+ac_bonus = 1
+version = 1
+
+# A gear item: no mechanics at all, just a name and the counter each character
+# keeps. `default_count` seeds that counter when the item is added to someone
+# (Wren already carries 12 of these, and her own count wins).
+[items.itm_3]
+id = "itm_3"
+name = "Arrows"
+kind = "gear"
+description = "Goose-fletched, kept dry in a waxed quiver."
+icon = "inv_misc_ammo_arrow_01"
+default_count = 20
+version = 1

@@ -40,9 +40,11 @@ every window - sheet math included - adapts to it.
   every received system is kept in a local library (`/pmt systems`). Sync
   requires compatible addon versions - mismatched messages are ignored with a
   chat notice saying who needs to update.
-- **Import/export** - paste JSON or TOML in-game (comments and all), export
-  back out the same way. No external tooling needed; an optional offline
-  converter lives in `Tools/` for file-based workflows and recovery.
+- **Import/export** - paste a system, a character or your item library as JSON
+  or TOML in-game (comments and all), export back out the same way. Imports
+  merge, so a paste never wipes what it does not mention. No external tooling
+  needed; an optional offline converter lives in `Tools/` for file-based
+  workflows and recovery.
 
 ## Installation
 
@@ -66,7 +68,7 @@ harmlessly - WoW only loads what `Parchment.toc` lists.
 
 ## Quick start
 
-1. `/pmt import` - paste a system or character definition (JSON or TOML). A small
+1. `/pmt import` - paste a system, character or item library (JSON or TOML). A small
    public-domain sample lives in [`Tools/examples/`](Tools/examples/) in the
    repository if you just want to try it.
 2. `/pmt new` - create a character with the guided wizard.
@@ -116,8 +118,9 @@ an optional `derived_stats` block that tells Parchment which attributes drive
 HP, mana, AC, movement, and so on. Nothing is hard-coded - see
 [`Tools/examples/sample.system.toml`](Tools/examples/sample.system.toml) for
 the fully annotated format reference (every feature appears once, with a
-comment) and `sample.character.toml` for its character-side counterpart.
-Import both with `/pmt import`. The repository's `Tools/` folder (not part of
+comment), `sample.character.toml` for its character-side counterpart, and
+`sample.items.toml` for the item library that character's inventory points at.
+Import all three with `/pmt import`. The repository's `Tools/` folder (not part of
 the release zip) also holds an optional offline converter for
 version-controlled rulesets and SavedVariables recovery.
 

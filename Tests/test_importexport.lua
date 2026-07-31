@@ -1,6 +1,8 @@
 -- Phase 4: a full-roster (character_db) import MERGES into the existing roster
 -- instead of replacing it, so a paste can never silently wipe characters not
 -- present in the import; the active-character pointer stays valid afterward.
+-- The tail of the file covers the item library travelling the same paste flow:
+-- detection, merge-by-id, refuse-on-any-issue, and the export round-trip.
 local T = dofile((TEST_ROOT or "") .. "Tests/wow_stubs.lua")
 strtrim = function(s) return (s:gsub("^%s*(.-)%s*$", "%1")) end
 
@@ -34,6 +36,29 @@ ns.NextCharacterKey = function()
 end
 ns.HasSystem = function() return false end
 ns.GetSystem = function() return {} end
+ns.Systems = { SetActive = function() end }
+
+-- An in-memory item library behind the ns data API, with Core's SetItem
+-- semantics (stamp the key onto `id`, bump `version` past the stored copy's).
+local library = {}
+ns.GetItemLibrary = function() return library end
+ns.SetItem = function(id, item)
+    if type(id) ~= "string" or type(item) ~= "table" then return nil end
+    local previous = library[id]
+    item.id = id
+    item.version = (tonumber(type(previous) == "table" and previous.version) or 0) + 1
+    library[id] = item
+    return item
+end
+
+-- Items are validated for real (the stubs above only stand in for the
+-- character/system validators, which have their own test file).
+do
+    local schemaNs = {}
+    T.load(schemaNs, "Schema.lua")
+    ns.Schema.ValidateItemLibrary = schemaNs.Schema.ValidateItemLibrary
+end
+
 T.load(ns, "Modules/ImportExport.lua")
 local IE = ns.ImportExport
 
@@ -118,3 +143,104 @@ assert(roster["Character-1"].level == 9, "an idempotent re-import must update in
 -- A non-string single-character _key is refused.
 ok, msg = IE.Import("{ _key = true, name = 'X', level = 1, attributes = {} }")
 assert(not ok and msg and msg:find("must be a string"), "a non-string _key must be refused")
+
+-- Item library.
+
+-- Shallow-copies every record (item records are flat) so a library can be
+-- compared before and after an import.
+local function copyLib(lib)
+    local out = {}
+    for id, item in pairs(lib) do
+        local copy = {}
+        for k, v in pairs(item) do copy[k] = v end
+        out[id] = copy
+    end
+    return out
+end
+
+-- copyLib without `version`: every save bumps it, so a round-trip comparison
+-- ignores it and the bump is asserted on its own.
+local function copyLibBare(lib)
+    local out = copyLib(lib)
+    for _, item in pairs(out) do item.version = nil end
+    return out
+end
+
+-- An empty library exports as a clean error, not an empty document.
+local str, err = IE.ExportItems("json")
+assert(str == nil and err and err:find("no items"), "an empty library must refuse to export")
+
+-- Seed one item of each kind, exercising every optional field.
+library.itm_1 = { id = "itm_1", name = "Hunter's Bow", kind = "weapon",
+    description = "Ash and sinew.", icon = "inv_weapon_bow_08",
+    weapon_id = "bow", bonus = 1, version = 3 }
+library.itm_2 = { id = "itm_2", name = "Traveller's Leathers", kind = "equipment",
+    description = "Oiled against the weather.", icon = "inv_chest_leather_09",
+    ac_bonus = 1, version = 1 }
+library.itm_3 = { id = "itm_3", name = "Arrows", kind = "gear",
+    icon = "inv_misc_ammo_arrow_01", default_count = 20, version = 1 }
+
+-- Export -> wipe -> import restores every field, in both formats.
+for _, format in ipairs({ "json", "toml" }) do
+    local roundBefore = copyLibBare(library)
+    local text = assert(IE.ExportItems(format))
+    for id in pairs(library) do library[id] = nil end
+    ok, msg = IE.Import(text)
+    assert(ok, tostring(msg))
+    assert(msg:find("3 item"), "the import should report how many items landed: " .. msg)
+    T.assert_deepeq(roundBefore, copyLibBare(library), format .. " item round-trip")
+    for id, item in pairs(library) do
+        assert(item.id == id, "every stored item must carry its own key as `id`")
+        assert(item.version == 1, "an import into an empty library starts the version at 1")
+    end
+end
+
+-- MERGE by id: the incoming item overwrites its own entry and leaves the others
+-- untouched, and the save bumps its version past the local copy's.
+ok, msg = IE.Import(
+    [[{"items": {"itm_2": {"id":"itm_2", "name":"Scale Mail", "kind":"equipment", "ac_bonus":3}}}]])
+assert(ok, tostring(msg))
+assert(library.itm_2.name == "Scale Mail" and library.itm_2.ac_bonus == 3,
+    "an item import must overwrite by id")
+assert(library.itm_2.description == nil, "overwriting replaces the record, it does not patch it")
+assert(library.itm_2.version == 2, "an import is a local save: the version must move forward")
+assert(library.itm_1 and library.itm_3 and library.itm_3.name == "Arrows",
+    "an item import must never wipe items the paste does not mention")
+
+-- Malformed payloads are refused WHOLESALE (the character-DB house rule): a
+-- partially imported library would be worse than a refusal, so the valid
+-- sibling in each paste must not land either.
+local libBefore = copyLib(library)
+local malformed = {
+    { [[{"items": {"itm_9": {"id":"itm_9", "name":"Potion", "kind":"potion"}}}]], "unknown kind" },
+    { [[{"items": {"itm_9": {"id":"itm_9", "name":"]] .. string.rep("x", 65)
+        .. [[", "kind":"gear"}}}]], "longer than" },
+    { [[{"items": {"itm_9": {"id":"itm_8", "name":"Wrong key", "kind":"gear"}}}]],
+      "does not match its key" },
+    { [[{"items": {"itm_9": {"id":"itm_9", "name":"Good", "kind":"gear"},
+         "itm_10": {"id":"itm_10", "kind":"gear"}}}]], "should be string" },
+}
+for _, case in ipairs(malformed) do
+    ok, msg = IE.Import(case[1])
+    assert(not ok, "a malformed item library must be refused: " .. case[1])
+    assert(msg:find(case[2], 1, true), "expected '" .. case[2] .. "', got: " .. msg)
+    T.assert_deepeq(libBefore, copyLib(library), "a refused item import must write nothing")
+end
+
+-- Detection: `items` marks a library only on a payload that is nothing else, so
+-- a system or roster carrying a field of that name is still what it says it is.
+local itemsField = [[, "items": {"itm_9": {"id":"itm_9", "name":"Sneak", "kind":"gear"}}}]]
+ok, msg = IE.Import([[{"system_name": "S"]] .. itemsField)
+assert(ok and msg:find("system"), "a system with an items field must import as a system: " .. msg)
+ok, msg = IE.Import([[{"characters": {"Ivy": {"name":"Ivy", "level":1}}]] .. itemsField)
+assert(ok and msg:find("character"), "a roster with an items field must import as a roster")
+ok, msg = IE.Import([[{"_key":"ivy", "name":"Ivy", "level":1, "attributes":{}]] .. itemsField)
+assert(ok and msg:find("character"), "a character with an items field must import as a character")
+T.assert_deepeq(libBefore, copyLib(library), "only an item-library paste may touch the library")
+
+-- StripMeta applies to items too: converter/export metadata never reaches the
+-- library, and a `_note` alone does not stop the payload being a library.
+ok, msg = IE.Import([[{"_note": "hi",
+    "items": {"itm_9": {"id":"itm_9", "name":"Rope", "kind":"gear", "_src":"paste"}}}]])
+assert(ok, tostring(msg))
+assert(library.itm_9 and library.itm_9._src == nil, "item metadata must be stripped on import")
