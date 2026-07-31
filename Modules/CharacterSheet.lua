@@ -35,7 +35,19 @@
 -- Conditional racial effects are never folded - they are surfaced for the
 -- player to apply.
 --
--- Reads from: ns.GetModifier, ns.GetHitDie, ns.GetAccomplishmentBonus, system.
+-- Items are references, not copies: each char.inventory entry names a library
+-- item, resolved on every Compute (ns.Items.Resolve), so an edit to the library
+-- shows up everywhere at once. The library is passed IN, like the system, to
+-- keep this file pure. A weapon item never touches the weapon rows - those are
+-- proficiency rows, one per weapon skill, and stay the bare skill. Instead each
+-- inventory weapon carries its OWN attack total (the linked weapon's
+-- proficiency total + the item's bonus), so a character holding two blades
+-- rolls the one actually swung. Equipment ac_bonus values sum into derived.ac
+-- through their own `ac_equipment` term, kept separate so the AC tooltip can
+-- name the equipment share.
+--
+-- Reads from: ns.GetModifier, ns.GetHitDie, ns.GetAccomplishmentBonus,
+--   ns.Items.Resolve, system.
 -- Exposes on ns.CharacterSheet: .Compute, .PerkActive (the one active/pending
 --   test for homebrew perks, shared with PerkTree.Points and the UIs),
 --   .EFFECT_TYPES and .EffectType (the effect vocabulary, which the perk wizard
@@ -249,11 +261,124 @@ local function NameInList(list, id)
     return rec and rec.name or id
 end
 
+-- Returns x when it is a table, else an empty table. Used for char.inventory
+-- and its entries, which (unlike the rest of a character) can arrive straight
+-- off the wire and may be any shape at all.
+local function AsList(x)
+    return type(x) == "table" and x or {}
+end
+
+-- The usable value of an item bonus: a finite number, or 0. Item data is
+-- hand-editable and, as a wire snapshot, hostile - a NaN or infinity here would
+-- poison every total it reaches.
+local function BonusValue(value)
+    local n = tonumber(value)
+    if not n or n ~= n or n == math.huge or n == -math.huge then return 0 end
+    return n
+end
+
+-- The bare attack total for one system weapon: the best of its governing
+-- attribute(s) modifiers + accomplishment + global attack-roll effects. The one
+-- place that number is computed, so a weapon proficiency row and the inventory
+-- items linking that weapon cannot drift apart.
+--
+-- Returns the governing attribute id and the total, or nil when the weapon
+-- names no attribute (or none the character has a modifier for) - such a weapon
+-- carries no attack number at all.
+local function WeaponAttack(weapon, modifier, accomplishment, attackFx)
+    if not weapon.attribute then return nil end
+    -- attribute may be a list (finesse-style "use either"): the best modifier
+    -- wins and is reported as the governing one.
+    local attrs = type(weapon.attribute) == "table" and weapon.attribute or { weapon.attribute }
+    local bestId, bestMod
+    for _, id in ipairs(attrs) do
+        local m = modifier[id]
+        if m and (not bestMod or m > bestMod) then bestId, bestMod = id, m end
+    end
+    if not bestId then return nil end
+    return bestId, bestMod + accomplishment + attackFx
+end
+
+-- Resolves a character's inventory into display entries plus the AC total
+-- equipped equipment contributes.
+--
+-- `weaponAttack` is weapon id -> bare proficiency attack total (see
+-- WeaponAttack), which each weapon entry adds its own bonus to.
+--
+-- Returns two values:
+--   inventory   - { weapons = {...}, equipment = {...}, gear = {...} }, display
+--                 entries only (never library or character tables), each
+--                 carrying its `index` into char.inventory so the UI can toggle
+--                 and count without knowing how resolution worked
+--   acEquipment - { total, sources } from equipped equipment, or nil when no
+--                 equipped piece carries an ac_bonus
+local function ResolveInventory(char, system, itemLib, weaponAttack)
+    local inventory = { weapons = {}, equipment = {}, gear = {} }
+    local acTotal, acSources = 0, {}
+
+    for index, raw in ipairs(AsList(char.inventory)) do
+        local state = AsList(raw)                  -- the per-character half
+        local item, source = ns.Items.Resolve(raw, itemLib)
+        local kind = item.kind
+        local entry = {
+            index = index, name = item.name, icon = item.icon,
+            description = item.description, kind = kind,
+            source = source, missing = (source == "missing") or nil,
+        }
+
+        if kind == "weapon" then
+            entry.equipped = state.equipped and true or false
+            entry.bonus = BonusValue(item.bonus)
+            entry.weapon_id = item.weapon_id
+            -- The linked weapon's display name, nil when the link dangles in
+            -- this system: the item still shows, it just has nothing to boost.
+            if item.weapon_id then
+                local weapon = ns.FindById(system.weapons, item.weapon_id)
+                entry.weapon_name = weapon and weapon.name or nil
+            end
+            -- This item's own attack total: the linked weapon's proficiency
+            -- total plus this item's bonus. Every linked item gets one, stashed
+            -- included - the UI decides that only a held weapon shows a number.
+            local base = entry.weapon_id and weaponAttack[entry.weapon_id]
+            if base then
+                entry.attack_total = base + entry.bonus
+                entry.attack_parts = { base = base, bonus = entry.bonus }
+            end
+            inventory.weapons[#inventory.weapons + 1] = entry
+        elseif kind == "equipment" then
+            entry.equipped = state.equipped and true or false
+            entry.ac_bonus = BonusValue(item.ac_bonus)
+            if entry.equipped and entry.ac_bonus ~= 0 then
+                acTotal = acTotal + entry.ac_bonus
+                acSources[#acSources + 1] = entry.name
+            end
+            inventory.equipment[#inventory.equipment + 1] = entry
+        else
+            -- Gear, and anything whose kind we cannot know: a missing item
+            -- (nothing left to say what it was) or a wire snapshot from a newer
+            -- Parchment. Both are shown as countable, never-equipped rows.
+            entry.kind = "gear"
+            entry.count = ns.Items.ClampCount(state.count)
+                or ns.Items.ClampCount(item.default_count) or 1
+            inventory.gear[#inventory.gear + 1] = entry
+        end
+    end
+
+    local acEquipment = #acSources > 0 and { total = acTotal, sources = acSources } or nil
+    return inventory, acEquipment
+end
+
 -- Computes the full sheet for a character against a system definition.
 --
+-- `itemLib` is the item library ({ [id] = item }) the character's inventory
+-- resolves against - ns.GetItemLibrary() in the client, a fixture in tests.
+-- It is a parameter rather than a lookup so this stays pure; omitting it
+-- resolves every entry as missing, and a character without an inventory
+-- computes exactly as it did before items existed.
+--
 -- Returns a single table (see the field comments inline). Returns nil when
--- either argument is missing.
-function CharacterSheet.Compute(char, system)
+-- either the character or the system is missing.
+function CharacterSheet.Compute(char, system, itemLib)
     if type(char) ~= "table" or type(system) ~= "table" then return nil end
 
     local traits = SelectedTraits(char, system)
@@ -379,36 +504,35 @@ function CharacterSheet.Compute(char, system)
         }
     end
 
-    -- Weapon proficiencies (display + accomplished flag). When a weapon names
-    -- its governing attribute (weapon.attribute, like skills), an attack-roll
-    -- total is computed: attribute modifier + accomplishment (every listed
-    -- weapon is accomplished) + global attack-roll effects.
+    -- Weapon proficiencies (display + accomplished flag): one row per weapon
+    -- skill, never per item. When a weapon names its governing attribute
+    -- (weapon.attribute, like skills), an attack-roll total is computed:
+    -- attribute modifier + accomplishment (every listed weapon is accomplished)
+    -- + global attack-roll effects. `weaponAttack` carries those totals to the
+    -- inventory below, where each linked item adds its own bonus on top.
     local accomplishedWeapons = ListToSet(char.accomplished_weapons)
     for id in pairs(extraWeapons) do accomplishedWeapons[id] = true end
-    local weapons = {}
+    local weapons, weaponAttack = {}, {}
     for _, weapon in ipairs(system.weapons or {}) do
         if accomplishedWeapons[weapon.id] then
             local entry = {
                 id = weapon.id, name = weapon.name, damage = weapon.damage,
                 versatile = weapon.versatile, properties = weapon.properties or {},
             }
-            if weapon.attribute then
-                -- attribute may be a list (finesse-style "use either"): the
-                -- best modifier wins and is reported as the governing one.
-                local attrs = type(weapon.attribute) == "table" and weapon.attribute or { weapon.attribute }
-                local bestId, bestMod
-                for _, id in ipairs(attrs) do
-                    local m = modifier[id]
-                    if m and (not bestMod or m > bestMod) then bestId, bestMod = id, m end
-                end
-                if bestId then
-                    entry.attack_attribute = bestId
-                    entry.attack_total = bestMod + accomplishment + fx.attack
-                end
+            local attrId, total = WeaponAttack(weapon, modifier, accomplishment, fx.attack)
+            if attrId then
+                entry.attack_attribute = attrId
+                entry.attack_total = total
+                weaponAttack[weapon.id] = total
             end
             weapons[#weapons + 1] = entry
         end
     end
+
+    -- Inventory, resolved against the library and the weapon totals above:
+    -- each weapon item ends up with its own attack total, and equipped
+    -- equipment adds to AC in `derived`.
+    local inventory, acEquipment = ResolveInventory(char, system, itemLib, weaponAttack)
 
     -- Derived stats. Which attributes drive hit die, mana, movement etc. comes
     -- from the system's derived_stats config; an unset coupling contributes 0,
@@ -463,7 +587,11 @@ function CharacterSheet.Compute(char, system)
             base = manaBase,
             max = manaBase + fx.maxMana,
         },
-        ac = cfg.ac_base + acMod + fx.ac,
+        ac = cfg.ac_base + acMod + fx.ac + (acEquipment and acEquipment.total or 0),
+        -- The equipped-equipment share of AC, named so the tooltip can break it
+        -- out ("+1 equipment (Chainmail)"). Absent when no equipped piece
+        -- carries an ac_bonus - a character without equipment reads as before.
+        ac_equipment = acEquipment,
         ac_attribute = acAttr,       -- the EFFECTIVE attribute (pick or best candidate)
         initiative = initMod + fx.initiative,
         init_attribute = initAttr,   -- ditto
@@ -514,5 +642,9 @@ function CharacterSheet.Compute(char, system)
         traits = traits,
         sphere_perks = spherePerks,
         custom_perks = customPerks,   -- display entries, pending ones flagged
+        -- Display entries grouped by kind (see ResolveInventory), or nil when
+        -- the character carries nothing - the sheet then renders exactly what
+        -- it rendered before inventories existed.
+        inventory = next(AsList(char.inventory)) and inventory or nil,
     }
 end

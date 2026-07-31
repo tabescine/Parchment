@@ -196,10 +196,11 @@ function IE.Import(text)
         end
         -- MERGE into the existing roster (add or overwrite by key) rather than
         -- replacing the whole database: a paste can no longer silently wipe
-        -- characters that are not present in the import.
-        local chars = ns.GetCharacters()
+        -- characters that are not present in the import. Written through
+        -- SetCharacter, like every other write, so wire-only inventory fields
+        -- are stripped before anything is persisted.
         for charKey, char in pairs(incoming) do
-            chars[charKey] = StripMeta(char)
+            ns.SetCharacter(charKey, StripMeta(char))
         end
         -- Re-stamp the active pointer onto a key that still exists (GetActiveCharacter
         -- self-heals to the first present character), so it never dangles and an

@@ -8,7 +8,7 @@
 --
 -- Reads from: ns.Addon.db.global (systemLibrary), ns.Comm, ns.ImportExport
 --   (StripMeta), ns.Print, ns.DeepCopy, ns.HubUI, ns.CharacterSheetUI,
---   ns.PerkTreeUI.
+--   ns.PerkTreeUI, ns.ItemWizardUI.
 --   Owns ParchmentSystemDB swaps. The library is browsed/managed in the
 --   hub's Systems panel (UI/HubPanels.lua).
 -- Exposes on ns.Systems: Store, SetActive, GetLibrary, ConfirmDelete,
@@ -33,6 +33,7 @@ local function RefreshAll()
     if ns.PerkTreeUI and ns.PerkTreeUI.frame and ns.PerkTreeUI.frame:IsShown() then ns.PerkTreeUI.Open() end
     if ns.CharacterEditorUI and ns.CharacterEditorUI.RefreshIfShown then ns.CharacterEditorUI.RefreshIfShown() end
     if ns.CharacterWizardUI and ns.CharacterWizardUI.RefreshIfShown then ns.CharacterWizardUI.RefreshIfShown() end
+    if ns.ItemWizardUI and ns.ItemWizardUI.RefreshIfShown then ns.ItemWizardUI.RefreshIfShown() end
     if ns.HubUI then ns.HubUI.RefreshIfShown() end
 end
 Sys.RefreshAll = RefreshAll

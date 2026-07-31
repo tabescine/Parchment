@@ -16,6 +16,7 @@ do  -- Core replaces ns.Addon with the real AceAddon-stub object.
 end
 T.load(ns, "Modules/Systems.lua")
 T.load(ns, "Modules/ImportExport.lua")
+T.load(ns, "Modules/Items.lua")
 T.load(ns, "Modules/CharacterSheet.lua")
 ParchmentCharDB, ParchmentSystemDB = {}, {}
 ns.Addon:OnInitialize()
@@ -43,7 +44,7 @@ assert(key == "wren" and char.name == "Wren Ashdown", tostring(key))
 assert(char._key == nil, "import must strip the _key meta field")
 
 -- The sheet must match the numbers documented in the sample's comments.
-local sheet = ns.CharacterSheet.Compute(char, ns.GetSystem())
+local sheet = ns.CharacterSheet.Compute(char, ns.GetSystem(), ns.GetItemLibrary())
 assert(sheet, "Compute returned nil")
 local attrs, skills = {}, {}
 for _, a in ipairs(sheet.attributes) do attrs[a.id] = a end
@@ -64,6 +65,18 @@ for _, p in ipairs(sheet.sphere_perks) do sphere[p.name] = p end
 assert(sphere.Toughness.rank == 2)
 assert(sphere.Scholar.choices[1] == "Lore")
 assert(#sheet.weapons == 1 and sheet.weapons[1].attack_total == 4)  -- Bow: wits 1 + acc 3
+
+-- The sample's inventory survives the import as references. Nothing seeds the
+-- item library, so all three resolve to the missing sentinel and land in the
+-- catch-all gear group - the documented "importing this without the items costs
+-- nothing but three dim rows" behaviour, and proof no dangling id can throw.
+assert(#char.inventory == 3 and char.inventory[1].item_id == "itm_1")
+assert(char.inventory[1].equipped == true and char.inventory[3].count == 12)
+assert(sheet.inventory and #sheet.inventory.gear == 3, "dangling references must still render")
+for _, row in ipairs(sheet.inventory.gear) do
+    assert(row.missing and row.source == "missing", "unknown item must resolve as missing")
+end
+assert(sheet.derived.ac_equipment == nil, "nothing resolves, so nothing may reach AC")
 
 -- The JSON twins must decode to exactly the TOML data (minus the _note).
 local sysToml = normalize(assert(ns.TOML.decode(T.readfile("Tools/examples/sample.system.toml"))))

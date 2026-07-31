@@ -8,8 +8,8 @@
 -- Validation is soft: Warnings reports problems but nothing here blocks an edit.
 --
 -- Reads from: ns.CharacterSheet.Compute, ns.Schema, ns.PerkTree, ns.GetModifier,
---   ns.GetHitDie, and the character data API (Get/SetCharacter(s),
---   SetActiveCharacter).
+--   ns.GetHitDie, ns.GetItemLibrary, and the character data API
+--   (Get/SetCharacter(s), SetActiveCharacter).
 -- Exposes on ns.CharacterEditor: NewBlank, HitDieSize, InitResources, Races,
 --   AttributePoints, AccomplishTargets, AccomplishTargetDesc, LevelUp,
 --   LevelDown, Warnings, SaveNew, Delete.
@@ -82,7 +82,7 @@ end
 -- derived_stats config. Called when a new character is finished.
 function CE.InitResources(char, system)
     char.max_hp, char.max_mana = nil, nil
-    local sheet = ns.CharacterSheet.Compute(char, system)
+    local sheet = ns.CharacterSheet.Compute(char, system, ns.GetItemLibrary())
     if not sheet then return end
     char.hit_dice = sheet.derived.hit_dice
     local die = CE.HitDieSize(sheet.derived.hit_dice)
@@ -205,7 +205,7 @@ function CE.LevelUp(char, hpGain, system)
     char.max_hp = (char.max_hp or 0) + hpGain
     char.current_hp = (char.current_hp or 0) + hpGain
 
-    local sheet = ns.CharacterSheet.Compute(char, system)
+    local sheet = ns.CharacterSheet.Compute(char, system, ns.GetItemLibrary())
     char.hit_dice = sheet.derived.hit_dice
 
     local notes = { "+1 perk point" }
@@ -224,7 +224,7 @@ end
 function CE.LevelDown(char, system)
     if (char.level or 1) <= 1 then return false, "Already at level 1." end
     char.level = char.level - 1
-    char.hit_dice = ns.CharacterSheet.Compute(char, system).derived.hit_dice
+    char.hit_dice = ns.CharacterSheet.Compute(char, system, ns.GetItemLibrary()).derived.hit_dice
     return true, "now level " .. char.level
 end
 
@@ -233,7 +233,7 @@ end
 -- count, perk budget).
 function CE.Warnings(char, system)
     local w = {}
-    local sheet = ns.CharacterSheet.Compute(char, system)
+    local sheet = ns.CharacterSheet.Compute(char, system, ns.GetItemLibrary())
 
     local _, issues = ns.Schema.ValidateCharacter(char, system)
     for _, i in ipairs(issues) do w[#w + 1] = i end

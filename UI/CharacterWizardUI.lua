@@ -7,7 +7,7 @@
 -- ns.CharacterEditor budgets/warnings; validation is soft (shown, never blocks).
 --
 -- Reads from: ns.CharacterEditor, ns.CharacterSheet.Compute, ns.GetSystem,
---   ns.Widgets, ns.Dialogs, ns.UI, ns.CharacterEditorUI.
+--   ns.GetItemLibrary, ns.Widgets, ns.Dialogs, ns.UI, ns.CharacterEditorUI.
 -- Exposes on ns.CharacterWizardUI: Open, RefreshIfShown (Finish is the
 --   wizard's own final step).
 -- Registers the "new" module opener with Core.
@@ -185,7 +185,7 @@ Refresh = function(self)
     self.backBtn:SetEnabled(self.step > 1)
     self.nextBtn:SetText(self.step == #STEPS and "Finish" or "Next")
 
-    local sheet = ns.CharacterSheet.Compute(d, system)
+    local sheet = ns.CharacterSheet.Compute(d, system, ns.GetItemLibrary())
     local origins, tg = Form.FillCommon(self, d, system, sheet, false)
     self.profHint:SetText(string.format(
         "Suggested targets: %d skills, %d weapons, %d saves (primary is automatic).",

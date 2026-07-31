@@ -67,6 +67,34 @@ assert(not ns.SetActiveCharacter("missing"))
 local char, key = ns.GetActiveCharacter()
 assert(key == "x" and char.name == "B")
 
+-- Item library API. Keys are allocated like character keys; a dangling id
+-- resolves to the shared sentinel rather than nil, and every save bumps the
+-- version (what a future item transfer compares to decide whose copy is newer).
+ParchmentItemDB = {}
+assert(next(ns.GetItemLibrary()) == nil, "a fresh install has an empty library")
+assert(ns.NextItemKey() == "itm_1")
+local stored = ns.SetItem("itm_1", { name = "Rope", kind = "gear" })
+assert(stored.id == "itm_1" and stored.version == 1)
+assert(ns.NextItemKey() == "itm_2")
+assert(ns.GetItem("itm_1").name == "Rope")
+assert(ns.SetItem("itm_1", { name = "Better Rope", kind = "gear" }).version == 2, "saves bump version")
+assert(ns.SetItem(nil, {}) == nil and ns.SetItem("itm_2", "nope") == nil)
+assert(ns.GetItem("nope") == ns.MISSING_ITEM and ns.GetItem(nil) == ns.MISSING_ITEM)
+assert(ns.MISSING_ITEM.missing == true and ns.MISSING_ITEM.name ~= nil)
+ns.DeleteItem("itm_1")
+assert(ns.GetItem("itm_1") == ns.MISSING_ITEM and ns.NextItemKey() == "itm_1")
+
+-- Persistence strips the wire-only `resolved` snapshots from an inventory:
+-- locally the library is the source of truth, so a stored copy would go stale.
+ns.SetCharacter("holder", { name = "H", inventory = {
+    { item_id = "itm_1", resolved = { name = "From the wire" } },
+    { item_id = "itm_2", count = 2 },
+    "junk",
+} })
+local held = ns.GetCharacter("holder")
+assert(held.inventory[1].resolved == nil and held.inventory[1].item_id == "itm_1")
+assert(held.inventory[2].count == 2, "per-character state is untouched")
+
 -- Migration scaffold: fresh installs are stamped with the current format.
 local _, db = boot({}, nil, nil)
 assert(db.global.dataFormat == 1, "fresh install not stamped")

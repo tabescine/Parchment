@@ -1,0 +1,236 @@
+-- Items: reference resolution (library -> wire snapshot -> missing sentinel),
+-- instantiation and the per-character mutations, plus what an equipped item
+-- does to a computed sheet. The library is always passed in, so nothing here
+-- touches SavedVariables.
+local T = dofile((TEST_ROOT or "") .. "Tests/wow_stubs.lua")
+T.InstallLifecycleStubs({})
+local ns = T.load({}, "Core.lua")
+T.load(ns, "Modules/Items.lua")
+T.load(ns, "Modules/CharacterSheet.lua")
+local Items = ns.Items
+
+ParchmentSystemDB = {
+    system_name = "Items Mini",
+    attributes = { { id = "a", name = "Alpha" } },
+    modifier_table = { 0 },                     -- every score has modifier 0
+    accomplishment_table = { 2 },               -- level 1 -> +2
+    hit_dice_bands = { { max_mod = 9, die = "d6" } },
+    derived_stats = { ac_base = 10 },
+    weapons = {
+        { id = "w1", name = "Club", attribute = "a", damage = "1d6" },
+        { id = "w2", name = "Knife", attribute = "a", damage = "1d4" },
+    },
+}
+local system = ParchmentSystemDB
+
+-- A library covering every kind, both weapon links (real and dangling), and
+-- two magic weapons pointing at the SAME system weapon (the dual-wield case:
+-- each carries its own attack total).
+local function Library()
+    return {
+        itm_1 = { id = "itm_1", name = "Flame Dagger", kind = "weapon",
+                  weapon_id = "w1", bonus = 2, icon = "inv_sword_04",
+                  description = "Warm to the touch." },
+        itm_2 = { id = "itm_2", name = "Bright Blade", kind = "weapon", weapon_id = "w1", bonus = 1 },
+        itm_3 = { id = "itm_3", name = "Chainmail", kind = "equipment", ac_bonus = 1 },
+        itm_4 = { id = "itm_4", name = "Buckler", kind = "equipment", ac_bonus = 2 },
+        itm_5 = { id = "itm_5", name = "Rope", kind = "gear", default_count = 3 },
+        itm_6 = { id = "itm_6", name = "Cursed Fork", kind = "weapon", weapon_id = "ghost", bonus = 5 },
+    }
+end
+
+local function Char(inventory)
+    return {
+        name = "Holder", level = 1, attributes = { a = 1 },
+        accomplished_weapons = { "w1", "w2" },
+        inventory = inventory,
+    }
+end
+
+-- Resolution precedence: the local library first, then the wire snapshot a
+-- shared sheet carries, then the shared missing sentinel (identity, not a copy -
+-- the UI dims a row by testing item == ns.MISSING_ITEM).
+local lib = Library()
+local item, source = Items.Resolve({ item_id = "itm_1" }, lib)
+assert(item == lib.itm_1 and source == "library")
+item, source = Items.Resolve({ item_id = "gone", resolved = { name = "Borrowed", kind = "gear" } }, lib)
+assert(item.name == "Borrowed" and source == "wire", "a dangling id must fall to the wire snapshot")
+item = Items.Resolve({ item_id = "itm_1", resolved = { name = "Stale" } }, lib)
+assert(item == lib.itm_1, "our own library outranks the sender's snapshot")
+item, source = Items.Resolve({ item_id = "gone" }, lib)
+assert(item == ns.MISSING_ITEM and source == "missing")
+assert(Items.Resolve({ item_id = "itm_1" }, nil) == ns.MISSING_ITEM, "no library resolves as missing")
+assert(Items.Resolve(nil, lib) == ns.MISSING_ITEM and Items.Resolve(5, lib) == ns.MISSING_ITEM)
+assert(Items.Resolve({ item_id = 5 }, lib) == ns.MISSING_ITEM, "a non-string id resolves as missing")
+
+-- Instantiation: weapons and equipment start stashed, gear starts at its
+-- default count (1 when the item names none).
+local entry = Items.Instantiate(lib.itm_1)
+assert(entry.item_id == "itm_1" and entry.equipped == false and entry.count == nil)
+assert(Items.Instantiate(lib.itm_3).equipped == false)
+assert(Items.Instantiate(lib.itm_5).count == 3 and Items.Instantiate(lib.itm_5).equipped == nil)
+assert(Items.Instantiate({ id = "x", kind = "gear" }).count == 1, "no default_count seeds 1")
+assert(Items.Instantiate({ name = "no id", kind = "gear" }) == nil, "an item needs an id to reference")
+assert(Items.Instantiate(nil) == nil and Items.Instantiate("itm_1") == nil)
+
+-- Equip toggle: flips and reports the new state; an index naming no entry is a
+-- no-op (a stale click from a refreshing UI must not throw).
+local toggling = Char({ { item_id = "itm_1", equipped = false } })
+assert(Items.ToggleEquipped(toggling, 1) == true and toggling.inventory[1].equipped == true)
+assert(Items.ToggleEquipped(toggling, 1) == false and toggling.inventory[1].equipped == false)
+assert(Items.ToggleEquipped(toggling, 9) == nil and Items.ToggleEquipped(toggling, nil) == nil)
+assert(Items.ToggleEquipped({}, 1) == nil and Items.ToggleEquipped(nil, 1) == nil)
+
+-- Gear counter: clamped into [0, MAX_COUNT], whole numbers only, and untouched
+-- by anything that is not a number.
+local counting = Char({ { item_id = "itm_5", count = 3 } })
+assert(Items.SetCount(counting, 1, 7) == 7 and counting.inventory[1].count == 7)
+assert(Items.SetCount(counting, 1, "12") == 12, "a numeric string from an edit box is accepted")
+assert(Items.SetCount(counting, 1, -5) == 0, "counts clamp at zero")
+assert(Items.SetCount(counting, 1, 1e9) == Items.MAX_COUNT and Items.MAX_COUNT == 9999)
+assert(Items.SetCount(counting, 1, math.huge) == Items.MAX_COUNT)
+assert(Items.SetCount(counting, 1, 2.7) == 2, "counts are whole")
+assert(Items.SetCount(counting, 1, "abc") == nil and counting.inventory[1].count == 2)
+assert(Items.SetCount(counting, 1, 0 / 0) == nil and counting.inventory[1].count == 2)
+assert(Items.SetCount(counting, 9, 1) == nil and Items.SetCount(nil, 1, 1) == nil)
+
+-- Removal: the entry goes and the rest shift down, which is why a UI holding an
+-- index must re-render rather than reuse it. An index naming no entry is a
+-- no-op, not an error (the same stale-click guard as the toggle).
+local shrinking = Char({
+    { item_id = "itm_1" }, { item_id = "itm_3" }, { item_id = "itm_5", count = 2 },
+})
+assert(Items.Remove(shrinking, 1) == true and #shrinking.inventory == 2)
+assert(shrinking.inventory[1].item_id == "itm_3", "later entries shift down")
+assert(Items.Remove(shrinking, 9) == false and Items.Remove(shrinking, nil) == false)
+assert(Items.Remove({}, 1) == false and Items.Remove(nil, 1) == false)
+assert(Items.Remove(shrinking, 2) == true and #shrinking.inventory == 1)
+assert(Items.Remove(shrinking, 1) == true and #shrinking.inventory == 0)
+assert(Items.Remove(shrinking, 1) == false, "an emptied inventory removes nothing")
+
+-- The computed sheet. Weapon items never touch the weapon proficiency rows -
+-- each carries its own attack total instead (the linked weapon's bare total plus
+-- its own bonus), so two blades linking the same weapon are two separate rolls.
+local char = Char({
+    { item_id = "itm_1", equipped = true },     -- +2 to w1
+    { item_id = "itm_2", equipped = true },     -- +1 to w1 as well
+    { item_id = "itm_3", equipped = true },     -- +1 AC
+    { item_id = "itm_4", equipped = true },     -- +2 AC
+    { item_id = "itm_5", count = 12 },          -- gear
+    { item_id = "itm_6", equipped = true },     -- links a weapon this system lacks
+    { item_id = "itm_99" },                     -- not in the library at all
+})
+local sheet = ns.CharacterSheet.Compute(char, system, lib)
+local weapons = {}
+for _, w in ipairs(sheet.weapons) do weapons[w.id] = w end
+assert(weapons.w1.attack_total == 2, "a proficiency row is the bare skill: accomplishment (+2)")
+assert(weapons.w1.item_bonus == nil and weapons.w2.item_bonus == nil, "no item folds into a row")
+assert(weapons.w2.attack_total == 2, "an unlinked weapon reads the same as a linked one")
+
+-- Each equipped weapon item rolls for itself: both daggers link w1, and both
+-- carry the weapon row's total plus their OWN bonus - nothing is picked as best.
+local held = sheet.inventory.weapons
+assert(held[1].attack_total == 4 and held[2].attack_total == 3, "each item keeps its own total")
+assert(held[1].attack_parts.base == weapons.w1.attack_total, "the base is the proficiency total")
+assert(held[1].attack_parts.bonus == 2 and held[2].attack_parts.bonus == 1)
+
+-- Equipment AC stacks across pieces and is broken out by name, so the tooltip
+-- can say where the points came from; the total still folds into derived.ac.
+assert(sheet.derived.ac == 13, "10 base + 1 chainmail + 2 buckler, got " .. sheet.derived.ac)
+local ace = sheet.derived.ac_equipment
+assert(ace and ace.total == 3 and #ace.sources == 2)
+assert(ace.sources[1] == "Chainmail" and ace.sources[2] == "Buckler")
+
+-- Display entries: grouped by kind, carrying their index into char.inventory
+-- (the UI's handle for toggling) and never the library table itself.
+local inv = sheet.inventory
+assert(#inv.weapons == 3 and #inv.equipment == 2 and #inv.gear == 2)
+assert(inv.weapons[1].index == 1 and inv.weapons[1].name == "Flame Dagger")
+assert(inv.weapons[1].icon == "inv_sword_04" and inv.weapons[1].description == "Warm to the touch.")
+assert(inv.weapons[1].equipped == true and inv.weapons[1].bonus == 2)
+assert(inv.weapons[1].weapon_name == "Club", "a resolved link names its weapon for the tooltip")
+assert(inv.weapons[1] ~= lib.itm_1, "display entries must not hand out library tables")
+assert(inv.gear[1].name == "Rope" and inv.gear[1].count == 12, "the stored count wins over the default")
+
+-- A dangling weapon_id degrades to a display-only item: it keeps its bonus on
+-- the row for the tooltip, but there is no weapon skill for it to ride on, so
+-- it gets no attack total of its own and reaches no row.
+local cursed = inv.weapons[3]
+assert(cursed.name == "Cursed Fork" and cursed.bonus == 5)
+assert(cursed.weapon_id == "ghost" and cursed.weapon_name == nil)
+assert(cursed.attack_total == nil and cursed.attack_parts == nil)
+assert(weapons.w1.attack_total == 2 and weapons.w2.attack_total == 2, "a dangling link must land nowhere")
+
+-- A dangling item_id renders as a missing row (the sentinel has no kind of its
+-- own, so it lands in the catch-all gear group) instead of breaking the sheet.
+local missing = inv.gear[2]
+assert(missing.index == 7 and missing.missing == true and missing.source == "missing")
+assert(missing.name == ns.MISSING_ITEM.name)
+
+-- Retro-editing: inventories hold references, so editing the library item is
+-- reflected the next time the sheet is computed - no per-character rewrite.
+lib.itm_1.bonus = 4
+lib.itm_1.name = "Inferno Dagger"
+local edited = ns.CharacterSheet.Compute(char, system, lib)
+local dagger = edited.inventory.weapons[1]
+assert(dagger.name == "Inferno Dagger" and dagger.attack_total == 6, "library edits propagate")
+assert(edited.weapons[1].attack_total == 2, "the proficiency row stays bare through it all")
+-- Deleting it leaves the character alone: the row goes missing, nothing throws.
+lib.itm_1 = nil
+local deleted = ns.CharacterSheet.Compute(char, system, lib)
+assert(deleted.inventory.weapons[1].attack_total == 3, "the other dagger is unaffected")
+assert(deleted.inventory.gear[1].missing, "the deleted one falls to a missing row")
+assert(#char.inventory == 7, "resolution must never rewrite the character's inventory")
+
+-- A stashed weapon still computes its total (the UI simply shows no number for
+-- one that is in the bag); nothing it carries reaches a row or derived stat.
+local stashed = ns.CharacterSheet.Compute(Char({
+    { item_id = "itm_2", equipped = false },
+    { item_id = "itm_3", equipped = false },
+}), system, Library())
+assert(stashed.weapons[1].attack_total == 2 and stashed.weapons[1].item_bonus == nil)
+assert(stashed.inventory.weapons[1].equipped == false)
+assert(stashed.inventory.weapons[1].attack_total == 3, "a stashed weapon knows its own total")
+assert(stashed.derived.ac == 10 and stashed.derived.ac_equipment == nil)
+
+-- Parity with the proficiency rows: a weapon the character is not accomplished
+-- with has no row and no total, so an item linking it has none either.
+local untrained = ns.CharacterSheet.Compute({
+    name = "Novice", level = 1, attributes = { a = 1 },
+    inventory = { { item_id = "itm_1", equipped = true } },
+}, system, Library())
+assert(#untrained.weapons == 0 and untrained.inventory.weapons[1].attack_total == nil)
+
+-- A shared sheet: our library knows none of the sender's ids, so the wire
+-- snapshots are what render the rows and carry the bonuses.
+local shared = ns.CharacterSheet.Compute(Char({
+    { item_id = "their_1", equipped = true,
+      resolved = { name = "Borrowed Axe", kind = "weapon", weapon_id = "w1", bonus = 3 } },
+    { item_id = "their_2", equipped = true,
+      resolved = { name = "Borrowed Plate", kind = "equipment", ac_bonus = 2 } },
+}), system, {})
+assert(shared.inventory.weapons[1].name == "Borrowed Axe")
+assert(shared.inventory.weapons[1].attack_total == 5, "a wire bonus reaches its own total")
+assert(shared.weapons[1].attack_total == 2, "and never the proficiency row")
+assert(shared.derived.ac == 12 and shared.derived.ac_equipment.sources[1] == "Borrowed Plate")
+assert(shared.inventory.weapons[1].source == "wire" and not shared.inventory.weapons[1].missing)
+
+-- Malformed inventories (a scalar list, scalar entries, a count where a bool
+-- belongs) must compute, not throw: this data can arrive from the wire.
+assert(ns.CharacterSheet.Compute(Char(5), system, lib), "a scalar inventory must not throw")
+local junk = ns.CharacterSheet.Compute(Char({
+    5,
+    { item_id = "itm_5", count = "many" },
+    { item_id = "itm_5", count = 1e12 },
+}), system, lib)
+assert(#junk.inventory.gear == 3 and junk.inventory.gear[1].missing)
+assert(junk.inventory.gear[2].count == 3, "an unusable count falls back to the item's default")
+assert(junk.inventory.gear[3].count == Items.MAX_COUNT, "an absurd stored count renders clamped")
+
+-- Non-finite bonuses in a hand-edited (or hostile) item never reach a total.
+local poisoned = { itm_x = { id = "itm_x", name = "Broken", kind = "weapon",
+    weapon_id = "w1", bonus = 1 / 0 } }
+local safe = ns.CharacterSheet.Compute(Char({ { item_id = "itm_x", equipped = true } }),
+    system, poisoned)
+assert(safe.weapons[1].attack_total == 2 and safe.inventory.weapons[1].bonus == 0)
+assert(safe.inventory.weapons[1].attack_total == 2, "a poisoned bonus contributes nothing")

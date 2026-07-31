@@ -3,6 +3,7 @@
 local T = dofile((TEST_ROOT or "") .. "Tests/wow_stubs.lua")
 T.InstallLifecycleStubs({})
 local ns = T.load({}, "Core.lua")
+T.load(ns, "Modules/Items.lua")
 T.load(ns, "Modules/CharacterSheet.lua")
 
 ParchmentSystemDB = {
@@ -159,6 +160,19 @@ assert(sheet2.derived.spell == nil, "non-casters must not get a spell block")
 -- No AC/init picks at all: the best candidate decides automatically.
 assert(sheet2.derived.ac == 13 and sheet2.derived.ac_attribute == "b")     -- best of a(0)/b(1)
 assert(sheet2.derived.initiative == 2 and sheet2.derived.init_attribute == "c")  -- best of b(1)/c(2)
+
+-- Items regression guard: a character without an inventory computes exactly as
+-- it did before items existed, whatever library is passed (or none at all). The
+-- inventory and equipment-AC keys stay absent, so nothing downstream has to
+-- learn a new empty shape.
+local lib = { itm_1 = { id = "itm_1", name = "Unheld", kind = "equipment", ac_bonus = 5 } }
+T.assert_deepeq(sheet, ns.CharacterSheet.Compute(char, system, lib), "library-only difference")
+T.assert_deepeq(sheet, ns.CharacterSheet.Compute(char, system, nil), "nil library")
+assert(sheet.inventory == nil and sheet.derived.ac_equipment == nil)
+-- An empty inventory list is the same story.
+char.inventory = {}
+T.assert_deepeq(sheet, ns.CharacterSheet.Compute(char, system, lib), "empty inventory")
+char.inventory = nil
 
 -- An out-of-list pick is ignored in favour of the best candidate.
 local char3 = { name = "O", level = 1, attributes = { a = 1, b = 3, c = 4 },

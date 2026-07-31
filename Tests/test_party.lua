@@ -18,6 +18,7 @@ ns.Comm = {
 ns.Addon = { db = { profile = {} } }
 ns.HasSystem = function() return true end
 ns.GetSystem = function() return {} end
+ns.GetItemLibrary = function() return {} end
 ns.GetActiveCharacter = function() return { name = "X" } end
 ns.CharacterSheet = { Compute = function() return {
     name = "Hero", level = 3,

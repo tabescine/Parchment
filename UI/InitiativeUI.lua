@@ -21,8 +21,8 @@
 -- right-click restarts. Purely local; nothing crosses the wire.
 --
 -- Reads from: ns.InitiativeTracker, ns.Party (vitals for player rows),
---   ns.GetActiveCharacter, ns.GetSystem, ns.CharacterSheet.Compute, ns.UI
---   (shared window + palette).
+--   ns.GetActiveCharacter, ns.GetSystem, ns.GetItemLibrary,
+--   ns.CharacterSheet.Compute, ns.UI (shared window + palette).
 -- Exposes on ns.InitiativeUI: Open, Toggle, RefreshIfShown, AddSelf (roll
 --   initiative and join combat; the sheet's Initiative row uses it).
 -- Registers the "initiative" module opener with Core.
@@ -384,7 +384,7 @@ function InitiativeUI.AddSelf()
     end
     local char = ns.GetActiveCharacter()
     if not char then return end
-    local sheet = ns.CharacterSheet.Compute(char, ns.GetSystem())
+    local sheet = ns.CharacterSheet.Compute(char, ns.GetSystem(), ns.GetItemLibrary())
     if not sheet then return end
     -- One entry per character: re-rolling means asking the DM to remove the
     -- old entry first. The local state mirrors the DM's last sync, so this
