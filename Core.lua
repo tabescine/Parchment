@@ -14,10 +14,11 @@
 -- ParchmentSystemDB swaps (activating systems from the library).
 --
 -- Reads from: ns.Schema.
--- Exposes on ns: the data API (GetSystem, HasSystem, GetCharacter, ...),
---   the module registry (RegisterModule, OpenModule), shared helpers
---   (Print, DeepCopy, FindById, AttrName, SaveToDisk, ShareSystem), and
---   ns.Addon.
+-- Exposes on ns: the data API (GetSystem, HasSystem, GetCharacter, the item
+--   library API GetItemLibrary/GetItem/SetItem/DeleteItem/NextItemKey and the
+--   shared MISSING_ITEM sentinel, ...), the module registry (RegisterModule,
+--   OpenModule), shared helpers (Print, DeepCopy, FindById, AttrName,
+--   SaveToDisk, ShareSystem), and ns.Addon.
 
 local ADDON, ns = ...
 
@@ -55,6 +56,12 @@ local MIGRATIONS = {
     -- [2] = function(db) ... end,
 }
 
+-- The stand-in returned for an inventory reference the item library cannot
+-- resolve (a deleted item, or a shared sheet naming items we do not own). One
+-- shared constant table so callers can identity-test it (item == ns.MISSING_ITEM)
+-- and render the row dimmed instead of erroring - nothing may mutate it.
+ns.MISSING_ITEM = { missing = true, name = "Missing item", kind = "gear" }
+
 -- Slash subcommand -> module id (nil routing falls through to help).
 local MODULE_COMMANDS = {
     hub = "hub",
@@ -64,6 +71,7 @@ local MODULE_COMMANDS = {
     sheet = "sheet",
     perks = "perks",
     perkwizard = "perkwizard",
+    items = "items",
     import = "import",
     edit = "edit",
     new = "new",
@@ -129,7 +137,18 @@ function ns.GetCharacter(key)
 end
 
 -- Stores (or replaces) a character under a key.
+--
+-- Strips the `resolved` display snapshots from the inventory: they are wire-only
+-- enrichment (Modules/Sharing.lua fills them in on the send path so a receiver
+-- without our items can still render the sheet), and a stored copy would go
+-- stale the moment the library item is edited. Locally the library IS the
+-- source of truth, so persistence drops them.
 function ns.SetCharacter(key, char)
+    if type(char) == "table" and type(char.inventory) == "table" then
+        for _, entry in ipairs(char.inventory) do
+            if type(entry) == "table" then entry.resolved = nil end
+        end
+    end
     ns.GetCharacters()[key] = char
 end
 
@@ -171,6 +190,57 @@ function ns.DeleteCharacter(key)
     if Parchment.db.global.activeCharacter == key then
         Parchment.db.global.activeCharacter = next(chars)
     end
+end
+
+-- Item library. One global library (not per system): characters hold thin
+-- references to it (char.inventory), resolved live on every Compute, so editing
+-- a library item updates every character carrying it.
+
+-- Returns the item library table keyed by item id.
+function ns.GetItemLibrary()
+    ParchmentItemDB = ParchmentItemDB or {}
+    ParchmentItemDB.items = ParchmentItemDB.items or {}
+    return ParchmentItemDB.items
+end
+
+-- Returns the item stored under an id, or the shared ns.MISSING_ITEM sentinel
+-- when it does not resolve (deleted item, dangling reference). Never nil, so
+-- callers render a "missing" row rather than guarding every access; the result
+-- is read-only, as it may be the shared sentinel.
+function ns.GetItem(id)
+    local item = ns.GetItemLibrary()[id]
+    if type(item) ~= "table" then return ns.MISSING_ITEM end
+    return item
+end
+
+-- Stores (or replaces) an item under a key, stamping the key onto its `id` and
+-- bumping `version` past the stored item's. The version is what a future item
+-- transfer compares to decide whose copy is newer; every save moves it forward.
+-- Returns the stored item, or nil when the arguments are not an id and a table.
+function ns.SetItem(id, item)
+    if type(id) ~= "string" or type(item) ~= "table" then return nil end
+    local lib = ns.GetItemLibrary()
+    local previous = lib[id]
+    item.id = id
+    item.version = (tonumber(type(previous) == "table" and previous.version) or 0) + 1
+    lib[id] = item
+    return item
+end
+
+-- Deletes an item by id. Characters holding it keep the reference and render a
+-- missing-item row (see ns.GetItem) - nothing rewrites their inventories.
+function ns.DeleteItem(id)
+    ns.GetItemLibrary()[id] = nil
+end
+
+-- Returns the first free "itm_N" item key.
+function ns.NextItemKey()
+    local lib, n, key = ns.GetItemLibrary(), 0
+    repeat
+        n = n + 1
+        key = "itm_" .. n
+    until not lib[key]
+    return key
 end
 
 -- Finds a record by its `id` field in a list of records. Returns nil when
@@ -308,6 +378,7 @@ local function PrintHelp()
     Print("  " .. C_GOLD .. "/pmt combat|r  - open the combat tracker (initiative, HP, timer)")
     Print("  " .. C_GOLD .. "/pmt perks|r   - open the perk tree viewer")
     Print("  " .. C_GOLD .. "/pmt perkwizard|r - write a homebrew perk for the active character")
+    Print("  " .. C_GOLD .. "/pmt items|r   - browse your item library (create, edit, hand out items)")
     Print("  " .. C_GOLD .. "/pmt new|r     - create a character (guided wizard)")
     Print("  " .. C_GOLD .. "/pmt edit|r    - open the character editor")
     Print("  " .. C_GOLD .. "/pmt import|r  - open the import/export dialog")
@@ -323,7 +394,7 @@ local function PrintHelp()
     Print("  " .. C_GOLD .. "/pmt minimap|r - toggle the minimap button")
     Print("  " .. C_GOLD .. "/pmt save|r    - write all data to disk (reloads the UI)")
     Print("  " .. C_GOLD .. "/pmt who|r     - list known characters")
-    Print("  " .. C_GOLD .. "/pmt validate|r- check the loaded system and characters")
+    Print("  " .. C_GOLD .. "/pmt validate|r- check the loaded system, characters and item library")
 end
 
 -- Prints the known characters and marks the active one.
@@ -338,10 +409,52 @@ local function PrintRoster()
     if not found then Print(C_YELLOW .. "no characters loaded." .. "|r") end
 end
 
--- Validates the loaded system and every character, printing a summary.
+-- Sweeps the item library: shape issues, plus the two cross-references that
+-- only degrade a row rather than breaking it - a weapon_id naming no weapon in
+-- the active system (the item stays a display-only item) and a character
+-- inventory entry naming an item we no longer own (it renders as missing).
+-- `system` is nil when none is loaded; the weapon links are skipped then.
+local function ValidateItems(system)
+    local lib = ns.GetItemLibrary()
+    if next(lib) == nil then return end
+
+    local ok, issues = ns.Schema.ValidateItemLibrary(lib)
+    if ok then
+        Print(C_GREEN .. "item library is valid." .. "|r")
+    else
+        Print(C_RED .. "item library has " .. #issues .. " issue(s):" .. "|r")
+        for _, issue in ipairs(issues) do Print("  " .. C_RED .. issue .. "|r") end
+    end
+
+    if system then
+        local weaponIds = {}
+        for _, weapon in ipairs(system.weapons or {}) do
+            if type(weapon) == "table" and weapon.id then weaponIds[weapon.id] = true end
+        end
+        for id, item in pairs(lib) do
+            if type(item) == "table" and item.weapon_id and not weaponIds[item.weapon_id] then
+                Print("  " .. C_YELLOW .. "item '" .. tostring(id) .. "' links unknown weapon '"
+                    .. tostring(item.weapon_id) .. "' (shown as a plain item)." .. "|r")
+            end
+        end
+    end
+
+    for key, char in pairs(ns.GetCharacters()) do
+        for i, entry in ipairs(type(char.inventory) == "table" and char.inventory or {}) do
+            if type(entry) == "table" and lib[entry.item_id] == nil then
+                Print("  " .. C_YELLOW .. "character '" .. (char.name or key) .. "' inventory[" .. i
+                    .. "] references unknown item '" .. tostring(entry.item_id) .. "'." .. "|r")
+            end
+        end
+    end
+end
+
+-- Validates the loaded system, every character and the item library, printing
+-- a summary.
 local function RunValidation()
     if not ns.HasSystem() then
         Print(C_YELLOW .. "no system loaded." .. "|r Import one with " .. C_GOLD .. "/pmt import|r.")
+        ValidateItems(nil)
         return
     end
     local system = ns.GetSystem()
@@ -362,6 +475,8 @@ local function RunValidation()
             for _, issue in ipairs(cissues) do Print("  " .. C_RED .. issue .. "|r") end
         end
     end
+
+    ValidateItems(system)
 end
 
 -- Prints the DM-role toggle result and refreshes the windows that show it.
@@ -485,6 +600,7 @@ function Parchment:OnInitialize()
     self.db = LibStub("AceDB-3.0"):New("ParchmentDB", DB_DEFAULTS, true)
     local g = self.db.global
     ParchmentCharDB = ParchmentCharDB or {}
+    ParchmentItemDB = ParchmentItemDB or {}
     -- No ruleset ships with Parchment: the system stays empty until the user
     -- imports one (/pmt import) or adopts a DM-shared one.
     ParchmentSystemDB = ParchmentSystemDB or {}

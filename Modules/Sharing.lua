@@ -10,8 +10,15 @@
 -- size cap is refused, and the cache keeps only the newest MAX_ENTRIES (oldest
 -- evicted by time). Name matching goes through the shared Comm normalizer.
 --
+-- An inventory is a list of references into the sender's item library, which
+-- the receiver does not have, so the send path enriches each entry with a small
+-- `resolved` display snapshot (TRP3's exchange-payload pattern). The receiver
+-- uses it only when its own library cannot resolve the id, and it survives on
+-- the cached view copy alone - ns.SetCharacter strips it from stored characters.
+--
 -- Reads from: ns.Comm (send/normalize), ns.Addon (event registration),
---   ns.GetActiveCharacter, ns.Schema, ns.JSON, ns.CharacterSheetUI, ns.Print.
+--   ns.GetActiveCharacter, ns.GetItemLibrary, ns.DeepCopy, ns.Schema, ns.JSON,
+--   ns.CharacterSheetUI, ns.Print.
 -- Exposes on ns.Sharing: Request, GetCache, OpenCache, RemoveCached,
 --   ConfirmRemoveCached, ClearCache.
 
@@ -32,6 +39,11 @@ end
 -- accidental flood of large/many sheets from bloating the saved file.
 local MAX_CHAR_BYTES = 256 * 1024
 local MAX_ENTRIES = 50
+
+-- The item fields a shared inventory entry carries as its display snapshot:
+-- what the receiver needs to render the row and apply its bonuses, and nothing
+-- else (no description, no version - the item itself is not being transferred).
+local RESOLVED_FIELDS = { "name", "kind", "icon", "weapon_id", "bonus", "ac_bonus" }
 
 -- Targets we are awaiting a reply from (prevents request pile-ups).
 local pending = {}
@@ -119,6 +131,28 @@ local function ForMe(payload)
     return not (payload and payload.to) or SameName(payload.to, Me())
 end
 
+-- Returns a copy of a character ready to go on the wire: every inventory entry
+-- carrying a `resolved` display snapshot of the library item it references, so
+-- the receiver can render (and score) items it does not own. A reference we
+-- cannot resolve ourselves is sent bare - the receiver shows it as missing.
+-- Always a copy: the stored character must never gain wire-only fields.
+local function ForWire(char)
+    local copy = ns.DeepCopy(char)
+    local lib = ns.GetItemLibrary and ns.GetItemLibrary() or {}
+    for _, entry in ipairs(type(copy.inventory) == "table" and copy.inventory or {}) do
+        if type(entry) == "table" then
+            entry.resolved = nil
+            local item = type(entry.item_id) == "string" and lib[entry.item_id] or nil
+            if type(item) == "table" then
+                local snapshot = {}
+                for _, field in ipairs(RESOLVED_FIELDS) do snapshot[field] = item[field] end
+                entry.resolved = snapshot
+            end
+        end
+    end
+    return copy
+end
+
 -- Requests a player's character sheet (they must have the addon to respond).
 function S.Request(target)
     if not target or target == "" then return end
@@ -161,7 +195,7 @@ if ns.Comm then
         -- The requester resolves directly, so whisper the reply straight to them
         -- rather than broadcasting a (potentially large) sheet the whole group
         -- would decode and discard. Whispers reach party members cross-realm.
-        ns.Comm.Whisper("CHAR", { char = char, to = sender }, sender)
+        ns.Comm.Whisper("CHAR", { char = ForWire(char), to = sender }, sender)
     end)
     ns.Comm.On("CHAR", function(payload, sender)
         if type(payload) ~= "table" or type(payload.char) ~= "table" then return end
@@ -177,7 +211,10 @@ if ns.Comm then
         pending[pendingKey] = nil
 
         -- Shape-check before persisting (their system may differ from ours,
-        -- so shape only - no cross-reference validation).
+        -- so shape only - no cross-reference validation). This covers the
+        -- inventory's `resolved` snapshots, whose strings and bonuses are as
+        -- attacker-controlled as the rest; the cache keeps them, since our own
+        -- library usually cannot resolve another player's item ids.
         if not ns.Schema.ValidateCharacter(payload.char, nil) then
             ns.Print((sender or "?") .. " sent a malformed character sheet; ignored.")
             return

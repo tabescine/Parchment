@@ -10,7 +10,8 @@
 -- no per-field undo, but import/export provides backup.
 --
 -- Reads from: ns.CharacterEditor, ns.CharacterSheet.Compute, ns.GetSystem,
---   ns.GetActiveCharacter, ns.GetCharacters, ns.Dialogs, ns.Widgets, ns.UI.
+--   ns.GetItemLibrary, ns.GetActiveCharacter, ns.GetCharacters, ns.Dialogs,
+--   ns.Widgets, ns.UI.
 -- Exposes on ns.CharacterEditorUI: Open, Toggle, RefreshIfShown (the rest of
 --   the table is the panel's own button handlers).
 -- Registers the "edit" module opener with Core.
@@ -48,7 +49,7 @@ local Signed = ns.UI.Signed
 -- Returns the character's hit die size and final VIT modifier.
 -- The hit die size and the modifier of the system's HP attribute (if any).
 local function HitDieAndHpMod(char)
-    local sheet = ns.CharacterSheet.Compute(char, ns.GetSystem())
+    local sheet = ns.CharacterSheet.Compute(char, ns.GetSystem(), ns.GetItemLibrary())
     local die = ns.CharacterEditor.HitDieSize(sheet.derived.hit_dice)
     local hpAttr = ns.DerivedConfig().hp_attribute
     local hpMod = 0
@@ -301,7 +302,8 @@ local function BuildFrame()
         btn:SetScript("OnEnter", function(self)
             if not f.char then return end
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            build(GameTooltip, ns.CharacterSheet.Compute(f.char, ns.GetSystem()))
+            local sheet = ns.CharacterSheet.Compute(f.char, ns.GetSystem(), ns.GetItemLibrary())
+            build(GameTooltip, sheet)
             GameTooltip:Show()
         end)
         btn:SetScript("OnLeave", GameTooltip_Hide)
@@ -477,7 +479,7 @@ Refresh = function(self)
     ns.UI.HideEmpty(self)
     self.titleFS:SetText("Editing: " .. (char.name or key or "?"))
 
-    local sheet = ns.CharacterSheet.Compute(char, system)
+    local sheet = ns.CharacterSheet.Compute(char, system, ns.GetItemLibrary())
     Form.FillCommon(self, char, system, sheet, true)
 
     -- Editor-only fields (the wizard has none of these).

@@ -38,6 +38,20 @@
     "toughness",
     "toughness"
   ],
+  "inventory": [
+    {
+      "item_id": "itm_1",
+      "equipped": true
+    },
+    {
+      "item_id": "itm_2",
+      "equipped": true
+    },
+    {
+      "item_id": "itm_3",
+      "count": 12
+    }
+  ],
   "attributes": {
     "might": 5,
     "wits": 8,

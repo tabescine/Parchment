@@ -12,8 +12,22 @@
 -- pending (gained at a level the character has not reached) is dimmed and
 -- labelled instead of hidden.
 --
--- Reads from: ns.GetActiveCharacter, ns.GetSystem, ns.CharacterSheet.Compute,
---   ns.PerkWizardUI (the ability-path header shortcut).
+-- The inventory sections (weapons / equipment / gear) are the sheet's only
+-- editing surface besides the vitals boxes: a state icon toggles equipped, gear
+-- rows carry a -/+ counter, right-clicking a row drops the item (a missing one
+-- offers the same on left-click, since it has nothing else to do).
+-- Every such click goes through ns.Items, persists via ns.SetCharacter and then
+-- refreshes - a display entry's `index` into char.inventory is only valid for
+-- the render that produced it, so nothing is mutated twice in a row.
+--
+-- An equipped weapon row also shows and rolls that item's own attack total
+-- (weapon skill + the item's bonus); the WEAPON SKILLS rows above stay bare
+-- proficiencies, so a character holding two blades rolls the one being swung.
+--
+-- Reads from: ns.GetActiveCharacter, ns.GetSystem, ns.GetItemLibrary,
+--   ns.CharacterSheet.Compute, ns.Items, ns.SetCharacter, ns.Systems.RefreshAll,
+--   ns.PerkWizardUI (the ability-path header shortcut), ns.ItemWizardUI (the
+--   inventory headers' add flow).
 -- Exposes on ns.CharacterSheetUI: Open, Toggle, RefreshIfShown, and
 --   ShowCharacter (read-only view of a received/cached character).
 -- Registers the "sheet" module opener with Core.
@@ -34,6 +48,20 @@ local C_DIM = ns.UI.DIM
 local C_STAR = { 1.0, 0.82, 0.0 }
 local C_LINE = ns.UI.LINE
 local C_STRIPE = { 1.0, 0.95, 0.85, 0.04 }
+
+-- Inventory rows: one 16px icon showing (and toggling) the item's state, and
+-- (gear) a counter whose parts sit at these right-edge offsets. The item's own
+-- icon is deliberately NOT repeated here - a second, inert picture beside the
+-- state icon reads as a duplicate; item icons belong to the library browser and
+-- the wizard, where they identify a record rather than a state. Textures are
+-- Blizzard's own; Parchment ships no art.
+local ICON_SIZE = 16
+local INV_ROW_H = 18
+local ICON_PATH = "Interface\\Icons\\"
+local ICON_STASHED = ICON_PATH .. "INV_Misc_Bag_08"
+local ICON_HELD = ICON_PATH .. "Ability_MeleeDamage"
+local ICON_WORN = ICON_PATH .. "INV_Chest_Chain"
+local CNT_PLUS_X, CNT_VALUE_X, CNT_MINUS_X = PAD - 2, PAD + 18, PAD + 48
 
 local CharacterSheetUI = {}
 ns.CharacterSheetUI = CharacterSheetUI
@@ -67,18 +95,22 @@ local function CanvasReset(content)
     content.used = 0
     content.texUsed = 0
     content.btnUsed = 0
+    content.iconUsed = 0
     content.rowIndex = 0
 end
 
 -- Returns the next pooled hover button (transparent, spans a row or paragraph)
 -- used to show a breakdown tooltip and/or handle a click (roll a check, post a
--- perk). Scripts read btn.tip(GameTooltip) and btn.roll = { label, modifier }
--- or { hint, click } (set fresh on every render).
+-- perk, drop an item). Scripts read btn.tip(GameTooltip), btn.roll =
+-- { label, modifier } or { hint, click } for the left button, and btn.rightClick
+-- for the right one (all set fresh on every render). A row that sets no
+-- rightClick ignores right clicks entirely.
 local function AcquireBtn(content)
     content.btnUsed = content.btnUsed + 1
     local b = content.btnPool[content.btnUsed]
     if not b then
         b = CreateFrame("Button", nil, content)
+        b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
         b:SetScript("OnEnter", function(self)
             if not (self.tip or self.roll) then return end
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -90,7 +122,13 @@ local function AcquireBtn(content)
             GameTooltip:Show()
         end)
         b:SetScript("OnLeave", GameTooltip_Hide)
-        b:SetScript("OnClick", function(self)
+        b:SetScript("OnClick", function(self, button)
+            -- The right button is the secondary, destructive action (an
+            -- inventory row drops its item); only rows that wire one react.
+            if button == "RightButton" then
+                if self.rightClick then self.rightClick() end
+                return
+            end
             if not self.roll then return end
             -- A spec may carry a custom click (e.g. the Initiative row joins
             -- combat) instead of the default d20 check.
@@ -103,9 +141,10 @@ local function AcquireBtn(content)
         content.btnPool[content.btnUsed] = b
     end
     b:ClearAllPoints()
-    -- Clear last render's tip/roll: a pooled button reused by a row that sets
-    -- neither must not carry a stale tooltip or click from its previous use.
-    b.tip, b.roll = nil, nil
+    -- Clear last render's tip/roll/rightClick: a pooled button reused by a row
+    -- that sets none must not carry a stale tooltip or click from its previous
+    -- use - a leftover rightClick would drop items from a skill row.
+    b.tip, b.roll, b.rightClick = nil, nil, nil
     b:Show()
     return b
 end
@@ -145,11 +184,49 @@ local function AcquireTex(content)
     return t
 end
 
+-- Returns the next pooled icon button: a small square carrying either a texture
+-- (an item's icon, its equipped state) or a glyph (the gear counter's -/+).
+-- They sit above the row-wide hover buttons, so a passive one disables its own
+-- mouse and lets the row's tooltip show through. Scripts read b.tip(GameTooltip)
+-- and b.click, both cleared here so a reused button carries nothing stale.
+local function AcquireIconBtn(content)
+    content.iconUsed = content.iconUsed + 1
+    local b = content.iconPool[content.iconUsed]
+    if not b then
+        b = CreateFrame("Button", nil, content)
+        b:SetSize(ICON_SIZE, ICON_SIZE)
+        b:SetFrameLevel(content:GetFrameLevel() + 5)
+        b.tex = b:CreateTexture(nil, "ARTWORK")
+        b.tex:SetAllPoints()
+        b.label = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        b.label:SetPoint("CENTER")
+        b:SetScript("OnEnter", function(self)
+            if not self.tip then return end
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            self.tip(GameTooltip)
+            GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", GameTooltip_Hide)
+        b:SetScript("OnClick", function(self) if self.click then self.click() end end)
+        content.iconPool[content.iconUsed] = b
+    end
+    b:ClearAllPoints()
+    b:SetSize(ICON_SIZE, ICON_SIZE)   -- a counter glyph borrowed it narrower
+    b.tip, b.click = nil, nil
+    b.tex:SetTexture(nil)
+    b.tex:Hide()
+    b.label:SetText("")
+    b:EnableMouse(true)
+    b:Show()
+    return b
+end
+
 -- Hides pooled regions left over from a previous, longer render.
 local function CanvasFinish(content)
     for i = content.used + 1, #content.pool do content.pool[i]:Hide() end
     for i = content.texUsed + 1, #content.texPool do content.texPool[i]:Hide() end
     for i = content.btnUsed + 1, #content.btnPool do content.btnPool[i]:Hide() end
+    for i = content.iconUsed + 1, #content.iconPool do content.iconPool[i]:Hide() end
     content:SetHeight(-content.y + PAD)
 end
 
@@ -280,9 +357,17 @@ local function RenderOverview(content, sheet, ctx)
         cfg.hit_die_attribute and Tip("Hit Dice",
             "Level " .. sheet.level .. " x the die for the " .. aName(cfg.hit_die_attribute)
             .. " modifier (" .. Signed(aMod(cfg.hit_die_attribute)) .. ").") or nil)
+    -- Equipped equipment is named separately from the effect share, so the
+    -- points a breastplate contributes are visible as such; both fall out as
+    -- differences from the structural parts.
+    local acEquip = d.ac_equipment
+    local acFromGear = acEquip and acEquip.total or 0
     Row(content, "Armor Class", tostring(d.ac), 0, C_GOLD, Tip("Armor Class",
         "base " .. cfg.ac_base .. " + " .. aName(d.ac_attribute) .. " modifier "
-        .. Signed(aMod(d.ac_attribute)) .. fxTerm(d.ac - cfg.ac_base - aMod(d.ac_attribute))))
+        .. Signed(aMod(d.ac_attribute))
+        .. (acEquip and (" " .. Signed(acFromGear) .. " equipment ("
+            .. table.concat(acEquip.sources, ", ") .. ")") or "")
+        .. fxTerm(d.ac - cfg.ac_base - aMod(d.ac_attribute) - acFromGear)))
     -- Initiative is gold (interactive): clicking rolls it and joins combat,
     -- via the same path as the combat window's Me/Submit button.
     Row(content, "Initiative", Signed(d.initiative), 0, C_GOLD, Tip("Initiative",
@@ -400,7 +485,9 @@ local function RenderSkills(content, sheet, ctx)
 end
 
 -- Weapon proficiencies as aligned columns (atk | damage); atk is gold - clicking
--- the row rolls the attack. Versatile/properties detail hovers.
+-- the row rolls the attack. Versatile/properties detail hovers. These are skill
+-- rows, so no item bonus reaches them: an equipped weapon rolls from its own
+-- inventory row below.
 local function RenderWeapons(content, sheet, ctx)
     local accomplishment = ctx.accomplishment
     local modById = ctx.modById
@@ -455,6 +542,264 @@ local function RenderWeapons(content, sheet, ctx)
             dmg:SetText(w.damage or "-")
         end
     end
+end
+
+-- Inventory. Rows render Compute's display entries; the only handle back into
+-- the character is entry.index, and every mutation below invalidates the ones
+-- after it (removal shifts them), so each click persists and re-renders rather
+-- than touching a second row.
+
+-- Runs a mutation against the active character, persisting and refreshing every
+-- window when it reports a change. Nothing happens on a viewed sheet: those
+-- clicks are never wired in the first place.
+local function ApplyToActive(mutate)
+    local char, key = ns.GetActiveCharacter()
+    if not (char and key) then return end
+    if not mutate(char) then return end
+    ns.SetCharacter(key, char)
+    ns.Systems.RefreshAll()
+end
+
+-- Flips one inventory entry between equipped and stashed.
+local function ToggleItem(index)
+    ApplyToActive(function(char) return ns.Items.ToggleEquipped(char, index) ~= nil end)
+end
+
+-- Steps a gear entry's counter (the helper clamps it into [0, MAX_COUNT]). The
+-- current count is re-read from the character, not from the rendered row.
+local function StepCount(index, delta)
+    ApplyToActive(function(char)
+        local entry = type(char.inventory) == "table" and char.inventory[index]
+        if type(entry) ~= "table" then return false end
+        return ns.Items.SetCount(char, index, (tonumber(entry.count) or 0) + delta) ~= nil
+    end)
+end
+
+-- Dropping an item is destructive (the entry, not the library item), so it is
+-- confirmed. The data is the inventory index the row was rendered from.
+StaticPopupDialogs["PARCHMENT_ITEM_REMOVE"] = {
+    text = "Remove '%s' from this character's inventory?\n\nYour item library is not touched.",
+    button1 = "Remove", button2 = CANCEL,
+    OnAccept = function(_, index)
+        ApplyToActive(function(char) return ns.Items.Remove(char, index) end)
+    end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
+-- The row's headline: the item name plus what it is worth ("Flame Dagger +2",
+-- "Chainmail +1 AC"), with a weapon item's linked weapon dimmed after it. A
+-- reference that did not resolve names itself (the sentinel is called "Missing
+-- item"), so it needs nothing appended - the dimmed row and its tooltip say it.
+local function ItemLabel(entry, kind)
+    local text = entry.name or "?"
+    if entry.missing then return text end
+    if kind == "weapon" then
+        if entry.bonus ~= 0 then text = text .. " " .. Signed(entry.bonus) end
+        if entry.weapon_name then text = text .. "  |cff9e998c" .. entry.weapon_name .. "|r" end
+    elseif kind == "equipment" then
+        if entry.ac_bonus ~= 0 then text = text .. " " .. Signed(entry.ac_bonus) .. " AC" end
+    end
+    return text
+end
+
+-- Hover breakdown for an inventory row: what the item is, what it does, and
+-- (for a reference the library cannot resolve) what happened to it. `own` is
+-- true on the player's own sheet, where the row can also be dropped.
+local function ItemTip(entry, kind, own)
+    return function(tt)
+        tt:AddLine(entry.name or "?", C_GOLD[1], C_GOLD[2], C_GOLD[3])
+        if entry.missing then
+            tt:AddLine("Missing from your item library.", 0.9, 0.45, 0.45, true)
+            tt:AddLine("It was deleted, or this sheet came from a player whose items you"
+                .. " do not have.", 0.9, 0.9, 0.9, true)
+            return
+        end
+        if entry.description and entry.description ~= "" then
+            tt:AddLine(entry.description, 0.85, 0.82, 0.75, true)
+        end
+        if kind == "weapon" then
+            if entry.weapon_name then
+                tt:AddLine("Adds " .. Signed(entry.bonus) .. " to " .. entry.weapon_name
+                    .. " attack rolls while equipped.", 0.9, 0.9, 0.9, true)
+            elseif entry.weapon_id then
+                tt:AddLine("Linked to a weapon this system does not define - no attack bonus"
+                    .. " applies.", 0.9, 0.9, 0.9, true)
+            elseif entry.bonus ~= 0 then
+                tt:AddLine("No weapon linked, so its " .. Signed(entry.bonus)
+                    .. " has nothing to apply to.", 0.9, 0.9, 0.9, true)
+            end
+            -- The number this item swings for, broken into the weapon skill it
+            -- rides on and the item's own bonus (the skill part is exactly what
+            -- the proficiency row above shows).
+            if entry.equipped and entry.attack_total then
+                local parts = entry.attack_parts or {}
+                tt:AddLine("Attack: " .. Signed(entry.attack_total) .. " ("
+                    .. (entry.weapon_name or "weapon") .. " skill " .. Signed(parts.base or 0)
+                    .. " " .. Signed(parts.bonus or 0) .. " item)", 0.9, 0.9, 0.9)
+            end
+            tt:AddLine(entry.equipped and "Equipped." or "Stashed.", 0.56, 0.78, 1)
+        elseif kind == "equipment" then
+            if entry.ac_bonus ~= 0 then
+                tt:AddLine("Adds " .. Signed(entry.ac_bonus) .. " AC while equipped.", 0.9, 0.9, 0.9)
+            end
+            tt:AddLine(entry.equipped and "Equipped." or "Stashed.", 0.56, 0.78, 1)
+        else
+            tt:AddLine("Carried: " .. (entry.count or 0), 0.9, 0.9, 0.9)
+        end
+        if entry.source == "wire" then
+            tt:AddLine("Shown from the shared sheet - your library does not have this item.",
+                0.62, 0.60, 0.55, true)
+        end
+        if own then
+            tt:AddLine("Right-click: remove from inventory", C_DIM[1], C_DIM[2], C_DIM[3])
+        end
+    end
+end
+
+-- The state icon: held/worn when equipped, the backpack when stashed, and a
+-- plain backpack for gear (nothing to toggle). Clicking equips or stashes on
+-- the own sheet; a viewed sheet still explains the state it shows.
+local function StateIcon(content, entry, kind, ctx, y)
+    local b = AcquireIconBtn(content)
+    b:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, y + 1)
+    if kind == "gear" then
+        b.tex:SetTexture(ICON_STASHED)
+        b.tex:Show()
+        b:EnableMouse(false)                     -- the row tooltip shows through
+        return
+    end
+    b.tex:SetTexture(entry.equipped and (kind == "weapon" and ICON_HELD or ICON_WORN) or ICON_STASHED)
+    b.tex:Show()
+    local equipped, index = entry.equipped, entry.index
+    b.tip = function(tt)
+        tt:AddLine(equipped and "Equipped" or "Stashed", C_GOLD[1], C_GOLD[2], C_GOLD[3])
+        if not ctx.viewChar then
+            tt:AddLine(equipped and "Click: stash it (its bonus stops counting)"
+                or "Click: equip it", 0.56, 0.78, 1)
+        end
+    end
+    if not ctx.viewChar then
+        b.click = function() ToggleItem(index) end
+    end
+end
+
+-- A gear row's counter: the count, flanked by -/+ click targets on the own
+-- sheet. Both call the clamping helper, so the ends simply stop.
+local function GearCounter(content, entry, ctx, y)
+    local value = Acquire(content, "GameFontHighlightSmall")
+    value:SetPoint("TOPRIGHT", content, "TOPRIGHT", -CNT_VALUE_X, y)
+    value:SetJustifyH("RIGHT")
+    value:SetTextColor(C_TEXT[1], C_TEXT[2], C_TEXT[3])
+    value:SetText("x" .. (entry.count or 0))
+    if ctx.viewChar then return end
+
+    local index = entry.index
+    local function step(glyph, x, delta, hint)
+        local b = AcquireIconBtn(content)
+        b:SetSize(14, ICON_SIZE)
+        b:SetPoint("TOPRIGHT", content, "TOPRIGHT", -x, y + 1)
+        b.label:SetText(glyph)
+        b.label:SetTextColor(C_GOLD[1], C_GOLD[2], C_GOLD[3])
+        b.tip = function(tt) tt:AddLine(hint, 0.56, 0.78, 1) end
+        b.click = function() StepCount(index, delta) end
+    end
+    step("-", CNT_MINUS_X, -1, "Click: carry one less")
+    step("+", CNT_PLUS_X, 1, "Click: carry one more")
+end
+
+-- An equipped weapon's own attack total, gold at the row's right edge, plus the
+-- click-to-roll spec for the row (nil on a viewed sheet). A stashed weapon shows
+-- nothing - it is in the bag - and so does one whose link names no weapon skill
+-- this character is accomplished with.
+local function WeaponAttackValue(content, entry, kind, ctx, y)
+    if kind ~= "weapon" or not (entry.equipped and entry.attack_total) then return nil end
+    local atk = Acquire(content, "GameFontHighlightSmall")
+    atk:SetPoint("TOPRIGHT", content, "TOPRIGHT", -PAD, y)
+    atk:SetJustifyH("RIGHT")
+    atk:SetTextColor(C_GOLD[1], C_GOLD[2], C_GOLD[3])
+    atk:SetText(Signed(entry.attack_total))
+    return ctx.rollSpec((entry.name or "Weapon") .. " attack", entry.attack_total)
+end
+
+-- One inventory row: the state icon, the headline, and (gear) the counter or
+-- (an equipped weapon) its attack total. The row-wide hover button carries the
+-- breakdown, a left-click affordance (the attack roll on a weapon, removal on a
+-- missing item) and, on the own sheet, right-click to drop the item - the same
+-- convention the perk tree uses for removing a node.
+local function InventoryRow(content, entry, kind, ctx)
+    local y = content.y
+    content.rowIndex = content.rowIndex + 1
+    if content.rowIndex % 2 == 0 then
+        local stripe = AcquireTex(content)
+        stripe:SetColorTexture(C_STRIPE[1], C_STRIPE[2], C_STRIPE[3], C_STRIPE[4])
+        stripe:SetPoint("TOPLEFT", content, "TOPLEFT", 4, y + 2)
+        stripe:SetPoint("TOPRIGHT", content, "TOPRIGHT", -4, y + 2)
+        stripe:SetHeight(INV_ROW_H)
+    end
+
+    StateIcon(content, entry, kind, ctx, y)
+    local x = PAD + ICON_SIZE + 4
+
+    local label = Acquire(content, "GameFontHighlightSmall")
+    label:SetPoint("TOPLEFT", content, "TOPLEFT", x, y)
+    local c = entry.missing and C_DIM or C_TEXT
+    label:SetTextColor(c[1], c[2], c[3])
+    label:SetText(ItemLabel(entry, kind))
+
+    -- A missing item has no library record to count against: its row offers
+    -- removal instead of a counter.
+    if kind == "gear" and not entry.missing then GearCounter(content, entry, ctx, y) end
+    local roll = WeaponAttackValue(content, entry, kind, ctx, y)
+
+    local b = AcquireBtn(content)
+    b:SetPoint("TOPLEFT", content, "TOPLEFT", 4, y + 2)
+    b:SetPoint("TOPRIGHT", content, "TOPRIGHT", -4, y + 2)
+    b:SetHeight(INV_ROW_H)
+    local own = not ctx.viewChar
+    b.tip = ItemTip(entry, kind, own and not entry.missing)
+    local index, name = entry.index, entry.name
+    local function Drop() StaticPopup_Show("PARCHMENT_ITEM_REMOVE", name or "?", nil, index) end
+    if entry.missing and own then
+        b.roll = { hint = "Click: remove it from this inventory", click = Drop }
+    else
+        b.roll = roll
+    end
+    if own then b.rightClick = Drop end
+    content.y = content.y - INV_ROW_H
+end
+
+-- The header affordance that opens the add flow for a kind (nil = any kind).
+-- Own sheet only: a viewed inventory is not yours to add to.
+local function AddAction(ctx, kind)
+    if ctx.viewChar or not ns.ItemWizardUI then return nil end
+    return {
+        text = "+ add item", hint = "Click: add an item from your library",
+        click = function() ns.ItemWizardUI.AddFlow(kind) end,
+    }
+end
+
+local function InventorySection(content, title, entries, kind, ctx)
+    if #entries == 0 then return end
+    Header(content, title, AddAction(ctx, kind))
+    for _, entry in ipairs(entries) do InventoryRow(content, entry, kind, ctx) end
+end
+
+-- The three inventory sections, each shown only when it has rows. A character
+-- carrying nothing has no inventory at all (Compute leaves it nil): one header
+-- then keeps the add flow reachable from the sheet instead of only from the
+-- library browser.
+local function RenderInventory(content, sheet, ctx)
+    local inv = sheet.inventory
+    if not inv then
+        local action = AddAction(ctx, nil)
+        if not action then return end
+        Header(content, "INVENTORY", action)
+        Paragraph(content, nil, "Nothing carried yet.", C_DIM)
+        return
+    end
+    InventorySection(content, "WEAPONS", inv.weapons, "weapon", ctx)
+    InventorySection(content, "EQUIPMENT", inv.equipment, "equipment", ctx)
+    InventorySection(content, "GEAR", inv.gear, "gear", ctx)
 end
 
 -- Spellcasting (casters): per-school spell attack and save DC columns; atk is
@@ -639,6 +984,7 @@ local function RenderBody(self)
     RenderAttributes(content, sheet, ctx)
     RenderSkills(content, sheet, ctx)
     RenderWeapons(content, sheet, ctx)
+    RenderInventory(content, sheet, ctx)
     RenderSpellcasting(content, sheet, ctx)
     RenderProse(content, sheet, ctx)
 
@@ -715,7 +1061,7 @@ local function Refresh(self)
         return
     end
     ns.UI.HideEmpty(self)
-    self.sheet = ns.CharacterSheet.Compute(char, ns.GetSystem())
+    self.sheet = ns.CharacterSheet.Compute(char, ns.GetSystem(), ns.GetItemLibrary())
     self.title:SetText((self.sheet.name or "Character")
         .. (viewing and self.viewFrom and ("  |cff8ec6ff(from " .. self.viewFrom .. ")|r") or ""))
     self.subtitle:SetText(self.sheet.quote and ('"' .. self.sheet.quote .. '"') or "")
@@ -824,6 +1170,7 @@ local function BuildFrame()
     content.pool = {}
     content.texPool = {}
     content.btnPool = {}
+    content.iconPool = {}
     scroll:SetScrollChild(content)
     f.content = content
 

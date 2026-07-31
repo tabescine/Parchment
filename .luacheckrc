@@ -38,11 +38,11 @@ local wow_api = {
 
 read_globals = wow_api
 
--- Globals the addon legitimately owns or appends to. The three Parchment* tables
+-- Globals the addon legitimately owns or appends to. The four Parchment* tables
 -- are the SavedVariables declared in Parchment.toc; StaticPopupDialogs and
 -- UISpecialFrames are WoW tables addons add their own keys to.
 globals = {
-    "ParchmentSystemDB", "ParchmentCharDB", "ParchmentDB",
+    "ParchmentSystemDB", "ParchmentCharDB", "ParchmentItemDB", "ParchmentDB",
     "StaticPopupDialogs", "UISpecialFrames",
 }
 

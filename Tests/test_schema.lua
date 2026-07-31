@@ -241,6 +241,111 @@ assert(ok, "wizard-shaped custom perk should validate: " .. tostring(issues and 
 -- A perk with no effects at all (text only) is legal.
 assert(Schema.ValidateCharacter(wizChar({}), wizSys))
 
+-- Item library records: id, name and a known kind are required; the per-kind
+-- extras must be finite numbers, the strings are capped, and an icon may only
+-- be a plain texture name (a path escape must never reach SetTexture).
+local function Item(extra)
+    local i = { id = "itm_1", name = "Flame Dagger", kind = "weapon" }
+    for k, v in pairs(extra or {}) do i[k] = v end
+    return i
+end
+assert(Schema.ValidateItem(Item({ weapon_id = "w1", bonus = 2, icon = "inv_sword_04",
+    description = "Warm.", version = 3 })))
+assert(Schema.ValidateItem(Item({ kind = "equipment", ac_bonus = 1 })))
+assert(Schema.ValidateItem(Item({ kind = "gear", default_count = 10 })))
+ok, issues = Schema.ValidateItem(Item({ kind = "hat" }))
+assert(not ok and findIssue(issues, "unknown kind 'hat'"))
+ok, issues = Schema.ValidateItem({ name = "No id", kind = "gear" })
+assert(not ok and findIssue(issues, "field 'id'"))
+ok, issues = Schema.ValidateItem(Item({ bonus = 1 / 0 }))
+assert(not ok and findIssue(issues, "not a finite number"), "inf bonus not reported")
+ok, issues = Schema.ValidateItem(Item({ ac_bonus = 0 / 0 }))
+assert(not ok and findIssue(issues, "not a finite number"), "NaN ac_bonus not reported")
+ok, issues = Schema.ValidateItem(Item({ bonus = 500 }))
+assert(not ok and findIssue(issues, "outside"), "an absurd bonus must be reported")
+ok, issues = Schema.ValidateItem(Item({ default_count = 1e9 }))
+assert(not ok and findIssue(issues, "outside"), "an absurd default_count must be reported")
+ok, issues = Schema.ValidateItem(Item({ name = string.rep("x", 65) }))
+assert(not ok and findIssue(issues, "longer than 64"))
+ok, issues = Schema.ValidateItem(Item({ description = string.rep("x", 513) }))
+assert(not ok and findIssue(issues, "longer than 512"))
+ok, issues = Schema.ValidateItem(Item({ bonus = "two" }))
+assert(not ok and findIssue(issues, "field 'bonus' should be number"))
+for _, icon in ipairs({ "..\\..\\Interface\\evil", "Interface/Icons/x", "icon name", "" }) do
+    ok, issues = Schema.ValidateItem(Item({ icon = icon }))
+    assert(not ok and findIssue(issues, "plain texture name"), "bad icon accepted: " .. icon)
+end
+assert(Schema.ValidateItem(Item({ icon = "INV_Misc_Bag-08_x" })), "texture-name characters must pass")
+assert(not reports(Schema.ValidateItem, "nope"), "a non-record item must be reported, not thrown")
+
+-- The library as a whole: every record valid, filed under its own id.
+assert(Schema.ValidateItemLibrary({}), "an empty library is valid")
+assert(Schema.ValidateItemLibrary({ itm_1 = Item() }))
+ok, issues = Schema.ValidateItemLibrary({ itm_9 = Item() })
+assert(not ok and findIssue(issues, "does not match its key"))
+ok, issues = Schema.ValidateItemLibrary({ itm_1 = Item({ kind = "hat" }) })
+assert(not ok and findIssue(issues, "item[itm_1]"))
+assert(not Schema.ValidateItemLibrary("nope"))
+assert(not reports(Schema.ValidateItemLibrary, { itm_1 = 5 }))
+
+-- Character inventories: thin references, shape-checked with or without a
+-- system (the comm receive path validates shape only).
+local function invChar(inventory)
+    return { name = "C", level = 1, attributes = { a = 1 }, inventory = inventory }
+end
+assert(Schema.ValidateCharacter(invChar({
+    { item_id = "itm_1", equipped = true },
+    { item_id = "itm_2", count = 3 },
+}), nil))
+ok, issues = Schema.ValidateCharacter(invChar({ { equipped = true } }), nil)
+assert(not ok and findIssue(issues, "field 'item_id'"))
+ok, issues = Schema.ValidateCharacter(invChar({ { item_id = "i", count = 1 / 0 } }), nil)
+assert(not ok and findIssue(issues, "not a finite number"))
+ok, issues = Schema.ValidateCharacter(invChar({ { item_id = "i", equipped = "yes" } }), nil)
+assert(not ok and findIssue(issues, "field 'equipped' should be boolean"))
+-- A type-confused inventory must be reported or leniently skipped, never thrown.
+for _, bad in ipairs({ 5, { 5 }, { { item_id = "i", resolved = 5 } } }) do
+    reports(Schema.ValidateCharacter, invChar(bad), refSys)
+end
+ok, issues = Schema.ValidateCharacter(invChar({ 5 }), nil)
+assert(not ok and findIssue(issues, "inventory[1]"), "a scalar entry must be reported")
+ok, issues = Schema.ValidateCharacter(invChar({ { item_id = "i", resolved = 5 } }), nil)
+assert(not ok and findIssue(issues, "resolved"), "a scalar resolved block must be reported")
+
+-- The `resolved` snapshot rides in from the wire AND reaches the totals, so it
+-- is bounded on every axis: kind, string length, icon charset, bonus range.
+local function resolvedChar(resolved)
+    return invChar({ { item_id = "itm_1", equipped = true, resolved = resolved } })
+end
+assert(Schema.ValidateCharacter(resolvedChar({
+    name = "Borrowed Axe", kind = "weapon", icon = "inv_axe_01", weapon_id = "w1", bonus = 3,
+}), nil))
+assert(Schema.ValidateCharacter(resolvedChar({}), nil), "a snapshot may carry nothing at all")
+for _, bad in ipairs({
+    { kind = "hat" },
+    { name = string.rep("x", 65) },
+    { icon = "..\\..\\Interface\\evil" },
+    { icon = string.rep("i", 65) },
+    { bonus = 1 / 0 },
+    { bonus = 9999 },
+    { ac_bonus = -1000 },
+    { bonus = "lots" },
+    { weapon_id = 5 },
+}) do
+    assert(not reports(Schema.ValidateCharacter, resolvedChar(bad), nil),
+        "an out-of-bounds resolved field was accepted")
+end
+
+-- A resolved weapon link is checked leniently, and only when a system is at
+-- hand: a dangling one costs the item its bonus, it does not invalidate a sheet.
+local wepSys = MinimalSystem()
+wepSys.weapons = { { id = "w1", name = "Club" } }
+assert(Schema.ValidateCharacter(resolvedChar({ name = "Axe", kind = "weapon", weapon_id = "w1" }), wepSys))
+ok, issues = Schema.ValidateCharacter(resolvedChar({ name = "Axe", kind = "weapon", weapon_id = "w9" }), wepSys)
+assert(not ok and findIssue(issues, "unknown weapon 'w9'"))
+assert(Schema.ValidateCharacter(resolvedChar({ name = "Axe", kind = "weapon", weapon_id = "w9" }), nil),
+    "without a system there is nothing to check the link against")
+
 -- Targets the wizard's pickers cannot produce, but a hand-edited paste or a
 -- wire payload can: reported, never thrown.
 for _, bad in ipairs({

@@ -61,6 +61,25 @@ accomplished_saves = ["wits"]
 # custom_perks count too: 4 here + 1 homebrew below = 5.
 perks = ["keen_eye", "scholar", "toughness", "toughness"]
 
+# inventory: what the character carries. Each entry is a thin REFERENCE into
+# your item library (/pmt items), never a copy - `item_id` is the library key,
+# and only the per-character state lives here:
+#   equipped - weapons and equipment; an equipped weapon item adds its bonus to
+#              the linked weapon's attack rolls, equipment adds its ac_bonus to AC
+#   count    - gear only (the editable counter on the sheet)
+# Editing the library item updates every character holding it. An item_id your
+# library does not know renders as a missing row (and /pmt validate lists it),
+# so importing this sample without those items costs nothing but three dim rows.
+[[inventory]]
+item_id = "itm_1"     # a weapon item linked to the system's "bow", +1 attack
+equipped = true
+[[inventory]]
+item_id = "itm_2"     # an equipment item worth +1 AC while worn
+equipped = true
+[[inventory]]
+item_id = "itm_3"     # gear: no mechanics, just a counter
+count = 12
+
 # Base attribute scores, BEFORE trait bonuses (the sheet shows base, bonus and
 # final separately). Budget here: point_buy total 15 + Scholarly Upbringing 2
 # + the level-3 milestone point = 18; spent above base 1: 4+7+5 = 16.

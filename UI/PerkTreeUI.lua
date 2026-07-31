@@ -19,9 +19,9 @@
 -- level the character has not reached shows as locked (the tooltip says when it
 -- turns on), but stays editable and deletable like any other.
 --
--- Reads from: ns.GetSystem, ns.GetActiveCharacter, ns.CharacterSheet.Compute,
---   ns.CharacterSheet.PerkActive, ns.GetAttribute, ns.PerkTree,
---   ns.PerkWizardUI, ns.UI.
+-- Reads from: ns.GetSystem, ns.GetActiveCharacter, ns.GetItemLibrary,
+--   ns.CharacterSheet.Compute, ns.CharacterSheet.PerkActive, ns.GetAttribute,
+--   ns.PerkTree, ns.PerkWizardUI, ns.UI.
 -- Exposes on ns.PerkTreeUI: Open, Toggle, and .frame (checked by callers that
 --   re-render the viewer only when it is already shown).
 -- Registers the "perks" module opener with Core.
@@ -492,7 +492,7 @@ Refresh = function(self)
         return
     end
     ns.UI.HideEmpty(self)
-    self.sheet = ns.CharacterSheet.Compute(char, ns.GetSystem())
+    self.sheet = ns.CharacterSheet.Compute(char, ns.GetSystem(), ns.GetItemLibrary())
 
     self.trees = BuildTreeList(char)
     if self.treeIndex > #self.trees then self.treeIndex = 1 end

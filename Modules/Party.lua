@@ -13,7 +13,8 @@
 -- player still sees members who do share.
 --
 -- Reads from: ns.Comm, ns.Addon.db.profile.shareVitals, ns.GetActiveCharacter,
---   ns.CharacterSheet.Compute, ns.GetSystem, ns.HasSystem, ns.PartyUI and
+--   ns.CharacterSheet.Compute, ns.GetSystem, ns.GetItemLibrary, ns.HasSystem,
+--   ns.PartyUI and
 --   ns.InitiativeUI (refresh notifications; the tracker renders vitals inline).
 -- Exposes on ns.Party: GetRoster, OwnSnapshot, RequestAll, OnVitalsChanged,
 --   Clear.
@@ -39,7 +40,7 @@ local function Snapshot()
     if not ns.HasSystem() then return nil end
     local char = ns.GetActiveCharacter()
     if not char then return nil end
-    local sheet = ns.CharacterSheet.Compute(char, ns.GetSystem())
+    local sheet = ns.CharacterSheet.Compute(char, ns.GetSystem(), ns.GetItemLibrary())
     if not sheet then return nil end
     local d = sheet.derived
     return {

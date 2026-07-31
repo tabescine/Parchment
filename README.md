@@ -23,6 +23,11 @@ every window - sheet math included - adapts to it.
   and live search across every sphere (by name or description). Homebrew
   perks are written in game with a stepped wizard (`/pmt perkwizard`:
   Basics → Effects → Review) whose effects fold into the sheet's totals.
+- **Items & inventory** - a shared item library (weapons, equipment, gear)
+  written in game (`/pmt items`) and handed to any character: equip/stash
+  toggles and gear counters on the sheet, each equipped weapon rolling its own
+  attack (skill + its bonus) and equipment folding into AC. Editing a library
+  item updates everyone carrying it.
 - **Combat tracker** - turn order with automatic tie-breaking (via the
   system's `initiative_tiebreaker` stat) and manual DM reordering, rounds,
   a turn/round stopwatch, and per-row HP: players' live vitals inline,
@@ -79,6 +84,7 @@ Type `/pmt` (or `/parchment`) for the full command list:
 | `/pmt combat` | Open the combat tracker (`/pmt init` still works) |
 | `/pmt perks` | Open the perk tree viewer |
 | `/pmt perkwizard` | Write a homebrew perk for the active character |
+| `/pmt items` | Browse the item library (create, edit, hand out items) |
 | `/pmt new` | Create a character (guided wizard) |
 | `/pmt edit` | Open the character editor |
 | `/pmt import` | Open the import/export dialog |
@@ -93,7 +99,7 @@ Type `/pmt` (or `/parchment`) for the full command list:
 | `/pmt minimap` | Toggle the minimap button |
 | `/pmt save` | Write all data to disk (reloads the UI) |
 | `/pmt who` | List known characters |
-| `/pmt validate` | Check the loaded system and characters |
+| `/pmt validate` | Check the loaded system, characters and item library |
 
 ## A note on saving
 
