@@ -78,6 +78,27 @@ for _, row in ipairs(sheet.inventory.gear) do
 end
 assert(sheet.derived.ac_equipment == nil, "nothing resolves, so nothing may reach AC")
 
+-- Now import the sample item library the same way, and the very same character
+-- resolves: system + items + character is the fully-wired demo.
+ok, msg = ns.ImportExport.Import(T.readfile("Tools/examples/sample.items.toml"))
+assert(ok, tostring(msg))
+local lib = ns.GetItemLibrary()
+assert(lib.itm_1 and lib.itm_2 and lib.itm_3, "the sample library must define itm_1..itm_3")
+local libOk, libIssues = ns.Schema.ValidateItemLibrary(lib)
+assert(libOk, "the sample library must validate: " .. tostring(libIssues[1]))
+
+sheet = ns.CharacterSheet.Compute(char, ns.GetSystem(), lib)
+local inv = sheet.inventory
+assert(#inv.weapons == 1 and #inv.equipment == 1 and #inv.gear == 1,
+    "each sample item must land in its own group")
+local bow = inv.weapons[1]
+assert(bow.source == "library" and bow.equipped and bow.weapon_name == "Bow")
+assert(bow.attack_total == 5, "bow attack 4 + the item's +1, got " .. tostring(bow.attack_total))
+assert(inv.equipment[1].equipped and inv.equipment[1].ac_bonus == 1)
+assert(sheet.derived.ac == 12 and sheet.derived.ac_equipment.total == 1,
+    "equipped equipment must add its AC on top of the 11 above")
+assert(inv.gear[1].count == 12, "the character's own count wins over the item's default_count")
+
 -- The JSON twins must decode to exactly the TOML data (minus the _note).
 local sysToml = normalize(assert(ns.TOML.decode(T.readfile("Tools/examples/sample.system.toml"))))
 local sysJson = normalize(assert(ns.JSON.decode(T.readfile("Tools/examples/sample.system.json"))))
@@ -87,6 +108,10 @@ local charToml = normalize(assert(ns.TOML.decode(T.readfile("Tools/examples/samp
 local charJson = normalize(assert(ns.JSON.decode(T.readfile("Tools/examples/sample.character.json"))))
 charJson._note = nil
 T.assert_deepeq(charToml, charJson, "character twins")
+local itemsToml = normalize(assert(ns.TOML.decode(T.readfile("Tools/examples/sample.items.toml"))))
+local itemsJson = normalize(assert(ns.JSON.decode(T.readfile("Tools/examples/sample.items.json"))))
+itemsJson._note = nil
+T.assert_deepeq(itemsToml, itemsJson, "item twins")
 
 -- Export round-trips: what export produces, import's parsers reproduce.
 local sysOut = ns.ImportExport.ExportSystem("toml")
@@ -98,3 +123,9 @@ local charBack = normalize(assert(ns.JSON.decode(charOut)))
 assert(charBack._key == "wren", "export must tag the roster key")
 charBack._key = nil
 T.assert_deepeq(char, charBack, "character json export")
+for _, format in ipairs({ "json", "toml" }) do
+    local itemsOut = assert(ns.ImportExport.ExportItems(format))
+    local decode = (format == "toml") and ns.TOML.decode or ns.JSON.decode
+    T.assert_deepeq({ items = lib }, normalize(assert(decode(itemsOut))),
+        "items " .. format .. " export")
+end

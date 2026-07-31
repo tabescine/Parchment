@@ -2,15 +2,17 @@
 --
 -- Turns the live data into copyable text and turns pasted text back into data.
 -- Import accepts JSON, TOML, or a Lua table literal (sandboxed loadstring with
--- an empty environment), auto-detects whether it is a system or character,
--- validates against the schema, and only commits on success - via
--- ns.Systems.SetActive for systems and the character data API for characters,
--- never by touching the SavedVariables globals directly.
+-- an empty environment), auto-detects whether it is a system, a character or an
+-- item library, validates against the schema, and only commits on success - via
+-- ns.Systems.SetActive for systems, the character data API for characters and
+-- ns.SetItem for items, never by touching the SavedVariables globals directly.
 -- Export produces pretty JSON (or TOML) matching the converter's format.
 --
 -- Reads from: ns.JSON, ns.TOML, ns.Schema, ns.Systems, ns.GetSystem,
---   ns.GetCharacter(s), ns.SetCharacter, ns.NextCharacterKey, ns.SetActiveCharacter.
--- Exposes on ns.ImportExport: ExportSystem, ExportCharacter, Import, StripMeta.
+--   ns.GetCharacter(s), ns.SetCharacter, ns.NextCharacterKey, ns.SetActiveCharacter,
+--   ns.GetItemLibrary, ns.SetItem.
+-- Exposes on ns.ImportExport: ExportSystem, ExportCharacter, ExportItems, Import,
+--   StripMeta.
 
 local ADDON, ns = ...
 
@@ -48,7 +50,7 @@ end
 IE.StripMeta = StripMeta
 
 -- Classifies a decoded table as a system, a single character, a full character
--- DB, or nil when it matches none.
+-- DB, an item library, or nil when it matches none.
 local function DetectKind(data)
     if type(data) ~= "table" then return nil end
     -- A `characters` field must be a table to be a roster; a scalar there (e.g.
@@ -57,6 +59,10 @@ local function DetectKind(data)
     if type(data.characters) == "table" then return "character_db" end
     if data.system_name or data.perk_trees or data.modifier_table then return "system" end
     if data.name and (data.attributes or data.level) then return "character" end
+    -- Item libraries are checked last: `items` is only a library marker on a
+    -- payload that is nothing else, so a system or character that happens to
+    -- carry a field of that name is still recognised as what it is.
+    if type(data.items) == "table" then return "item_db" end
     return nil
 end
 
@@ -126,6 +132,15 @@ function IE.ExportCharacter(key, format)
     return Encode(copy, format)
 end
 
+-- Exports the whole item library, wrapped in an `items` key so the import path
+-- can tell a library apart from a system or a roster. format is "json"
+-- (default) or "toml". Returns the string, or nil plus an error.
+function IE.ExportItems(format)
+    local lib = ns.GetItemLibrary()
+    if type(lib) ~= "table" or not next(lib) then return nil, "no items to export." end
+    return Encode({ items = StripMeta(lib) }, format)
+end
+
 -- Imports pasted text. Returns ok, message.
 --
 -- On success the data is written to SavedVariables and, for a single character,
@@ -173,6 +188,27 @@ function IE.Import(text)
         -- active, caches it in the system library, and refreshes open windows.
         ns.Systems.SetActive(clean, "import")
         return true, "imported system '" .. (clean.system_name or "?") .. "'."
+    end
+
+    if kind == "item_db" then
+        local incoming = StripMeta(data.items)   -- DetectKind proved it is a table
+        -- Validate the whole payload BEFORE writing anything, like the roster
+        -- path: a half-written library would be worse than refusing outright.
+        -- ValidateItemLibrary covers each record's shape AND the id-vs-key
+        -- agreement inventories rely on (they resolve references by key).
+        local ok, issues = ns.Schema.ValidateItemLibrary(incoming)
+        if not ok then return false, "item library invalid: " .. SummarizeIssues(issues) end
+        -- MERGE into the existing library (add or overwrite by id) rather than
+        -- replacing it, so a paste can never silently drop items the import does
+        -- not mention. SetItem bumps each stored item's `version` past the local
+        -- copy's: an import IS a local save, and the future item transfer over
+        -- comm compares versions to decide whose copy is newer.
+        local count = 0
+        for id, item in pairs(incoming) do
+            ns.SetItem(id, item)
+            count = count + 1
+        end
+        return true, "imported " .. count .. " item(s) into the library."
     end
 
     -- Validate characters against the active system, or shape-only when none is

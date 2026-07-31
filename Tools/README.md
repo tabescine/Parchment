@@ -30,15 +30,22 @@ it top to bottom, and replace the contents.
   skills/weapons/saves, a homebrew perk demonstrating `effects`,
   `add_modifier`, `replaces`, and informational effect types, plus the
   `_key` field a single-character in-game import requires.
-- `sample.system.json` / `sample.character.json` - the same data in JSON
-  (generated from the TOML; JSON allows no comments, so the TOML files are
-  the documented ones). Both formats import identically.
+- `sample.items.toml` - **the annotated item-library reference**: the three
+  items Wren's inventory references - a weapon linked to the system's "bow"
+  with a `+1` attack bonus, a piece of equipment worth `+1` AC while worn, and
+  a gear item with a counter. The library is global (one per install, shared by
+  every character) and characters only reference it, so importing this makes
+  Wren's three inventory rows resolve.
+- `sample.system.json` / `sample.character.json` / `sample.items.json` - the
+  same data in JSON (generated from the TOML; JSON allows no comments, so the
+  TOML files are the documented ones). Both formats import identically.
 
 **Getting data into the game: use `/pmt import`.** Paste the whole file -
-comments included - system first, then the character. The dialog
-auto-detects JSON/TOML/Lua, validates against the schema, and only commits
-on success; the same dialog's Export buttons produce the formats back. No
-external tooling is needed.
+comments included - system first, then the items, then the character. The
+dialog auto-detects JSON/TOML/Lua and what the paste holds, validates against
+the schema, and only commits on success; the same dialog's Export buttons
+produce the formats back. No external tooling is needed. Item and character
+imports MERGE by key, so a paste never wipes what it does not mention.
 
 ## parchment_converter.py (optional)
 
@@ -53,12 +60,13 @@ useful in exactly two situations:
   addon (and so its import dialog) cannot help; the converter rebuilds a
   clean one offline from your JSON/TOML source.
 
-It converts a JSON or TOML system definition or character into a Lua
-SavedVariables file you drop into your WoW account:
+It converts a JSON or TOML system definition, character or item library into a
+Lua SavedVariables file you drop into your WoW account:
 
 ```
 WTF/Account/<ACCOUNT>/SavedVariables/ParchmentSystemDB.lua
 WTF/Account/<ACCOUNT>/SavedVariables/ParchmentCharDB.lua
+WTF/Account/<ACCOUNT>/SavedVariables/ParchmentItemDB.lua
 ```
 
 Requires Python 3 (TOML input needs Python 3.11+ for the built-in `tomllib`,
@@ -74,6 +82,9 @@ python parchment_converter.py examples/sample.system.json
 python parchment_converter.py examples/sample.character.json
 python parchment_converter.py examples/sample.character.toml
 
+# Item library -> ParchmentItemDB.lua
+python parchment_converter.py examples/sample.items.toml
+
 # Override output path / key / variable name
 python parchment_converter.py examples/sample.character.json -o ParchmentCharDB.lua -k "Wren-Stormrage"
 
@@ -82,7 +93,8 @@ python parchment_converter.py examples/sample.system.json --var MySystemDB
 ```
 
 Type is auto-detected (a file with `system_name`/`perk_trees` is a system; one
-with `name`/`attributes` is a character). Force it with `-t system|character`.
+with `name`/`attributes` is a character; one whose only marker is `items` is an
+item library). Force it with `-t system|character|items`.
 
 ### How the formats map
 

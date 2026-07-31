@@ -1,8 +1,9 @@
 -- Parchment - Import / Export (UI)
 --
 -- The Import / Export panel of the hub window: a large multi-line text box
--- plus buttons to export the active character or the system (a toggle picks
--- JSON or TOML) and to import pasted JSON, TOML, or Lua.
+-- plus buttons to export the active character, the system or the item library
+-- (a toggle picks JSON or TOML) and to import pasted JSON, TOML, or Lua - one
+-- Import button for all three, since the paste is auto-detected.
 -- Import results (success or the reason for failure) show in a status line; a
 -- successful import refreshes every data-driven window. The status line is
 -- deliberately NOT cleared on show - an import's outcome survives hub
@@ -95,6 +96,13 @@ local function DoExportSystem(self)
     SetStatus(self, "Exported system as " .. self.format:upper() .. ". Press Ctrl+C to copy.", false)
 end
 
+local function DoExportItems(self)
+    local str, err = IE.ExportItems(self.format)
+    if not str then return SetStatus(self, err, true) end
+    ShowText(self, str)
+    SetStatus(self, "Exported the item library as " .. self.format:upper() .. ". Press Ctrl+C to copy.", false)
+end
+
 -- Flips the export format between JSON and TOML and relabels the toggle.
 local function ToggleFormat(self)
     self.format = (self.format == "json") and "toml" or "json"
@@ -124,8 +132,9 @@ local function BuildContent(f)
     instr:SetPoint("RIGHT", f, "RIGHT", -2, 0)
     instr:SetJustifyH("LEFT")
     instr:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
-    instr:SetText("Export copies data out in the chosen format. Import auto-detects "
-        .. "JSON, TOML or a Lua table. Click the box, then Ctrl+A/Ctrl+C to copy or Ctrl+V to paste. "
+    instr:SetText("Export copies a character, the system or your item library out in the chosen "
+        .. "format. Import auto-detects JSON, TOML or a Lua table, and what it holds. "
+        .. "Click the box, then Ctrl+A/Ctrl+C to copy or Ctrl+V to paste. "
         .. "Large pastes are captured instantly - use Clear before pasting over an export.")
 
     -- Bordered text area containing a scrolling multi-line edit box.
@@ -172,8 +181,8 @@ local function BuildContent(f)
         if userInput then f.pasteData = nil end
     end)
     UI.SetPlaceholder(editBox,
-        "Paste a system or character here (JSON, TOML, or Lua - comments are fine), "
-        .. "or use the Export buttons below.", "TOPLEFT")
+        "Paste a system, character or item library here (JSON, TOML, or Lua - comments are "
+        .. "fine), or use the Export buttons below.", "TOPLEFT")
 
     -- Status line.
     f.status = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
@@ -182,15 +191,17 @@ local function BuildContent(f)
     f.status:SetJustifyH("LEFT")
     f.status:SetWordWrap(true)
 
-    -- Top button row: export actions and the format toggle.
+    -- Top button row: the three export actions. The format toggle sits on the
+    -- bottom row instead: three exports plus a 110px toggle would run past the
+    -- panel's right edge once the hub is dragged down to its minimum width.
     local expChar = MakeButton(f, "Export Char", 88, function() DoExportCharacter(f) end)
     expChar:SetPoint("BOTTOMLEFT", 0, 34)
     local expSys = MakeButton(f, "Export System", 96, function() DoExportSystem(f) end)
     expSys:SetPoint("BOTTOMLEFT", 92, 34)
-    f.formatBtn = MakeButton(f, "Format: JSON", 110, function() ToggleFormat(f) end)
-    f.formatBtn:SetPoint("BOTTOMLEFT", 192, 34)
+    local expItems = MakeButton(f, "Export Items", 92, function() DoExportItems(f) end)
+    expItems:SetPoint("BOTTOMLEFT", 192, 34)
 
-    -- Bottom button row: import and clear.
+    -- Bottom button row: import, clear and the format toggle.
     local importBtn = MakeButton(f, "Import", 64, function() DoImport(f) end)
     importBtn:SetPoint("BOTTOMLEFT", 0, 6)
     local clearBtn = MakeButton(f, "Clear", 56, function()
@@ -200,6 +211,8 @@ local function BuildContent(f)
         SetStatus(f, "", false)
     end)
     clearBtn:SetPoint("BOTTOMLEFT", 68, 6)
+    f.formatBtn = MakeButton(f, "Format: JSON", 110, function() ToggleFormat(f) end)
+    f.formatBtn:SetPoint("BOTTOMLEFT", 128, 6)
 end
 
 -- No Refresh on purpose: nothing in the panel goes stale, and clearing the
