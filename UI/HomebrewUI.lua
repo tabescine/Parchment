@@ -2,7 +2,8 @@
 --
 -- A guided, stepped creator for homebrew feats and spells (char.custom_feats /
 -- char.custom_spells entries): Basics (name, level, description) -> Details
--- (type, cost, range, save; spells add school, rank, damage, concentration)
+-- (type, cost, range, save, click-to-roll check; spells add school, rank,
+-- damage, concentration)
 -- -> Effects (repeatable rows) -> Review. It edits a draft, never the stored
 -- record: Finish hands the draft to ns.Homebrew.Commit (append when creating,
 -- replace when editing) and refreshes the open windows. Deleting goes through
@@ -64,6 +65,7 @@ local function Normalize(rec, char, kind)
     rec.cost = type(rec.cost) == "table" and rec.cost or {}
     rec.cost.ap = tonumber(rec.cost.ap)
     rec.cost.mana = tonumber(rec.cost.mana)
+    rec.check = type(rec.check) == "table" and rec.check or nil
     if kind == "spell" then
         rec.rank = math.max(1, math.min(RANK_CAP, math.floor(tonumber(rec.rank) or 1)))
         rec.concentration = rec.concentration and true or nil
@@ -76,6 +78,9 @@ end
 local function Strip(rec)
     if type(rec.cost) == "table" and not rec.cost.ap and not rec.cost.mana then
         rec.cost = nil
+    end
+    if type(rec.check) == "table" and not (rec.check.attribute or rec.check.skill) then
+        rec.check = nil
     end
     if rec.type == "" then rec.type = nil end
     if rec.range == "" then rec.range = nil end
@@ -166,6 +171,18 @@ local function EffectSummary(e)
     return text
 end
 
+-- Display name for a click-to-roll check ({ attribute = id } or
+-- { skill = id }), or "(none)".
+local function CheckName(check)
+    if type(check) ~= "table" then return "(none)" end
+    if check.attribute then return ns.AttrName(check.attribute) end
+    if check.skill then
+        local rec = ns.FindById(ns.GetSystem().skills, check.skill)
+        return rec and rec.name or tostring(check.skill)
+    end
+    return "(none)"
+end
+
 -- The draft's mechanics on one line, as the pickers and sheet will show them.
 local function MetaSummary(d, kind)
     local parts = {}
@@ -173,6 +190,7 @@ local function MetaSummary(d, kind)
         parts[#parts + 1] = SchoolName(d.school) .. " rank " .. (d.rank or 1)
     end
     if d.type and d.type ~= "" then parts[#parts + 1] = d.type end
+    if d.check then parts[#parts + 1] = CheckName(d.check) .. " check" end
     local cost = ns.FormatCost(d.cost)
     if cost then parts[#parts + 1] = cost end
     if d.range and d.range ~= "" then parts[#parts + 1] = "Range: " .. d.range end
@@ -334,6 +352,7 @@ local function FillDetails(f, d)
     f.apStepper:SetText(tostring(d.cost.ap or 0))
     f.manaStepper:SetText(tostring(d.cost.mana or 0))
     f.saveBtn:SetText(d.save and ns.AttrName(d.save) or "(none)")
+    f.checkBtn:SetText(CheckName(d.check))
     for _, w in ipairs(f.spellWidgets) do w:SetShown(spell) end
     if spell then
         f.schoolBtn:SetText(SchoolName(d.school))
@@ -542,6 +561,8 @@ local function BuildFrame()
     f.rangeBox = Form.TextBox(p2, CTRL_X, y, 160); y = y - ROW_H
     Label(p2, "Save", PAD, y)
     f.saveBtn = FieldButton(p2, CTRL_X, y, 120); y = y - ROW_H
+    Label(p2, "Check", PAD, y)
+    f.checkBtn = FieldButton(p2, CTRL_X, y, 160); y = y - ROW_H
 
     local function spellRow(widget)
         f.spellWidgets[#f.spellWidgets + 1] = widget
@@ -565,7 +586,8 @@ local function BuildFrame()
     f.detailHint:SetJustifyH("LEFT")
     f.detailHint:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
     f.detailHint:SetText("Everything here is quick-reference display (pickers and sheet). "
-        .. "Leave a field empty to omit it; unusual costs (HP, favors) belong in the description.")
+        .. "Leave a field empty to omit it; unusual costs (HP, favors) belong in the description. "
+        .. "A check makes the sheet row roll it on click.")
 
     -- Page 3: Effects (rows are pooled and laid out on refresh).
     local p3 = NewPage(f); f.pages[3] = p3
@@ -658,6 +680,41 @@ local function BuildFrame()
             onConfirm = function(ids)
                 if not f.draft then return end
                 f.draft.save = (ids[1] and ids[1] ~= NONE_ID) and ids[1] or nil
+                Refresh(f)
+            end,
+        })
+    end)
+    -- The check picker offers every attribute and skill in one list; the two
+    -- are distinguished by an id prefix so a skill named like an attribute
+    -- cannot collide.
+    f.checkBtn:SetScript("OnClick", function()
+        if not f.draft then return end
+        local system = ns.GetSystem()
+        local items = { { id = NONE_ID, name = "(none)" } }
+        for _, a in ipairs(ns.Widgets.AttrItems(system)) do
+            items[#items + 1] = { id = "a:" .. a.id, name = a.name .. "  (attribute)" }
+        end
+        for _, s in ipairs(system.skills or {}) do
+            if type(s) == "table" and s.id then
+                items[#items + 1] = { id = "s:" .. s.id, name = (s.name or s.id) .. "  (skill)" }
+            end
+        end
+        local c, sel = f.draft.check, NONE_ID
+        if type(c) == "table" and c.attribute then sel = "a:" .. c.attribute
+        elseif type(c) == "table" and c.skill then sel = "s:" .. c.skill end
+        ns.Dialogs.Pick({
+            title = "Check", prompt = "Which check does using this ability roll? "
+                .. "The sheet row then rolls it on click.",
+            items = items, max = 1, selected = { sel },
+            onConfirm = function(ids)
+                if not f.draft then return end
+                local id = ids[1]
+                if not id or id == NONE_ID then
+                    f.draft.check = nil
+                else
+                    local kind, ref = id:match("^(%a):(.+)$")
+                    f.draft.check = kind == "a" and { attribute = ref } or { skill = ref }
+                end
                 Refresh(f)
             end,
         })

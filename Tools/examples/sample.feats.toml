@@ -34,6 +34,8 @@ rank_attribute_req = [5, 6, 7]
 #   cost          - { ap = n, mana = n }, shown on pickers and the sheet
 #   range         - free-form display text ("melee", "self", "15m", "touch")
 #   save          - attribute id of the saving throw the rank forces, if any
+#   check         - { attribute = id } or { skill = id }: the check using the
+#                   rank rolls; the sheet row then rolls it on click
 #   attribute_req - overrides rank_attribute_req for this rank
 #   description   - the rules text
 #   effects       - optional mechanical effects, same vocabulary as perks
@@ -80,7 +82,8 @@ effects = [{ type = "skill", skill = "lore", value = 1 }]
 name = "Pattern Sense"
 type = "active"
 cost = { ap = 1 }
-description = "Study a foe: learn one of its resistances or weaknesses."
+check = { skill = "lore" }   # click the sheet row to roll the Lore check
+description = "Study a foe: pass a Lore Check to learn one of its resistances or weaknesses."
 
 [[lines]]
 id = "warding_soul"

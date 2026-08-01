@@ -1023,10 +1023,50 @@ local function SpellAttackRoll(sheet, ctx, rec, payloadFn)
     return { label = (rec.name or "?") .. " attack", modifier = mod, linkPayload = payloadFn }
 end
 
+-- A click-to-roll spec for a record carrying a machine-readable check
+-- ({ attribute = id } or { skill = id }): d20 + that modifier from the
+-- computed sheet, announcing the record as a clickable chat link. nil when
+-- the record has none, the reference does not resolve against this sheet,
+-- or the sheet is a viewed one.
+local function CheckRoll(sheet, ctx, rec, payloadFn)
+    if ctx.viewChar then return nil end
+    local check = rec.check
+    if type(check) ~= "table" then return nil end
+    if check.attribute then
+        local a = ctx.modById[check.attribute]
+        if not a then return nil end
+        return { label = (rec.name or "?") .. " (" .. a.name .. " check)",
+            modifier = a.modifier, linkPayload = payloadFn }
+    end
+    if check.skill then
+        for _, sk in ipairs(sheet.skills) do
+            if sk.id == check.skill then
+                return { label = (rec.name or "?") .. " (" .. sk.name .. ")",
+                    modifier = sk.total, linkPayload = payloadFn }
+            end
+        end
+    end
+    return nil
+end
+
+-- The display name of a check's attribute or skill, or nil when it does not
+-- resolve against the active system.
+local function CheckName(check)
+    if type(check) ~= "table" then return nil end
+    if check.attribute then return ns.AttrName(check.attribute) end
+    if check.skill then
+        local rec = ns.FindById(ns.GetSystem().skills, check.skill)
+        return rec and rec.name or nil
+    end
+    return nil
+end
+
 -- Joins the mechanics of a feat rank or spell into one bracket tag.
 local function MetaTag(entry, extra)
     local parts = {}
     if entry.type then parts[#parts + 1] = entry.type end
+    local checkName = CheckName(entry.check)
+    if checkName then parts[#parts + 1] = checkName .. " check" end
     local cost = ns.FormatCost(entry.cost)
     if cost then parts[#parts + 1] = cost end
     if entry.range then parts[#parts + 1] = entry.range end
@@ -1069,8 +1109,9 @@ local function RenderFeats(content, sheet, ctx)
         local title = (r.rank.name or "?") .. "  |cff8ec6ff(" .. (r.line.name or r.line.id)
             .. " " .. r.index .. ")|r"
         local line, rank, index = r.line, r.rank, r.index
+        local payloadFn = function() return ns.ChatLinks.FeatRank(line, rank, index) end
         Paragraph(content, title .. ":", MetaTag(r.rank) .. (r.rank.description or ""), C_DIM,
-            nil, ctx.linkSpec(function() return ns.ChatLinks.FeatRank(line, rank, index) end))
+            CheckRoll(sheet, ctx, rank, payloadFn), ctx.linkSpec(payloadFn))
     end
     for _, rec in ipairs(homebrewFeats) do
         if type(rec) == "table" then
@@ -1082,8 +1123,9 @@ local function RenderFeats(content, sheet, ctx)
                 Paragraph(content, nil, "|cff9e998c" .. title .. ":|r  " .. body, C_DIM)
             else
                 local record = rec
+                local payloadFn = function() return ns.ChatLinks.Homebrew("feat", record) end
                 Paragraph(content, title .. ":", body, C_DIM,
-                    nil, ctx.linkSpec(function() return ns.ChatLinks.Homebrew("feat", record) end))
+                    CheckRoll(sheet, ctx, record, payloadFn), ctx.linkSpec(payloadFn))
             end
         end
     end
@@ -1125,7 +1167,8 @@ local function RenderSpells(content, sheet, ctx)
         local record = spell
         local payloadFn = function() return ns.ChatLinks.Spell(spellPack, record) end
         Paragraph(content, title .. ":", MetaTag(spell) .. (spell.description or ""), C_DIM,
-            SpellAttackRoll(sheet, ctx, record, payloadFn), ctx.linkSpec(payloadFn))
+            SpellAttackRoll(sheet, ctx, record, payloadFn) or CheckRoll(sheet, ctx, record, payloadFn),
+            ctx.linkSpec(payloadFn))
     end
     for _, rec in ipairs(homebrewSpells) do
         if type(rec) == "table" then
@@ -1142,7 +1185,8 @@ local function RenderSpells(content, sheet, ctx)
                 local record = rec
                 local payloadFn = function() return ns.ChatLinks.Homebrew("spell", record) end
                 Paragraph(content, title .. ":", body, C_DIM,
-                    SpellAttackRoll(sheet, ctx, record, payloadFn), ctx.linkSpec(payloadFn))
+                    SpellAttackRoll(sheet, ctx, record, payloadFn) or CheckRoll(sheet, ctx, record, payloadFn),
+                    ctx.linkSpec(payloadFn))
             end
         end
     end
