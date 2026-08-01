@@ -77,3 +77,18 @@ assert(CE.LevelUp(char, 1, system))   -- level 4: share unchanged (ceil(2) = 2)
 assert(char.max_mana == 20)
 assert(CE.LevelUp(char, 1, system))   -- level 5: share 3, +1
 assert(char.max_mana == 21, "override + delta: expected 21, got " .. tostring(char.max_mana))
+
+-- A character imported WITHOUT stored resources runs on the live formula,
+-- which scales by itself: level up/down must leave the nil store alone -
+-- materializing 0 + delta would freeze the formula at a wrong value.
+local imported = { name = "Storeless", level = 15,
+    attributes = { int = 4 }, cast_attribute = "int" }
+local before = ns.CharacterSheet.Compute(imported, system, {}).derived.mana.base
+assert(before == 3 + 8 + 2, "level-15 formula mana: got " .. tostring(before))
+assert(CE.LevelUp(imported, 5, system))       -- 16: share unchanged
+assert(CE.LevelUp(imported, 5, system))       -- 17: share +1
+assert(imported.max_mana == nil, "a nil mana store must stay nil across level up")
+local after = ns.CharacterSheet.Compute(imported, system, {}).derived.mana.base
+assert(after == before + 1, "formula mana must keep scaling: got " .. tostring(after))
+assert(CE.LevelDown(imported, system))
+assert(imported.max_mana == nil, "a nil mana store must stay nil across level down")
