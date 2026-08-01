@@ -27,6 +27,7 @@ local wow_api = {
     "SendChatMessage", "DEFAULT_CHAT_FRAME", "RandomRoll", "RANDOM_ROLL_RESULT",
     "ChatFrameUtil", "ChatFrame_AddMessageEventFilter", "hooksecurefunc", "SetItemRef",
     "IsShiftKeyDown", "IsAltKeyDown",
+    "ChatEdit_GetActiveWindow", "ChatFrame_OpenChat",
     "ReloadUI",
     -- Addon metadata + libraries
     "LibStub", "C_AddOns", "GetAddOnMetadata",

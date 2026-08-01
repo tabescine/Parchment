@@ -120,7 +120,7 @@ local function AcquireBtn(content)
                     0.56, 0.78, 1)
             end
             if self.shiftClick then
-                GameTooltip:AddLine(self.shiftClick.hint or "Shift-click: link in chat", 0.56, 0.78, 1)
+                GameTooltip:AddLine(self.shiftClick.hint or "Shift-click: insert a chat link", 0.56, 0.78, 1)
             end
             GameTooltip:Show()
         end)
@@ -1117,7 +1117,7 @@ local function RenderBody(self)
     -- click time so it reflects the current data), or nil for a viewed sheet.
     function ctx.linkSpec(payloadFn)
         if ctx.viewChar then return nil end
-        return { hint = "Click: link in chat", click = function()
+        return { hint = "Click: insert a chat link", click = function()
             ns.ChatLinks.PostLink(payloadFn())
         end }
     end

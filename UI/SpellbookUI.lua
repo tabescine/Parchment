@@ -425,7 +425,7 @@ local function BuildFrame()
     f.legend:SetPoint("RIGHT", f.points, "LEFT", -12, 0)
     f.legend:SetJustifyH("LEFT")
     f.legend:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
-    f.legend:SetText("Learn adds a spell - right-click a known one forgets it, shift-click links it in chat")
+    f.legend:SetText("Learn adds a spell - right-click a known one forgets it, shift-click puts its link in chat")
 
     f.msg = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     f.msg:SetPoint("TOPLEFT", 130, -72)

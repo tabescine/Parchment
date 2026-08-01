@@ -23,6 +23,10 @@
 -- (https://github.com/Total-RP/Total-RP-3, Apache-2.0); this is an
 -- independent implementation, no code is copied.
 --
+-- PostLink INSERTS the token into the chat input rather than sending
+-- anywhere itself: the user finishes the message and picks the channel,
+-- exactly like linking a regular item.
+--
 -- Reads from: ns.Comm (On/Whisper), ns.Print, ns.FormatCost, ns.AttrName,
 --   ns.Spells (school names), ns.ChatLinkUI (render, guarded - loads later).
 -- Exposes on ns.ChatLinks: Store, Get, MakeToken, Rewrite, ParseHref,
@@ -108,15 +112,41 @@ function CL.ParseHref(link)
     return content:sub(1, sep - 1), content:sub(sep + 1)
 end
 
--- Posts a payload as a link to the group (party/raid), or explains why not.
--- The token is parenthesized like the other OOC output this addon emits.
-function CL.PostLink(payload)
-    if not IsInGroup() then
-        ns.Print("chat links need a party or raid to post into.")
-        return false
+-- The chat edit box currently open for typing, unwrapped across API
+-- generations (older ChatEdit_GetActiveWindow returns the edit box itself;
+-- newer wrappers may nest it), or nil when none is open.
+local function ActiveEditBox()
+    local win = (ChatFrameUtil and ChatFrameUtil.GetActiveWindow and ChatFrameUtil.GetActiveWindow())
+        or (ChatEdit_GetActiveWindow and ChatEdit_GetActiveWindow())
+    if not win then return nil end
+    if win.Insert then return win end
+    if win.editBox and win.editBox.Insert then return win.editBox end
+    if win.chatFrame and win.chatFrame.editBox and win.chatFrame.editBox.Insert then
+        return win.chatFrame.editBox
     end
-    SendChatMessage("(" .. CL.MakeToken(payload) .. ")", IsInRaid() and "RAID" or "PARTY")
-    return true
+    return nil
+end
+
+-- Puts a payload's link token into the chat input, like shift-clicking a
+-- regular item: into the actively open edit box when there is one (the user
+-- finishes the message and picks the channel), else a fresh input pre-filled
+-- with the token. The message is the user's to send - no channel is chosen
+-- and nothing is auto-sent, which is also why the token goes in bare (their
+-- sentence, their parentheses).
+function CL.PostLink(payload)
+    local token = CL.MakeToken(payload)
+    local editBox = ActiveEditBox()
+    if editBox then
+        editBox:Insert(token)
+        return true
+    end
+    local open = (ChatFrameUtil and ChatFrameUtil.OpenChat) or ChatFrame_OpenChat
+    if open then
+        open(token)
+        return true
+    end
+    ns.Print("no chat input to put the link into.")
+    return false
 end
 
 -- Payload builders: each returns { title, lines }, lines being
