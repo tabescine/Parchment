@@ -18,6 +18,11 @@
 -- an answer is only honoured while ITS question is the pending one (an
 -- unsolicited LINKA can never pop a window).
 --
+-- The link mechanism (plain token + display-time rewrite + SetItemRef +
+-- on-demand comm fetch) is modeled on Total RP 3's chat links
+-- (https://github.com/Total-RP/Total-RP-3, Apache-2.0); this is an
+-- independent implementation, no code is copied.
+--
 -- Reads from: ns.Comm (On/Whisper), ns.Print, ns.FormatCost, ns.AttrName,
 --   ns.Spells (school names), ns.ChatLinkUI (render, guarded - loads later).
 -- Exposes on ns.ChatLinks: Store, Get, MakeToken, Rewrite, ParseHref,

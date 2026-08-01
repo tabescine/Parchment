@@ -147,6 +147,13 @@ AddOns-ready zip - runtime files only - and publishes it as a GitHub release,
 attaching to an existing release of the same tag if one was already drafted
 by hand.
 
+## Acknowledgements
+
+The chat-link mechanism (plain-text tokens rewritten into clickable links at
+display time, with content fetched from the sender on click) is modeled on
+[Total RP 3](https://github.com/Total-RP/Total-RP-3)'s chat links
+(Apache-2.0). Parchment's implementation is independent; no code is shared.
+
 ## License
 
 Parchment is released under the [MIT License](LICENSE).
