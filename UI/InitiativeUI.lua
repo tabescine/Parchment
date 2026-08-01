@@ -3,7 +3,8 @@
 -- The combat window (/pmt combat): a scrolling, click-to-select turn order
 -- driven by InitiativeTracker, with controls to add combatants (by total or
 -- by rolling d20 + modifier), add the active character, advance the turn,
--- and reset. The current turn is highlighted; the round shows in the title.
+-- and reset. The current turn is highlighted (and scrolled back into view when
+-- it changes); the round shows in the title.
 -- The DM resolves initiative ties by hand with each row's move-up arrow
 -- (automatic tie-breaking uses the system's initiative_tiebreaker stat,
 -- captured on add). Players may end their OWN turn: their Next button reads
@@ -137,6 +138,8 @@ local function CreateRow(content)
         GameTooltip:AddLine("A number sets current HP (and max while unset), "
             .. "+N / -N adjusts, current/max sets both. Players never see NPC HP.",
             0.9, 0.9, 0.9, true)
+        GameTooltip:AddLine("In the column, a \"+N\" after current HP is temporary hit points.",
+            0.9, 0.9, 0.9, true)
         GameTooltip:Show()
     end)
     hpBtn:SetScript("OnLeave", GameTooltip_Hide)
@@ -149,18 +152,38 @@ local function CreateRow(content)
     rm:SetHighlightTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Up")
     rm:SetScript("OnClick", function()
         if not CanEdit() then return end
+        -- Read the combatant BEFORE removing it: the notice names it and
+        -- quotes its initiative, so a misclick can be typed straight back in.
+        local c = IT.GetState().combatants[row.index]
         IT.Remove(row.index)
         Refresh(InitiativeUI.frame)
         Sync()
+        if c then ns.Print("removed " .. c.name .. " (initiative " .. tostring(c.init) .. ").") end
     end)
+    rm:SetScript("OnEnter", function(self)
+        if not CanEdit() then return end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Remove " .. (row.name:GetText() or "combatant"), 1, 1, 1)
+        GameTooltip:Show()
+    end)
+    rm:SetScript("OnLeave", GameTooltip_Hide)
     row.remove = rm
 
     row:SetScript("OnClick", function()
         if not CanEdit() then return end
+        local c = IT.GetState().combatants[row.index]
         IT.SetCurrent(row.index)
         Refresh(InitiativeUI.frame)
         Sync()
+        if c then ns.Print("skipped to " .. c.name .. ".") end
     end)
+    row:SetScript("OnEnter", function(self)
+        if not CanEdit() then return end
+        GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
+        GameTooltip:SetText("Click: set as current turn", 1, 1, 1)
+        GameTooltip:Show()
+    end)
+    row:SetScript("OnLeave", GameTooltip_Hide)
     return row
 end
 
@@ -175,6 +198,30 @@ local function VitalsByName()
     local own = ns.Party.OwnSnapshot()
     if own and own.name then map[own.name:lower()] = own end
     return map
+end
+
+-- Shows/hides the centred hint that stands in for an empty list. It lives on
+-- the scroll child rather than going through UI.Empty: the window-wide empty
+-- state would cover the very input strip the hint points at. The FontString is
+-- created on first need and then reused (frames/regions are permanent).
+local function SetEmptyHint(content, show, editable)
+    if not show then
+        if content.hint then content.hint:Hide() end
+        return
+    end
+    local hint = content.hint
+    if not hint then
+        hint = content:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        hint:SetPoint("TOP", content, "TOP", 0, -28)
+        hint:SetJustifyH("CENTER")
+        hint:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
+        content.hint = hint
+    end
+    -- A grouped non-DM cannot add anything here; their Me button submits.
+    hint:SetText(editable
+        and "No combatants yet.\n\nMe rolls your character in;\nadd NPCs with the boxes below."
+        or "No combatants yet.\n\nYour DM runs the tracker;\nMe still submits your roll to them.")
+    hint:Show()
 end
 
 -- "7+2/12" (temp HP rides on top of current) or "7/12" without a buffer.
@@ -246,6 +293,7 @@ local function RenderList(self)
         row:Show()
         y = y - ROW_H
     end
+    SetEmptyHint(content, #state.combatants == 0, editable)
     content:SetHeight(math.max(10, -y + 2))
 end
 
@@ -281,6 +329,28 @@ end
 -- strips the NPC hit points - they never leave this client.
 Sync = function()
     if ns.Comm and ns.Comm.IsDM() then ns.Comm.Send("INIT", IT.WireState()) end
+end
+
+-- Scrolls the current turn back into view after a re-render. Only when the
+-- turn actually changed (a manual scroll must not be yanked back on every
+-- refresh) and only far enough to bring the row inside the visible band,
+-- clamped to the scroll range. Rows start 2px below the content top.
+local function ScrollToCurrent(self, current)
+    if current == self.scrolledTo then return end
+    self.scrolledTo = current
+    local scroll = self.scroll
+    if not (scroll and current and current >= 1) then return end
+    local view = scroll:GetHeight()
+    local range = self.content:GetHeight() - view
+    if range <= 0 then return end
+    local top = 2 + (current - 1) * ROW_H
+    local offset = scroll:GetVerticalScroll()
+    if top < offset then
+        offset = top
+    elseif top + ROW_H > offset + view then
+        offset = top + ROW_H - view
+    end
+    scroll:SetVerticalScroll(math.max(0, math.min(range, offset)))
 end
 
 -- Turn/round stopwatch -------------------------------------------------------
@@ -342,6 +412,7 @@ function Refresh(self)
     end
     TickoverTimers(self, state)
     RenderList(self)
+    ScrollToCurrent(self, state.current or 0)
 end
 
 -- Commits the name/value inputs as a combatant. rolled=true treats the value as
@@ -460,9 +531,23 @@ local function BuildFrame()
         UpdateTimerText(self)
     end)
 
+    -- Column headers for the two numeric columns. Right-anchored to the frame
+    -- at the same insets the row cells use (rows sit 2px inside the scroll
+    -- child, which itself ends 32px from the frame's right edge).
+    local function head(text, rightInset, width)
+        local s = f:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+        s:SetPoint("TOPRIGHT", f, "TOPRIGHT", -rightInset, -46)
+        s:SetWidth(width)
+        s:SetJustifyH("RIGHT")
+        s:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
+        s:SetText(text)
+    end
+    head("HP", 100, 70)
+    head("Init", 74, 30)
+
     -- Scrolling combatant list.
     local scroll = CreateFrame("ScrollFrame", "ParchmentInitScroll", f, "UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT", 14, -46)
+    scroll:SetPoint("TOPLEFT", 14, -62)
     scroll:SetPoint("BOTTOMRIGHT", -32, 72)
     local content = CreateFrame("Frame", nil, scroll)
     content:SetSize(10, 10)
@@ -470,6 +555,7 @@ local function BuildFrame()
     scroll:SetScrollChild(content)
     scroll:SetScript("OnSizeChanged", function(_, w) content:SetWidth(w) end)
     f.content = content
+    f.scroll = scroll
 
     -- Input row: name, value, Add, Roll.
     f.nameBox = MakeEditBox(f, 104, false)
@@ -513,7 +599,8 @@ local function BuildFrame()
         "DM/solo: advance to the next turn. Player: end your own turn "
         .. "(enabled only while it is your character's turn).")
     f.nextBtn:SetPoint("BOTTOMLEFT", 118, 14)
-    f.resetBtn = MakeButton(f, "Reset", 54, "Clear all combatants and end combat (asks for confirmation).")
+    f.resetBtn = MakeButton(f, "Reset", 54,
+        "Reset the tracker: removes all combatants and ends combat (asks for confirmation).")
     f.resetBtn:SetPoint("BOTTOMLEFT", 176, 14)
 
     -- Public-roll toggle: route Roll/Me through the in-game dice roller so the
@@ -566,6 +653,9 @@ local function BuildFrame()
     end)
     f.nameBox:SetScript("OnEnterPressed", function() CommitInput(f, false) end)
     f.modBox:SetScript("OnEnterPressed", function() CommitInput(f, false) end)
+    -- Tab cycles the two inputs: name -> value -> name.
+    f.nameBox:SetScript("OnTabPressed", function() f.modBox:SetFocus() end)
+    f.modBox:SetScript("OnTabPressed", function() f.nameBox:SetFocus() end)
 
     -- Input hints. The value's meaning depends on the button, so both boxes
     -- also explain themselves on hover. (Placeholders last: they HookScript.)
@@ -660,8 +750,8 @@ StaticPopupDialogs["PARCHMENT_SET_NPC_HP"] = {
 -- Reset confirmation: the button sits next to Next, and a mid-fight misclick
 -- must not wipe a painstakingly assembled order.
 StaticPopupDialogs["PARCHMENT_RESET_COMBAT"] = {
-    text = "Clear the combat tracker?\n\nThis removes %s and ends combat.",
-    button1 = "Clear",
+    text = "Reset the combat tracker?\n\nThis removes %s and ends combat.",
+    button1 = "Reset",
     button2 = CANCEL,
     OnAccept = function()
         -- Re-checked: the role may have changed while the dialog was open.

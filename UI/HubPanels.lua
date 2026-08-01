@@ -1,18 +1,20 @@
--- Parchment - Hub panels: Systems, Items and Cached Sheets
+-- Parchment - Hub panels: Systems, Items and Cached sheets
 --
 -- Three hub panels that browse data owned by logic modules. The Systems panel
 -- lists the system library: click an entry to make it the active system
--- (always preserving the outgoing one), X deletes via the shared confirm
--- popup, footer buttons share the system with the group or jump to Import /
--- Export. The Cached Sheets panel lists received character sheets: click to
--- view one read-only, a search box filters by character/player name, each row
--- has a refresh button (re-request a live copy) and an X (remove via the shared
--- confirm) and shows its staleness, and Clear all drops the whole cache. The
+-- (always preserving the outgoing one, and asking first once characters
+-- exist), X deletes via the shared confirm popup, footer buttons share the
+-- system with the group or jump to Import / Export. The Cached sheets panel
+-- lists received character sheets: click to view one read-only, a search box
+-- filters by character/player name, each row has a refresh button (re-request
+-- a live copy) and an X (remove via the shared confirm) and shows its
+-- staleness, and Clear all drops the whole cache (asks first). The
 -- Items panel lists the item library: click an entry to edit it in the item
 -- wizard, X deletes via that module's confirm, and the footer opens the full
 -- library browser (per-row give/duplicate) or the wizard.
 --
 -- Reads from: ns.UI, ns.HubUI, ns.Systems, ns.Sharing, ns.GetSystem,
+--   ns.GetCharacters,
 --   ns.GetItemLibrary, ns.ItemWizardUI, ns.ShareSystem, ns.CharacterSheetUI,
 --   ns.OpenModule, ns.Print.
 -- Exposes nothing on ns: both panels register with the hub and are reached
@@ -137,6 +139,27 @@ local function MakeSystemRow(content)
     end)
 end
 
+-- Makes a library entry the active system (shared by the direct click and the
+-- confirm below). SetActive re-renders this panel, so the [active] tag moves.
+local function ActivateSystem(name)
+    local entry = ns.Systems.GetLibrary()[name]
+    if not entry then return end
+    ns.Systems.SetActive(entry.system, entry.from)
+    ns.Print("now using system '" .. name .. "'.")
+end
+
+-- Confirm dialog for switching the active system. A swap rebuilds every
+-- attribute-dependent frame, so it is worth a click - but only once there are
+-- characters to disturb (see the row's OnClick).
+StaticPopupDialogs["PARCHMENT_SWITCH_SYSTEM"] = {
+    text = "Switch the active system to \"%s\"?\n\nYour characters are kept; open windows"
+        .. " re-render against the new ruleset.",
+    button1 = "Switch",
+    button2 = CANCEL,
+    OnAccept = function(_, name) ActivateSystem(name) end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
 local function RefreshSystems(panel)
     local list = {}
     for name, entry in pairs(ns.Systems.GetLibrary()) do
@@ -161,10 +184,13 @@ local function RefreshSystems(panel)
         row.name:SetTextColor(c[1], c[2], c[3])
         row.meta:SetText(item.entry.from and ("from " .. item.entry.from) or "imported")
         row:SetScript("OnClick", function()
-            local entry = ns.Systems.GetLibrary()[item.name]
-            if entry then
-                ns.Systems.SetActive(entry.system, entry.from)
-                ns.Print("now using system '" .. item.name .. "'.")
+            if active then return end
+            -- A fresh install has nothing to disturb, so the swap stays one
+            -- click there; with characters around, ask before rebuilding.
+            if next(ns.GetCharacters()) ~= nil then
+                StaticPopup_Show("PARCHMENT_SWITCH_SYSTEM", item.name, nil, item.name)
+            else
+                ActivateSystem(item.name)
             end
         end)
     end, MakeSystemRow)
@@ -318,7 +344,20 @@ ns.HubUI.RegisterPanel({
     Build = BuildItems, Refresh = RefreshItems,
 })
 
--- Cached Sheets panel ---------------------------------------------------------
+-- Cached sheets panel ---------------------------------------------------------
+
+-- Confirm dialog for dropping the whole cache. The per-row X asks too (via
+-- ns.Sharing), and this one throws away every sheet at once.
+StaticPopupDialogs["PARCHMENT_CLEAR_CACHE"] = {
+    text = "Clear all %d cached sheet(s)?\n\nYou can view them again by requesting them.",
+    button1 = DELETE or "Clear",
+    button2 = CANCEL,
+    OnAccept = function()
+        ns.Sharing.ClearCache()
+        ns.HubUI.RefreshIfShown("cached")
+    end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
 
 -- Human-readable staleness from an entry's stored epoch time ("just now",
 -- "5m ago", "2h ago", "3d ago"); empty when no timestamp was recorded.
@@ -396,12 +435,13 @@ local function BuildCached(panel)
         "Click to view (offline). Refresh re-requests a live copy; X removes.",
         function(query) panel.cacheQuery = query; RefreshCached(panel) end)
     FooterButton(panel, "Clear all", 90, 0, function()
-        ns.Sharing.ClearCache()
-        ns.HubUI.RefreshIfShown("cached")
+        local n = 0
+        for _ in pairs(ns.Sharing.GetCache()) do n = n + 1 end
+        if n > 0 then StaticPopup_Show("PARCHMENT_CLEAR_CACHE", n) end
     end)
 end
 
 ns.HubUI.RegisterPanel({
-    id = "cached", label = "Cached Sheets", order = 70,
+    id = "cached", label = "Cached sheets", order = 70,
     Build = BuildCached, Refresh = RefreshCached,
 })

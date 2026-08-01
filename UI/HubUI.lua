@@ -25,6 +25,11 @@ local PAD = 14
 local SIDEBAR_W = 116
 local ROW_H = 30
 
+-- Font for the selected sidebar button (see Select): gold, and the same size
+-- as UIPanelButtonTemplate's normal font. Read off _G so a client without it
+-- simply keeps the template's greyed-out disabled font.
+local SELECTED_FONT = _G.GameFontNormal
+
 local HubUI = {}
 ns.HubUI = HubUI
 
@@ -44,8 +49,9 @@ local function PanelById(id)
 end
 
 -- Shows a panel: sidebar buttons reflect the selection (the active panel's
--- button is disabled - it is "where you are"), the panel frame is built
--- lazily and refreshed on every show.
+-- button is disabled - it is "where you are", not an unavailable screen, hence
+-- the SELECTED_FONT set in BuildFrame), the panel frame is built lazily and
+-- refreshed on every show.
 local function Select(self, id)
     local chosen = PanelById(id) or PanelById(self.current) or panels[1]
     if not chosen then return end
@@ -75,6 +81,11 @@ local function BuildFrame()
         local b = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
         b:SetSize(SIDEBAR_W, 24)
         b:SetPoint("TOPLEFT", PAD, y)
+        -- Selection is expressed by disabling the button (Select), so its
+        -- disabled font is what carries the "you are here" reading.
+        if SELECTED_FONT and b.SetDisabledFontObject then
+            b:SetDisabledFontObject(SELECTED_FONT)
+        end
         b:SetText(p.label)
         b:SetScript("OnClick", function() Select(f, p.id) end)
         p.button = b

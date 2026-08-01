@@ -135,8 +135,27 @@ function Widgets.AttrPickText(pick, effective)
     return ns.AttrName(effective) .. " |cff9e998c(auto)|r"
 end
 
+-- A stepper click's signed delta: 5 while Shift is held, so allocating an
+-- attribute is not ten clicks. IsShiftKeyDown is guarded - the pure-Lua tests
+-- have no WoW API.
+local function StepDelta(sign)
+    return sign * ((IsShiftKeyDown and IsShiftKeyDown()) and 5 or 1)
+end
+
+-- Hover tooltip on a stepper button, documenting the Shift step.
+local function StepTip(btn, text)
+    btn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(text, 1, 1, 1)
+        GameTooltip:AddLine("Shift: steps by 5.", 0.85, 0.82, 0.75)
+        GameTooltip:Show()
+    end)
+    btn:SetScript("OnLeave", GameTooltip_Hide)
+end
+
 -- Creates a [-] value [+] stepper. Call f:OnStep(fn) where fn(delta) applies the
--- change, and f:SetText(text) to display the current value.
+-- change, and f:SetText(text) to display the current value. Holding Shift steps
+-- by 5 - every caller clamps its own range, so a coarse step cannot overshoot it.
 function Widgets.Stepper(parent, width)
     local f = CreateFrame("Frame", nil, parent)
     f:SetSize(width or 96, 22)
@@ -157,10 +176,13 @@ function Widgets.Stepper(parent, width)
     val:SetJustifyH("CENTER")
     f.val = val
 
+    StepTip(minus, "Decrease")
+    StepTip(plus, "Increase")
+
     function f:SetText(t) val:SetText(t) end
     function f:OnStep(fn)
-        minus:SetScript("OnClick", function() fn(-1) end)
-        plus:SetScript("OnClick", function() fn(1) end)
+        minus:SetScript("OnClick", function() fn(StepDelta(-1)) end)
+        plus:SetScript("OnClick", function() fn(StepDelta(1)) end)
     end
     return f
 end

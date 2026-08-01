@@ -3,8 +3,8 @@
 -- A LibDataBroker launcher shown on the minimap via LibDBIcon. Left-click
 -- toggles the character sheet (the window in use during play); right-click
 -- opens the full menu: every play window, the hub and settings, the DM and
--- public-rolls toggles, and Save to Disk. The button's shown/hidden state
--- persists in db.profile.minimap.
+-- public-rolls toggles, and Save (which reloads the UI). The button's
+-- shown/hidden state persists in db.profile.minimap.
 --
 -- Reads from: ns.OpenModule, ns.RequestDMRole, ns.SaveToDisk, ns.Comm,
 --   ns.Addon.db.
@@ -54,7 +54,7 @@ local function BuildMenu(owner)
             root:CreateButton((ns.Comm.IsDM() and "DM mode: on" or "DM mode: off"),
                 function() ns.RequestDMRole(not ns.Comm.IsDM()) end)
         end
-        root:CreateButton("Save to Disk", function() ns.SaveToDisk() end)
+        root:CreateButton("Save (reloads UI)", function() ns.SaveToDisk() end)
     end)
 end
 

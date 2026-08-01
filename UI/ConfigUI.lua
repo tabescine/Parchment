@@ -135,7 +135,7 @@ local function BuildContent(f)
     share:SetScript("OnLeave", GameTooltip_Hide)
 
     Header(f, y, "DATA"); y = y - 26
-    local save = ActionButton(f, y, "Save to Disk", ns.SaveToDisk)
+    local save = ActionButton(f, y, "Save (reloads UI)", ns.SaveToDisk)
     save:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:SetText("Reloads the UI to write all Parchment changes to disk.", 1, 1, 1, 1, true)
