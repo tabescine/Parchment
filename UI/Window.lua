@@ -142,6 +142,10 @@ function UI.CreateWindow(globalName, opts)
     f:SetSize(opts.width, opts.height)
     f:SetPoint("CENTER")
     f:SetFrameStrata("HIGH")
+    -- Click-to-front: mouse-down anywhere in the window (or its children)
+    -- raises it above the other Parchment windows in the HIGH strata.
+    -- Dialogs, popups, and tooltips live on higher strata and stay on top.
+    f:SetToplevel(true)
     f:SetClampedToScreen(true)
     f:SetResizable(true)
     f:SetResizeBounds(opts.minW or 240, opts.minH or 200, opts.maxW or 900, opts.maxH or 1000)
