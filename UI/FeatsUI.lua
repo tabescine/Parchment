@@ -241,6 +241,9 @@ end
 local function RenderHomebrew(self)
     local content = self.content
     content.usedRows, content.usedCards = 0, 0
+    -- No line rows in this view: hide the whole row pool, or the previous
+    -- attribute filter's rows keep rendering under the homebrew cards.
+    for i = 1, #content.rowPool do content.rowPool[i]:Hide() end
     local width = content:GetWidth()
     self.newBtn:Show()
     self.newBtn:ClearAllPoints()
