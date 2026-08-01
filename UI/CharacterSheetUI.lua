@@ -4,7 +4,10 @@
 -- draggable, Escape-closable panel with a fixed vitals header (editable current
 -- HP/Mana) and a scrolling body that renders the computed sheet - attributes,
 -- derived stats, skills and saves, weapons, traits, feats and spells
--- and notes.
+-- and notes. Every section header is a collapse toggle (state persists per
+-- profile under db.profile.sheetCollapsed), and on a wide enough window the
+-- compact numeric sections flow into two balanced columns while the prose
+-- sections span the full width beneath them.
 --
 -- All layout is data-driven from ns.CharacterSheet.Compute; nothing here knows
 -- any specific ruleset, so whatever system the user imports renders too. The
@@ -35,11 +38,16 @@
 local ADDON, ns = ...
 
 -- Layout metrics and palette.
-local FRAME_W, FRAME_H = 540, 620
+local FRAME_W, FRAME_H = 720, 620
 local MIN_W, MIN_H = 420, 360
-local MAX_W, MAX_H = 900, 1000
+local MAX_W, MAX_H = 1000, 1000
 local PAD = 16
 local INDENT = 14
+-- Two-column layout: at or above this content width the compact numeric
+-- sections flow into two balanced columns (each at least ~250px); below it
+-- everything stacks in one column, so a deliberately narrow sheet still works.
+local COL_BREAK = 520
+local COL_GUTTER = 12
 -- Shared palette from UI/Window.lua; STAR and STRIPE are sheet-specific.
 local C_GOLD = ns.UI.GOLD
 local C_HEAD = ns.UI.HEAD
@@ -88,15 +96,41 @@ end
 
 -- Body canvas helpers. Each operates on the content frame and advances a
 -- vertical cursor (self.y). Text regions are pooled and reused across renders.
+-- All horizontal anchoring goes through PlaceLeft/PlaceRight against the
+-- current column extent (content.colLeft/colRight), so the same renderers draw
+-- into a full-width canvas or into either column of the two-column layout.
 
 -- Begins a fresh layout pass: rewind the cursor and the pool cursors.
 local function CanvasReset(content)
     content.y = -PAD
+    content.colLeft = 0
+    content.colRight = content:GetWidth()
     content.used = 0
     content.texUsed = 0
     content.btnUsed = 0
     content.iconUsed = 0
     content.rowIndex = 0
+end
+
+-- Anchors a region's TOPLEFT x pixels in from the current column's left edge.
+local function PlaceLeft(content, region, x, y)
+    region:SetPoint("TOPLEFT", content, "TOPLEFT", content.colLeft + x, y)
+end
+
+-- Anchors a region's TOPRIGHT x pixels in from the current column's right
+-- edge. Anchored to the content's TOPLEFT so the offset is column-relative
+-- (the frame's own right edge would ignore the column).
+local function PlaceRight(content, region, x, y)
+    region:SetPoint("TOPRIGHT", content, "TOPLEFT", content.colRight - x, y)
+end
+
+-- The per-profile collapsed-section table ({ [sectionKey] = true }), created
+-- on demand. Falls back to a throwaway when the db is not up (out-of-client).
+local function CollapsedSections()
+    local db = ns.Addon and ns.Addon.db
+    if not db then return {} end
+    db.profile.sheetCollapsed = db.profile.sheetCollapsed or {}
+    return db.profile.sheetCollapsed
 end
 
 -- Returns the next pooled hover button (transparent, spans a row or paragraph)
@@ -245,25 +279,42 @@ local function CanvasFinish(content)
     content:SetHeight(-content.y + PAD)
 end
 
--- Adds a gold section header followed by a thin divider rule. Resets the row
+-- Adds a gold section header followed by a thin divider rule, and returns
+-- whether the section is expanded - a collapsed section's caller draws no
+-- body. A [-]/[+] glyph leads the title; clicking the header toggles the
+-- section and the state persists per profile under `key`. Resets the row
 -- stripe parity so each section starts its banding fresh. When `action`
 -- ({ text, hint, click }) is given, its label sits right-aligned on the header
 -- line with a pooled hover button over it - the same pools every other row
--- uses, so a header affordance costs no new widget class.
-local function Header(content, text, action)
+-- uses, so a header affordance costs no new widget class; the collapse click
+-- target stops short of it.
+local function Section(content, key, text, action)
+    local collapsed = CollapsedSections()[key]
     content.y = content.y - 12
     local fs = Acquire(content, "GameFontNormal")
-    fs:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, content.y)
+    PlaceLeft(content, fs, PAD, content.y)
     fs:SetTextColor(C_GOLD[1], C_GOLD[2], C_GOLD[3])
-    fs:SetText(text)
+    fs:SetText("|cff9e998c" .. (collapsed and "[+]" or "[-]") .. "|r  " .. text)
+    local toggle = AcquireBtn(content)
+    PlaceLeft(content, toggle, 4, content.y + 2)
+    PlaceRight(content, toggle, action and 100 or 4, content.y + 2)
+    toggle:SetHeight(18)
+    toggle.roll = {
+        hint = collapsed and "Click: expand this section" or "Click: collapse this section",
+        click = function()
+            local c = CollapsedSections()
+            c[key] = not c[key] or nil
+            CharacterSheetUI.RefreshIfShown()
+        end,
+    }
     if action then
         local a = Acquire(content, "GameFontHighlightSmall")
-        a:SetPoint("TOPRIGHT", content, "TOPRIGHT", -PAD, content.y - 2)
         a:SetJustifyH("RIGHT")
+        PlaceRight(content, a, PAD, content.y - 2)
         a:SetTextColor(C_GOLD[1], C_GOLD[2], C_GOLD[3])
         a:SetText(action.text)
         local b = AcquireBtn(content)
-        b:SetPoint("TOPRIGHT", content, "TOPRIGHT", -PAD + 4, content.y)
+        PlaceRight(content, b, PAD - 4, content.y)
         b:SetSize(90, 16)
         b.roll = { hint = action.hint, click = action.click }
     end
@@ -271,11 +322,12 @@ local function Header(content, text, action)
 
     local line = AcquireTex(content)
     line:SetColorTexture(C_LINE[1], C_LINE[2], C_LINE[3], C_LINE[4])
-    line:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, content.y + 3)
-    line:SetPoint("TOPRIGHT", content, "TOPRIGHT", -PAD, content.y + 3)
+    PlaceLeft(content, line, PAD, content.y + 3)
+    PlaceRight(content, line, PAD, content.y + 3)
     line:SetHeight(1)
     content.y = content.y - 7
     content.rowIndex = 0
+    return not collapsed
 end
 
 -- Adds a label/value row with the value right-aligned. Data rows (non-empty
@@ -289,28 +341,27 @@ local function Row(content, label, value, indent, valColor, tip, roll)
         if content.rowIndex % 2 == 0 then
             local stripe = AcquireTex(content)
             stripe:SetColorTexture(C_STRIPE[1], C_STRIPE[2], C_STRIPE[3], C_STRIPE[4])
-            stripe:SetPoint("TOPLEFT", content, "TOPLEFT", 4, content.y + 2)
-            stripe:SetPoint("TOPRIGHT", content, "TOPRIGHT", -4, content.y + 2)
+            PlaceLeft(content, stripe, 4, content.y + 2)
+            PlaceRight(content, stripe, 4, content.y + 2)
             stripe:SetHeight(16)
         end
     end
 
-    local x = PAD + (indent or 0)
     local l = Acquire(content, "GameFontHighlightSmall")
-    l:SetPoint("TOPLEFT", content, "TOPLEFT", x, content.y)
+    PlaceLeft(content, l, PAD + (indent or 0), content.y)
     l:SetTextColor(C_TEXT[1], C_TEXT[2], C_TEXT[3])
     l:SetText(label)
 
     local v = Acquire(content, "GameFontHighlightSmall")
-    v:SetPoint("TOPRIGHT", content, "TOPRIGHT", -PAD, content.y)
+    PlaceRight(content, v, PAD, content.y)
     local c = valColor or C_TEXT
     v:SetTextColor(c[1], c[2], c[3])
     v:SetText(value or "")
 
     if tip or roll then
         local b = AcquireBtn(content)
-        b:SetPoint("TOPLEFT", content, "TOPLEFT", 4, content.y + 2)
-        b:SetPoint("TOPRIGHT", content, "TOPRIGHT", -4, content.y + 2)
+        PlaceLeft(content, b, 4, content.y + 2)
+        PlaceRight(content, b, 4, content.y + 2)
         b:SetHeight(16)
         b.tip = tip
         b.roll = roll
@@ -324,9 +375,9 @@ end
 -- ({ hint, click }) are given, a hover button over the paragraph handles
 -- the clicks.
 local function Paragraph(content, title, body, color, roll, shiftClick)
-    local width = content:GetWidth() - PAD * 2
+    local width = content.colRight - content.colLeft - PAD * 2
     local fs = Acquire(content, "GameFontHighlightSmall")
-    fs:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, content.y)
+    PlaceLeft(content, fs, PAD, content.y)
     fs:SetWidth(width)
     fs:SetJustifyH("LEFT")
     local c = color or C_DIM
@@ -336,8 +387,8 @@ local function Paragraph(content, title, body, color, roll, shiftClick)
     local h = fs:GetStringHeight()
     if roll or shiftClick then
         local b = AcquireBtn(content)
-        b:SetPoint("TOPLEFT", content, "TOPLEFT", 4, content.y + 2)
-        b:SetPoint("TOPRIGHT", content, "TOPRIGHT", -4, content.y + 2)
+        PlaceLeft(content, b, 4, content.y + 2)
+        PlaceRight(content, b, 4, content.y + 2)
         b:SetHeight(h + 4)
         b.roll = roll
         b.shiftClick = shiftClick
@@ -369,7 +420,7 @@ local function RenderOverview(content, sheet, ctx)
     end
 
     -- Derived stats, two readable rows of pairs.
-    Header(content, "OVERVIEW")
+    if not Section(content, "overview", "OVERVIEW") then return end
     Row(content, "Level", tostring(sheet.level))
     Row(content, "Hit Dice", sheet.derived.hit_dice, 0, nil,
         cfg.hit_die_attribute and Tip("Hit Dice",
@@ -441,14 +492,14 @@ end
 -- breakdown inline, dimmed ("8 +1 =  9"); the modifier is gold because it is the
 -- number a row click rolls with.
 local function RenderAttributes(content, sheet, ctx)
-    Header(content, "ATTRIBUTES")
+    if not Section(content, "attributes", "ATTRIBUTES") then return end
     local MOD_X, TOTAL_X = PAD, PAD + 48   -- column right edges, from the right
     local totalHead = Acquire(content, "GameFontHighlightSmall")
-    totalHead:SetPoint("TOPRIGHT", content, "TOPRIGHT", -TOTAL_X, content.y)
+    PlaceRight(content, totalHead, TOTAL_X, content.y)
     totalHead:SetTextColor(C_DIM[1], C_DIM[2], C_DIM[3])
     totalHead:SetText("total")
     local modHead = Acquire(content, "GameFontHighlightSmall")
-    modHead:SetPoint("TOPRIGHT", content, "TOPRIGHT", -MOD_X, content.y)
+    PlaceRight(content, modHead, MOD_X, content.y)
     modHead:SetTextColor(C_DIM[1], C_DIM[2], C_DIM[3])
     modHead:SetText("mod")
     content.y = content.y - 14
@@ -456,13 +507,13 @@ local function RenderAttributes(content, sheet, ctx)
         local rowY = content.y
         Row(content, a.name, "", 0, nil, nil, ctx.rollSpec(a.name .. " check", a.modifier))
         local total = Acquire(content, "GameFontHighlightSmall")
-        total:SetPoint("TOPRIGHT", content, "TOPRIGHT", -TOTAL_X, rowY)
+        PlaceRight(content, total, TOTAL_X, rowY)
         total:SetTextColor(C_TEXT[1], C_TEXT[2], C_TEXT[3])
         total:SetText(a.bonus ~= 0
             and string.format("|cff9e998c%d %s =|r  %d", a.base, Signed(a.bonus), a.final)
             or tostring(a.final))
         local mod = Acquire(content, "GameFontHighlightSmall")
-        mod:SetPoint("TOPRIGHT", content, "TOPRIGHT", -MOD_X, rowY)
+        PlaceRight(content, mod, MOD_X, rowY)
         mod:SetTextColor(C_GOLD[1], C_GOLD[2], C_GOLD[3])
         mod:SetText(Signed(a.modifier))
         if #a.sources > 0 then
@@ -474,7 +525,7 @@ end
 -- Skills and saves, grouped under each attribute's saving throw. Each row
 -- carries a hover tooltip breaking down how its total is reached.
 local function RenderSkills(content, sheet, ctx)
-    Header(content, "SKILLS & SAVING THROWS")
+    if not Section(content, "skills", "SKILLS & SAVING THROWS") then return end
     local saveByAttr = {}
     for _, s in ipairs(sheet.saves) do saveByAttr[s.id] = s end
     local accomplishment = ctx.accomplishment
@@ -525,14 +576,14 @@ local function RenderWeapons(content, sheet, ctx)
     local accomplishment = ctx.accomplishment
     local modById = ctx.modById
     if #sheet.weapons > 0 then
-        Header(content, "WEAPON SKILLS (accomplished)")
+        if not Section(content, "weaponskills", "WEAPON SKILLS (accomplished)") then return end
         local W_ATK_X, W_DMG_X = PAD + 60, PAD   -- column right edges
         local atkHead = Acquire(content, "GameFontHighlightSmall")
-        atkHead:SetPoint("TOPRIGHT", content, "TOPRIGHT", -W_ATK_X, content.y)
+        PlaceRight(content, atkHead, W_ATK_X, content.y)
         atkHead:SetTextColor(C_DIM[1], C_DIM[2], C_DIM[3])
         atkHead:SetText("atk")
         local dmgHead = Acquire(content, "GameFontHighlightSmall")
-        dmgHead:SetPoint("TOPRIGHT", content, "TOPRIGHT", -W_DMG_X, content.y)
+        PlaceRight(content, dmgHead, W_DMG_X, content.y)
         dmgHead:SetTextColor(C_DIM[1], C_DIM[2], C_DIM[3])
         dmgHead:SetText("damage")
         content.y = content.y - 14
@@ -561,7 +612,7 @@ local function RenderWeapons(content, sheet, ctx)
                 end
             end, w.attack_total and ctx.rollSpec(w.name .. " attack", w.attack_total) or nil)
             local atk = Acquire(content, "GameFontHighlightSmall")
-            atk:SetPoint("TOPRIGHT", content, "TOPRIGHT", -W_ATK_X, rowY)
+            PlaceRight(content, atk, W_ATK_X, rowY)
             if w.attack_total then
                 atk:SetTextColor(C_GOLD[1], C_GOLD[2], C_GOLD[3])
                 atk:SetText(Signed(w.attack_total))
@@ -570,7 +621,7 @@ local function RenderWeapons(content, sheet, ctx)
                 atk:SetText("-")
             end
             local dmg = Acquire(content, "GameFontHighlightSmall")
-            dmg:SetPoint("TOPRIGHT", content, "TOPRIGHT", -W_DMG_X, rowY)
+            PlaceRight(content, dmg, W_DMG_X, rowY)
             dmg:SetTextColor(C_TEXT[1], C_TEXT[2], C_TEXT[3])
             dmg:SetText(w.damage or "-")
         end
@@ -694,7 +745,7 @@ end
 -- the own sheet; a viewed sheet still explains the state it shows.
 local function StateIcon(content, entry, kind, ctx, y)
     local b = AcquireIconBtn(content)
-    b:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, y + 1)
+    PlaceLeft(content, b, PAD, y + 1)
     if kind == "gear" then
         b.tex:SetTexture(ICON_STASHED)
         b.tex:Show()
@@ -720,7 +771,7 @@ end
 -- sheet. Both call the clamping helper, so the ends simply stop.
 local function GearCounter(content, entry, ctx, y)
     local value = Acquire(content, "GameFontHighlightSmall")
-    value:SetPoint("TOPRIGHT", content, "TOPRIGHT", -CNT_VALUE_X, y)
+    PlaceRight(content, value, CNT_VALUE_X, y)
     value:SetJustifyH("RIGHT")
     value:SetTextColor(C_TEXT[1], C_TEXT[2], C_TEXT[3])
     value:SetText("x" .. (entry.count or 0))
@@ -730,7 +781,7 @@ local function GearCounter(content, entry, ctx, y)
     local function step(glyph, x, delta, hint)
         local b = AcquireIconBtn(content)
         b:SetSize(14, ICON_SIZE)
-        b:SetPoint("TOPRIGHT", content, "TOPRIGHT", -x, y + 1)
+        PlaceRight(content, b, x, y + 1)
         b.label:SetText(glyph)
         b.label:SetTextColor(C_GOLD[1], C_GOLD[2], C_GOLD[3])
         b.tip = function(tt) tt:AddLine(hint, 0.56, 0.78, 1) end
@@ -747,7 +798,7 @@ end
 local function WeaponAttackValue(content, entry, kind, ctx, y)
     if kind ~= "weapon" or not (entry.equipped and entry.attack_total) then return nil end
     local atk = Acquire(content, "GameFontHighlightSmall")
-    atk:SetPoint("TOPRIGHT", content, "TOPRIGHT", -PAD, y)
+    PlaceRight(content, atk, PAD, y)
     atk:SetJustifyH("RIGHT")
     atk:SetTextColor(C_GOLD[1], C_GOLD[2], C_GOLD[3])
     atk:SetText(Signed(entry.attack_total))
@@ -768,16 +819,15 @@ local function InventoryRow(content, entry, kind, ctx)
     if content.rowIndex % 2 == 0 then
         local stripe = AcquireTex(content)
         stripe:SetColorTexture(C_STRIPE[1], C_STRIPE[2], C_STRIPE[3], C_STRIPE[4])
-        stripe:SetPoint("TOPLEFT", content, "TOPLEFT", 4, y + 2)
-        stripe:SetPoint("TOPRIGHT", content, "TOPRIGHT", -4, y + 2)
+        PlaceLeft(content, stripe, 4, y + 2)
+        PlaceRight(content, stripe, 4, y + 2)
         stripe:SetHeight(INV_ROW_H)
     end
 
     StateIcon(content, entry, kind, ctx, y)
-    local x = PAD + ICON_SIZE + 4
 
     local label = Acquire(content, "GameFontHighlightSmall")
-    label:SetPoint("TOPLEFT", content, "TOPLEFT", x, y)
+    PlaceLeft(content, label, PAD + ICON_SIZE + 4, y)
     local c = entry.missing and C_DIM or C_TEXT
     label:SetTextColor(c[1], c[2], c[3])
     label:SetText(ItemLabel(entry, kind))
@@ -788,8 +838,8 @@ local function InventoryRow(content, entry, kind, ctx)
     local roll = WeaponAttackValue(content, entry, kind, ctx, y)
 
     local b = AcquireBtn(content)
-    b:SetPoint("TOPLEFT", content, "TOPLEFT", 4, y + 2)
-    b:SetPoint("TOPRIGHT", content, "TOPRIGHT", -4, y + 2)
+    PlaceLeft(content, b, 4, y + 2)
+    PlaceRight(content, b, 4, y + 2)
     b:SetHeight(INV_ROW_H)
     local own = not ctx.viewChar
     b.tip = ItemTip(entry, kind, own and not entry.missing)
@@ -817,28 +867,39 @@ local function AddAction(ctx, kind)
     }
 end
 
-local function InventorySection(content, title, entries, kind, ctx)
+local function InventorySection(content, key, title, entries, kind, ctx)
     if #entries == 0 then return end
-    Header(content, title, AddAction(ctx, kind))
+    if not Section(content, key, title, AddAction(ctx, kind)) then return end
     for _, entry in ipairs(entries) do InventoryRow(content, entry, kind, ctx) end
 end
 
--- The three inventory sections, each shown only when it has rows. A character
--- carrying nothing has no inventory at all (Compute leaves it nil): one header
--- then keeps the add flow reachable from the sheet instead of only from the
--- library browser.
-local function RenderInventory(content, sheet, ctx)
+-- The three inventory sections, each shown only when it has rows and each its
+-- own placeable unit so the two-column layout can balance them independently.
+-- A character carrying nothing has no inventory at all (Compute leaves it
+-- nil): the weapons renderer then draws one INVENTORY header to keep the add
+-- flow reachable from the sheet instead of only from the library browser.
+local function RenderInvWeapons(content, sheet, ctx)
     local inv = sheet.inventory
     if not inv then
         local action = AddAction(ctx, nil)
         if not action then return end
-        Header(content, "INVENTORY", action)
+        if not Section(content, "inventory", "INVENTORY", action) then return end
         Paragraph(content, nil, "Nothing carried yet.", C_DIM)
         return
     end
-    InventorySection(content, "WEAPONS", inv.weapons, "weapon", ctx)
-    InventorySection(content, "EQUIPMENT", inv.equipment, "equipment", ctx)
-    InventorySection(content, "GEAR", inv.gear, "gear", ctx)
+    InventorySection(content, "weapons", "WEAPONS", inv.weapons, "weapon", ctx)
+end
+
+local function RenderInvEquipment(content, sheet, ctx)
+    local inv = sheet.inventory
+    if not inv then return end
+    InventorySection(content, "equipment", "EQUIPMENT", inv.equipment, "equipment", ctx)
+end
+
+local function RenderInvGear(content, sheet, ctx)
+    local inv = sheet.inventory
+    if not inv then return end
+    InventorySection(content, "gear", "GEAR", inv.gear, "gear", ctx)
 end
 
 -- Spellcasting (casters): per-school spell attack and save DC columns; atk is
@@ -848,14 +909,14 @@ local function RenderSpellcasting(content, sheet, ctx)
         local spell = sheet.derived.spell
         local accomplishment = ctx.accomplishment
         local modById = ctx.modById
-        Header(content, "SPELLCASTING")
+        if not Section(content, "spellcasting", "SPELLCASTING") then return end
         local S_ATK_X, S_DC_X = PAD + 44, PAD   -- column right edges
         local sAtkHead = Acquire(content, "GameFontHighlightSmall")
-        sAtkHead:SetPoint("TOPRIGHT", content, "TOPRIGHT", -S_ATK_X, content.y)
+        PlaceRight(content, sAtkHead, S_ATK_X, content.y)
         sAtkHead:SetTextColor(C_DIM[1], C_DIM[2], C_DIM[3])
         sAtkHead:SetText("atk")
         local dcHead = Acquire(content, "GameFontHighlightSmall")
-        dcHead:SetPoint("TOPRIGHT", content, "TOPRIGHT", -S_DC_X, content.y)
+        PlaceRight(content, dcHead, S_DC_X, content.y)
         dcHead:SetTextColor(C_DIM[1], C_DIM[2], C_DIM[3])
         dcHead:SetText("DC")
         content.y = content.y - 14
@@ -897,11 +958,11 @@ local function RenderSpellcasting(content, sheet, ctx)
             Row(content, label, "", 0, nil, SpellTip(label, school),
                 ctx.rollSpec(label .. " spell attack", atkValue))
             local atk = Acquire(content, "GameFontHighlightSmall")
-            atk:SetPoint("TOPRIGHT", content, "TOPRIGHT", -S_ATK_X, rowY)
+            PlaceRight(content, atk, S_ATK_X, rowY)
             atk:SetTextColor(C_GOLD[1], C_GOLD[2], C_GOLD[3])
             atk:SetText(Signed(atkValue))
             local dc = Acquire(content, "GameFontHighlightSmall")
-            dc:SetPoint("TOPRIGHT", content, "TOPRIGHT", -S_DC_X, rowY)
+            PlaceRight(content, dc, S_DC_X, rowY)
             dc:SetTextColor(C_TEXT[1], C_TEXT[2], C_TEXT[3])
             dc:SetText(tostring(dcValue))
         end
@@ -946,42 +1007,41 @@ end
 -- against the VIEWER's active packs; ids that do not resolve (a viewed
 -- character built on packs we lack, or stale picks) are summarized in one
 -- dim line rather than dropped silently.
-local function RenderFeatsSpells(content, sheet, ctx)
+-- A click-to-roll spec for an attack-type spell: d20 + the character's
+-- spell attack (the school-adjusted row when the pack school has one),
+-- announcing the spell as a clickable link. nil for non-attack spells,
+-- non-casters and viewed sheets - the row then just shift-click links.
+local function SpellAttackRoll(sheet, ctx, rec, payloadFn)
+    if ctx.viewChar then return nil end
+    local spell = sheet.derived.spell
+    if not spell then return nil end
+    if not tostring(rec.type or ""):lower():find("attack", 1, true) then return nil end
+    local mod = spell.attack
+    for _, row in ipairs(spell.schools or {}) do
+        if row.id == rec.school then mod = row.attack end
+    end
+    return { label = (rec.name or "?") .. " attack", modifier = mod, linkPayload = payloadFn }
+end
+
+-- Joins the mechanics of a feat rank or spell into one bracket tag.
+local function MetaTag(entry, extra)
+    local parts = {}
+    if entry.type then parts[#parts + 1] = entry.type end
+    local cost = ns.FormatCost(entry.cost)
+    if cost then parts[#parts + 1] = cost end
+    if entry.range then parts[#parts + 1] = entry.range end
+    if entry.save then parts[#parts + 1] = ns.AttrName(entry.save) .. " save" end
+    if entry.concentration then parts[#parts + 1] = "Concentration" end
+    if entry.damage then parts[#parts + 1] = entry.damage end
+    for _, e in ipairs(extra or {}) do parts[#parts + 1] = e end
+    if #parts == 0 then return "" end
+    return "|cff8ec6ff[" .. table.concat(parts, " - ") .. "]|r  "
+end
+
+-- Feats: every owned rank of every line, in pack order.
+local function RenderFeats(content, sheet, ctx)
     local char = ctx.char
     if not char then return end
-
-    -- A click-to-roll spec for an attack-type spell: d20 + the character's
-    -- spell attack (the school-adjusted row when the pack school has one),
-    -- announcing the spell as a clickable link. nil for non-attack spells,
-    -- non-casters and viewed sheets - the row then just shift-click links.
-    local function SpellAttackRoll(rec, payloadFn)
-        if ctx.viewChar then return nil end
-        local spell = sheet.derived.spell
-        if not spell then return nil end
-        if not tostring(rec.type or ""):lower():find("attack", 1, true) then return nil end
-        local mod = spell.attack
-        for _, row in ipairs(spell.schools or {}) do
-            if row.id == rec.school then mod = row.attack end
-        end
-        return { label = (rec.name or "?") .. " attack", modifier = mod, linkPayload = payloadFn }
-    end
-
-    -- Joins the mechanics of a feat rank or spell into one bracket tag.
-    local function MetaTag(entry, extra)
-        local parts = {}
-        if entry.type then parts[#parts + 1] = entry.type end
-        local cost = ns.FormatCost(entry.cost)
-        if cost then parts[#parts + 1] = cost end
-        if entry.range then parts[#parts + 1] = entry.range end
-        if entry.save then parts[#parts + 1] = ns.AttrName(entry.save) .. " save" end
-        if entry.concentration then parts[#parts + 1] = "Concentration" end
-        if entry.damage then parts[#parts + 1] = entry.damage end
-        for _, e in ipairs(extra or {}) do parts[#parts + 1] = e end
-        if #parts == 0 then return "" end
-        return "|cff8ec6ff[" .. table.concat(parts, " - ") .. "]|r  "
-    end
-
-    -- Feats: every owned rank of every line, in pack order.
     local featPack = ns.GetFeatPack()
     local featRows, unresolvedFeats = {}, 0
     if type(char.feats) == "table" then
@@ -1000,40 +1060,43 @@ local function RenderFeatsSpells(content, sheet, ctx)
         end
     end
     local homebrewFeats = (type(char.custom_feats) == "table") and char.custom_feats or {}
-    if #featRows > 0 or unresolvedFeats > 0 or #homebrewFeats > 0 then
-        Header(content, "FEATS", (not ctx.viewChar) and ns.FeatsUI and {
-            text = "open browser", hint = "Click: open the feats browser",
-            click = function() ns.FeatsUI.Open() end,
-        } or nil)
-        for _, r in ipairs(featRows) do
-            local title = (r.rank.name or "?") .. "  |cff8ec6ff(" .. (r.line.name or r.line.id)
-                .. " " .. r.index .. ")|r"
-            local line, rank, index = r.line, r.rank, r.index
-            Paragraph(content, title .. ":", MetaTag(r.rank) .. (r.rank.description or ""), C_DIM,
-                nil, ctx.linkSpec(function() return ns.ChatLinks.FeatRank(line, rank, index) end))
-        end
-        for _, rec in ipairs(homebrewFeats) do
-            if type(rec) == "table" then
-                local pending = not ns.CharacterSheet.HomebrewActive(char, rec)
-                local title = (rec.name or "?") .. "  |cff8ec6ff(homebrew"
-                    .. (pending and (", pending until level " .. (rec.level or 1)) or "") .. ")|r"
-                local body = MetaTag(rec) .. (rec.description or "")
-                if pending then
-                    Paragraph(content, nil, "|cff9e998c" .. title .. ":|r  " .. body, C_DIM)
-                else
-                    local record = rec
-                    Paragraph(content, title .. ":", body, C_DIM,
-                        nil, ctx.linkSpec(function() return ns.ChatLinks.Homebrew("feat", record) end))
-                end
+    if #featRows == 0 and unresolvedFeats == 0 and #homebrewFeats == 0 then return end
+    if not Section(content, "feats", "FEATS", (not ctx.viewChar) and ns.FeatsUI and {
+        text = "open browser", hint = "Click: open the feats browser",
+        click = function() ns.FeatsUI.Open() end,
+    } or nil) then return end
+    for _, r in ipairs(featRows) do
+        local title = (r.rank.name or "?") .. "  |cff8ec6ff(" .. (r.line.name or r.line.id)
+            .. " " .. r.index .. ")|r"
+        local line, rank, index = r.line, r.rank, r.index
+        Paragraph(content, title .. ":", MetaTag(r.rank) .. (r.rank.description or ""), C_DIM,
+            nil, ctx.linkSpec(function() return ns.ChatLinks.FeatRank(line, rank, index) end))
+    end
+    for _, rec in ipairs(homebrewFeats) do
+        if type(rec) == "table" then
+            local pending = not ns.CharacterSheet.HomebrewActive(char, rec)
+            local title = (rec.name or "?") .. "  |cff8ec6ff(homebrew"
+                .. (pending and (", pending until level " .. (rec.level or 1)) or "") .. ")|r"
+            local body = MetaTag(rec) .. (rec.description or "")
+            if pending then
+                Paragraph(content, nil, "|cff9e998c" .. title .. ":|r  " .. body, C_DIM)
+            else
+                local record = rec
+                Paragraph(content, title .. ":", body, C_DIM,
+                    nil, ctx.linkSpec(function() return ns.ChatLinks.Homebrew("feat", record) end))
             end
         end
-        if unresolvedFeats > 0 then
-            Paragraph(content, nil, unresolvedFeats
-                .. " feat line(s) not shown - no matching feats pack active.", C_DIM)
-        end
     end
+    if unresolvedFeats > 0 then
+        Paragraph(content, nil, unresolvedFeats
+            .. " feat line(s) not shown - no matching feats pack active.", C_DIM)
+    end
+end
 
-    -- Spells: known ids, grouped by the pack's rank-sorted order.
+-- Spells: known ids, grouped by the pack's rank-sorted order.
+local function RenderSpells(content, sheet, ctx)
+    local char = ctx.char
+    if not char then return end
     local spellPack = ns.GetSpellPack()
     local spellRows, unresolvedSpells = {}, 0
     if type(char.spells) == "table" then
@@ -1049,44 +1112,43 @@ local function RenderFeatsSpells(content, sheet, ctx)
         end
     end
     local homebrewSpells = (type(char.custom_spells) == "table") and char.custom_spells or {}
-    if #spellRows > 0 or unresolvedSpells > 0 or #homebrewSpells > 0 then
-        Header(content, "SPELLS", (not ctx.viewChar) and ns.SpellbookUI and {
-            text = "open spellbook", hint = "Click: open the spellbook",
-            click = function() ns.SpellbookUI.Open() end,
-        } or nil)
-        for _, spell in ipairs(spellRows) do
-            local school = spellPack and ns.Spells.School(spellPack, spell.school)
-            local title = (spell.name or "?") .. "  |cff8ec6ff("
-                .. ((school and school.name) or spell.school or "?")
-                .. " " .. tostring(spell.rank or "?") .. ")|r"
-            local record = spell
-            local payloadFn = function() return ns.ChatLinks.Spell(spellPack, record) end
-            Paragraph(content, title .. ":", MetaTag(spell) .. (spell.description or ""), C_DIM,
-                SpellAttackRoll(record, payloadFn), ctx.linkSpec(payloadFn))
-        end
-        for _, rec in ipairs(homebrewSpells) do
-            if type(rec) == "table" then
-                local pending = not ns.CharacterSheet.HomebrewActive(char, rec)
-                local school = rec.school and spellPack and ns.Spells.School(spellPack, rec.school)
-                local title = (rec.name or "?") .. "  |cff8ec6ff(homebrew"
-                    .. (rec.school and (", " .. ((school and school.name) or rec.school)
-                        .. (rec.rank and (" " .. rec.rank) or "")) or "")
-                    .. (pending and (", pending until level " .. (rec.level or 1)) or "") .. ")|r"
-                local body = MetaTag(rec) .. (rec.description or "")
-                if pending then
-                    Paragraph(content, nil, "|cff9e998c" .. title .. ":|r  " .. body, C_DIM)
-                else
-                    local record = rec
-                    local payloadFn = function() return ns.ChatLinks.Homebrew("spell", record) end
-                    Paragraph(content, title .. ":", body, C_DIM,
-                        SpellAttackRoll(record, payloadFn), ctx.linkSpec(payloadFn))
-                end
+    if #spellRows == 0 and unresolvedSpells == 0 and #homebrewSpells == 0 then return end
+    if not Section(content, "spells", "SPELLS", (not ctx.viewChar) and ns.SpellbookUI and {
+        text = "open spellbook", hint = "Click: open the spellbook",
+        click = function() ns.SpellbookUI.Open() end,
+    } or nil) then return end
+    for _, spell in ipairs(spellRows) do
+        local school = spellPack and ns.Spells.School(spellPack, spell.school)
+        local title = (spell.name or "?") .. "  |cff8ec6ff("
+            .. ((school and school.name) or spell.school or "?")
+            .. " " .. tostring(spell.rank or "?") .. ")|r"
+        local record = spell
+        local payloadFn = function() return ns.ChatLinks.Spell(spellPack, record) end
+        Paragraph(content, title .. ":", MetaTag(spell) .. (spell.description or ""), C_DIM,
+            SpellAttackRoll(sheet, ctx, record, payloadFn), ctx.linkSpec(payloadFn))
+    end
+    for _, rec in ipairs(homebrewSpells) do
+        if type(rec) == "table" then
+            local pending = not ns.CharacterSheet.HomebrewActive(char, rec)
+            local school = rec.school and spellPack and ns.Spells.School(spellPack, rec.school)
+            local title = (rec.name or "?") .. "  |cff8ec6ff(homebrew"
+                .. (rec.school and (", " .. ((school and school.name) or rec.school)
+                    .. (rec.rank and (" " .. rec.rank) or "")) or "")
+                .. (pending and (", pending until level " .. (rec.level or 1)) or "") .. ")|r"
+            local body = MetaTag(rec) .. (rec.description or "")
+            if pending then
+                Paragraph(content, nil, "|cff9e998c" .. title .. ":|r  " .. body, C_DIM)
+            else
+                local record = rec
+                local payloadFn = function() return ns.ChatLinks.Homebrew("spell", record) end
+                Paragraph(content, title .. ":", body, C_DIM,
+                    SpellAttackRoll(sheet, ctx, record, payloadFn), ctx.linkSpec(payloadFn))
             end
         end
-        if unresolvedSpells > 0 then
-            Paragraph(content, nil, unresolvedSpells
-                .. " spell(s) not shown - no matching spells pack active.", C_DIM)
-        end
+    end
+    if unresolvedSpells > 0 then
+        Paragraph(content, nil, unresolvedSpells
+            .. " spell(s) not shown - no matching spells pack active.", C_DIM)
     end
 end
 
@@ -1094,22 +1156,31 @@ end
 -- paragraphs, shown only when non-empty; on the own sheet they are clickable
 -- to post their text to group chat (ctx.postSpec, nil on viewed sheets).
 -- Notes stay private.
-local function RenderProse(content, sheet, ctx)
-    -- Traits.
-    if #sheet.traits > 0 then
-        Header(content, "TRAITS")
-        for _, t in ipairs(sheet.traits) do
-            Paragraph(content, t.name .. ":", t.description, C_DIM,
-                ctx.postSpec(t.name .. ": " .. (t.description or "")))
-        end
-    end
-
-    -- Notes.
-    if sheet.notes and sheet.notes ~= "" then
-        Header(content, "NOTES")
-        Paragraph(content, nil, sheet.notes, C_DIM)
+local function RenderTraits(content, sheet, ctx)
+    if #sheet.traits == 0 then return end
+    if not Section(content, "traits", "TRAITS") then return end
+    for _, t in ipairs(sheet.traits) do
+        Paragraph(content, t.name .. ":", t.description, C_DIM,
+            ctx.postSpec(t.name .. ": " .. (t.description or "")))
     end
 end
+
+local function RenderNotes(content, sheet)
+    if not (sheet.notes and sheet.notes ~= "") then return end
+    if not Section(content, "notes", "NOTES") then return end
+    Paragraph(content, nil, sheet.notes, C_DIM)
+end
+
+-- The placeable section units, in reading order. COMPACT sections are the
+-- dense numeric blocks; when the canvas is wide enough (COL_BREAK) they flow
+-- into two balanced columns - each unit lands in whichever column is
+-- currently shorter. WIDE sections are prose and always span the full width
+-- beneath the columns.
+local COMPACT = {
+    RenderOverview, RenderAttributes, RenderSkills, RenderWeapons,
+    RenderInvWeapons, RenderInvEquipment, RenderInvGear, RenderSpellcasting,
+}
+local WIDE = { RenderFeats, RenderSpells, RenderTraits, RenderNotes }
 
 -- Renders the computed sheet into the body. Called on open and after edits.
 -- Builds the per-render ctx once (see the section renderers above) and draws
@@ -1151,14 +1222,22 @@ local function RenderBody(self)
         end }
     end
 
-    RenderOverview(content, sheet, ctx)
-    RenderAttributes(content, sheet, ctx)
-    RenderSkills(content, sheet, ctx)
-    RenderWeapons(content, sheet, ctx)
-    RenderInventory(content, sheet, ctx)
-    RenderSpellcasting(content, sheet, ctx)
-    RenderFeatsSpells(content, sheet, ctx)
-    RenderProse(content, sheet, ctx)
+    -- Compact sections: each unit drops into the currently shorter column
+    -- (a single full-width column below COL_BREAK). Prose follows full-width
+    -- beneath whichever column ends lower.
+    local width = content:GetWidth()
+    local colW = width >= COL_BREAK and math.floor((width - COL_GUTTER) / 2) or width
+    local cols = { { x = 0, y = content.y } }
+    if colW < width then cols[2] = { x = colW + COL_GUTTER, y = content.y } end
+    for _, render in ipairs(COMPACT) do
+        local col = (cols[2] and cols[2].y > cols[1].y) and cols[2] or cols[1]
+        content.colLeft, content.colRight, content.y = col.x, col.x + colW, col.y
+        render(content, sheet, ctx)
+        col.y = content.y
+    end
+    content.colLeft, content.colRight = 0, width
+    content.y = math.min(cols[1].y, cols[2] and cols[2].y or 0)
+    for _, render in ipairs(WIDE) do render(content, sheet, ctx) end
 
     CanvasFinish(content)
 end

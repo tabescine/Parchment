@@ -1,11 +1,13 @@
 -- Parchment - Minimap
 --
 -- A LibDataBroker launcher shown on the minimap via LibDBIcon. Left-click
--- opens the hub (the management window); right-click opens quick access to
--- the play windows, the DM toggle, and Save to Disk. The button's
--- shown/hidden state persists in db.profile.minimap.
+-- toggles the character sheet (the window in use during play); right-click
+-- opens the full menu: every play window, the hub and settings, the DM and
+-- public-rolls toggles, and Save to Disk. The button's shown/hidden state
+-- persists in db.profile.minimap.
 --
--- Reads from: ns.OpenModule, ns.Sharing, ns.SaveToDisk, ns.Comm, ns.Addon.db.
+-- Reads from: ns.OpenModule, ns.RequestDMRole, ns.SaveToDisk, ns.Comm,
+--   ns.Addon.db.
 -- Exposes on ns.Minimap: Init, SetShown, Toggle.
 
 local ADDON, ns = ...
@@ -21,23 +23,37 @@ local function BuildMenu(owner)
         ns.OpenModule("hub")
         return
     end
-    -- Play windows plus the hub entry; everything else (characters, systems,
-    -- import/export, cached sheets, settings) lives inside the hub.
+    -- Play windows first, then the management screens; everything deeper
+    -- (characters, systems, import/export, cached sheets) lives in the hub.
     MenuUtil.CreateContextMenu(owner, function(_, root)
         root:CreateTitle("Parchment")
-        root:CreateButton("Menu (characters, settings, ...)", function() ns.OpenModule("hub") end)
-        root:CreateDivider()
         root:CreateButton("Character Sheet", function() ns.OpenModule("sheet") end)
         root:CreateButton("Combat", function() ns.OpenModule("initiative") end)
         root:CreateButton("Feats", function() ns.OpenModule("feats") end)
         root:CreateButton("Spellbook", function() ns.OpenModule("spellbook") end)
+        root:CreateButton("Items", function() ns.OpenModule("items") end)
         root:CreateButton("Party Overview", function() ns.OpenModule("party") end)
         root:CreateDivider()
-        root:CreateButton((ns.Comm.IsDM() and "DM mode: on" or "DM mode: off"), function()
-            ns.Comm.SetDM(not ns.Comm.IsDM())
-            if ns.InitiativeUI and ns.InitiativeUI.RefreshIfShown then ns.InitiativeUI.RefreshIfShown() end
-            if ns.ConfigUI then ns.ConfigUI.RefreshIfShown() end
-        end)
+        root:CreateButton("Menu (characters, systems, ...)", function() ns.OpenModule("hub") end)
+        root:CreateButton("Settings", function() ns.OpenModule("config") end)
+        root:CreateDivider()
+        -- The toggles show their state as real checkboxes. DM mode routes
+        -- through the shared claim/step-down path, so the take-over confirm
+        -- holds here exactly as it does for /pmt dm.
+        if root.CreateCheckbox then
+            root:CreateCheckbox("DM mode",
+                function() return ns.Comm.IsDM() end,
+                function() ns.RequestDMRole(not ns.Comm.IsDM()) end)
+            root:CreateCheckbox("Public rolls",
+                function() return ns.Addon.db.profile.publicRolls and true or false end,
+                function()
+                    ns.Addon.db.profile.publicRolls = not ns.Addon.db.profile.publicRolls
+                    if ns.ConfigUI then ns.ConfigUI.RefreshIfShown() end
+                end)
+        else
+            root:CreateButton((ns.Comm.IsDM() and "DM mode: on" or "DM mode: off"),
+                function() ns.RequestDMRole(not ns.Comm.IsDM()) end)
+        end
         root:CreateButton("Save to Disk", function() ns.SaveToDisk() end)
     end)
 end
@@ -50,13 +66,13 @@ local dataObject = {
         if button == "RightButton" then
             BuildMenu(self)
         else
-            ns.OpenModule("hub")
+            ns.OpenModule("sheet")
         end
     end,
     OnTooltipShow = function(tooltip)
         tooltip:AddLine("Parchment")
-        tooltip:AddLine("|cffeeeeeeLeft-click|r  Parchment menu", 0.9, 0.9, 0.9)
-        tooltip:AddLine("|cffeeeeeeRight-click|r  quick access", 0.9, 0.9, 0.9)
+        tooltip:AddLine("|cffeeeeeeLeft-click|r  character sheet", 0.9, 0.9, 0.9)
+        tooltip:AddLine("|cffeeeeeeRight-click|r  menu", 0.9, 0.9, 0.9)
     end,
 }
 

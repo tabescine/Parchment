@@ -573,6 +573,32 @@ local function AnnounceDMRole()
     if ns.ConfigUI then ns.ConfigUI.RefreshIfShown() end
 end
 
+-- Claims or releases the DM role with the same safeguards everywhere: a claim
+-- while a DIFFERENT DM is recognized asks for confirmation first (Escape keeps
+-- the current DM), and any change is announced and reflected in the open
+-- windows. The slash command, the settings checkbox and the minimap menu all
+-- route through here, so no path can silently fight an existing DM.
+function ns.RequestDMRole(on)
+    on = on and true or false
+    if on == ns.Comm.IsDM() then return end
+    if not on then
+        ns.Comm.SetDM(false)
+        AnnounceDMRole()
+        return
+    end
+    local rec = ns.Comm.RecognizedDM()
+    if rec and not ns.Comm.SameName(rec, UnitName("player"))
+        and ns.Dialogs and ns.Dialogs.ConfirmDMTakeover then
+        ns.Dialogs.ConfirmDMTakeover(rec, function() ns.Comm.SetDM(true); AnnounceDMRole() end)
+        -- The claim is pending on the dialog; snap the settings checkbox back
+        -- until it is confirmed.
+        if ns.ConfigUI then ns.ConfigUI.RefreshIfShown() end
+        return
+    end
+    ns.Comm.SetDM(true)
+    AnnounceDMRole()
+end
+
 -- Handles /pmt dm [who | accept <name>]: toggle our own role (claim, with a
 -- take-over confirm when we already recognize someone else; or step down), query
 -- the recognized DM, or manually recognize a player (recovery).
@@ -596,22 +622,7 @@ local function HandleDMRole(arg)
     end
 
     -- No subcommand: step down if we are the DM, otherwise claim.
-    if ns.Comm.IsDM() then
-        ns.Comm.SetDM(false)
-        AnnounceDMRole()
-        return
-    end
-    -- Claiming while we already recognize a different DM is a take-over: confirm
-    -- first so a stray /pmt dm cannot silently fight an existing DM. Escape keeps
-    -- the current DM (non-destructive default).
-    local rec = ns.Comm.RecognizedDM()
-    if rec and not ns.Comm.SameName(rec, UnitName("player"))
-        and ns.Dialogs and ns.Dialogs.ConfirmDMTakeover then
-        ns.Dialogs.ConfirmDMTakeover(rec, function() ns.Comm.SetDM(true); AnnounceDMRole() end)
-        return
-    end
-    ns.Comm.SetDM(true)
-    AnnounceDMRole()
+    ns.RequestDMRole(not ns.Comm.IsDM())
 end
 
 -- Dispatches a slash command line to the matching action.

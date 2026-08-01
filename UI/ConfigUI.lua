@@ -2,10 +2,12 @@
 --
 -- The Settings panel of the hub window (/pmt config opens the hub there):
 -- checkboxes for the profile toggles (DM mode, public initiative rolls,
--- vitals sharing, minimap button), plus shortcuts to the system library and
--- saving. Pure UI over db.profile - it owns no state of its own, so the
--- slash commands and the minimap menu stay equally valid ways to flip the
--- same settings (they refresh this panel when it shows, and vice versa).
+-- vitals sharing, minimap button) with a status line naming the recognized
+-- DM, plus shortcuts to the system library and saving. Pure UI over
+-- db.profile - it owns no state of its own, so the slash commands and the
+-- minimap menu stay equally valid ways to flip the same settings (they
+-- refresh this panel when it shows, and vice versa). The DM checkbox routes
+-- through ns.RequestDMRole, so the take-over confirm holds here too.
 --
 -- Reads from: ns.Addon.db.profile, ns.Comm, ns.Minimap, ns.Systems, ns.UI,
 --   ns.HubUI (panel registration and open/refresh).
@@ -79,10 +81,18 @@ local function BuildContent(f)
         .. "on announces the role to your group (so two active DMs notice "
         .. "each other); sharing your system stays a separate, explicit action.",
         function(checked)
-            ns.Comm.SetDM(checked)
+            -- The shared claim/step-down path: announces the change and asks
+            -- before taking over from a recognized DM (the checkbox snaps
+            -- back until that is confirmed).
+            ns.RequestDMRole(checked)
             RefreshDependents()
         end)
-    y = y - 28
+    y = y - 26
+
+    -- Who currently holds the role, from this client's point of view.
+    f.dmStatus = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    f.dmStatus:SetPoint("TOPLEFT", PAD + 30, y - 2)
+    y = y - 20
 
     f.rollsCheck = Checkbox(f, y, "Public rolls",
         "Roll with the in-game dice roller so the whole party sees the result "
@@ -141,6 +151,17 @@ Refresh = function(self)
     self.rollsCheck:SetChecked(p.publicRolls and true or false)
     self.vitalsCheck:SetChecked(p.shareVitals ~= false)
     self.minimapCheck:SetChecked(not (p.minimap and p.minimap.hide))
+    local rec = ns.Comm and ns.Comm.RecognizedDM()
+    if ns.Comm and ns.Comm.IsDM() then
+        self.dmStatus:SetText("You are the DM.")
+        self.dmStatus:SetTextColor(UI.GREEN[1], UI.GREEN[2], UI.GREEN[3])
+    elseif rec then
+        self.dmStatus:SetText("Recognized DM: " .. rec)
+        self.dmStatus:SetTextColor(UI.TEXT[1], UI.TEXT[2], UI.TEXT[3])
+    else
+        self.dmStatus:SetText("No DM recognized in your group yet.")
+        self.dmStatus:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
+    end
 end
 
 ns.HubUI.RegisterPanel({
