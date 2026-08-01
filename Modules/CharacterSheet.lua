@@ -27,8 +27,8 @@
 -- Which attribute fills each role is configured per system (see ns.DerivedConfig);
 -- an unset role contributes 0, so no specific attribute id is ever assumed.
 --
--- Homebrew per-character perks (custom_perks, written in game by the perk
--- wizard) carry the same machine-readable effects as traits, but they are
+-- Homebrew per-character perks (custom_perks, import-authored homebrew
+-- grants) carry the same machine-readable effects as traits, but they are
 -- level-gated: a perk folds into these totals only once the character has
 -- reached the level it is gained at (see .PerkActive). A perk written ahead of
 -- time stays on the sheet as pending and contributes nothing until then.
@@ -49,10 +49,9 @@
 -- Reads from: ns.GetModifier, ns.GetHitDie, ns.GetAccomplishmentBonus,
 --   ns.Items.Resolve, system.
 -- Exposes on ns.CharacterSheet: .Compute, .PerkActive (the one active/pending
---   test for homebrew perks, shared with PerkTree.Points and the UIs),
---   .EFFECT_TYPES and .EffectType (the effect vocabulary, which the perk wizard
---   generates its pickers, labels and validation from - see the table for the
---   per-entry fields).
+--   test for homebrew perks, shared with Picks.Spent and the UIs),
+--   .EFFECT_TYPES and .EffectType (the effect vocabulary - see the table
+--   for the per-entry fields).
 
 local ADDON, ns = ...
 
@@ -83,6 +82,7 @@ local function NewAccumulator()
         maxHP = 0, maxMana = 0,
         skill = {}, allSkill = 0, skillAddMod = {}, skillSources = {},
         save = {}, saveAddMod = {}, saveSources = {},
+        accomplishSkill = {},
     }
 end
 
@@ -95,13 +95,12 @@ local function AddUnique(list, value)
 end
 
 -- Effect vocabulary, shared by trait bonuses/penalties and custom-perk effects.
--- Each effect is a record { type = <id>, value = N, ... }; this table is the one
--- place that says what a type means, so the perk wizard's pickers, labels and
--- validation are generated from it instead of a hand-kept copy.
+-- Each effect is a record { type = <id>, value = N, ... }; this table is the
+-- one place that says what a type means.
 --
 -- Per entry:
 --   id          the effect `type` string stored in the data
---   label       display name (wizard pickers, review summary)
+--   label       display name (shown wherever effects are summarized)
 --   target      what the effect points at: "none", "attribute", "skill", or
 --               "school" (school is OPTIONAL - no school means every school)
 --   target_key  the effect field holding that target (absent for "none")
@@ -154,6 +153,14 @@ local EFFECT_TYPES = {
       apply = function(acc, _, v) acc.maxMana = acc.maxMana + v end },
     { id = "all_skills", label = "All skills", target = "none",
       apply = function(acc, _, v) acc.allSkill = acc.allSkill + v end },
+    -- Grants accomplishment in one skill outright ("You gain Accomplishment
+    -- in Perception"), the way many rank-I feats read. The value is ignored:
+    -- accomplishment is on/off, and its size comes from the level table.
+    { id = "accomplish_skill", label = "Accomplished skill", target = "skill", target_key = "skill",
+      apply = function(acc, e)
+          local id = e.skill or e.id
+          if id then acc.accomplishSkill[id] = true end
+      end },
     { id = "skill", label = "Skill", target = "skill", target_key = "skill", add_modifier = true,
       apply = function(acc, e, v, source)
           -- Authored data uses either `skill` or the generic `id` for the target.
@@ -194,7 +201,7 @@ end
 -- True when a homebrew perk has already been gained: its level (absent or
 -- non-numeric means 1, so an unlevelled perk is always active) is at or below
 -- the character's. The single place the active/pending line is drawn - Compute,
--- PerkTree.Points and the UIs all ask here.
+-- Picks.Spent and the UIs all ask here.
 function CharacterSheet.PerkActive(char, perk)
     local gainedAt = tonumber(type(perk) == "table" and perk.level) or 1
     return gainedAt <= ((type(char) == "table" and char.level) or 1)
@@ -451,6 +458,50 @@ function CharacterSheet.Compute(char, system, itemLib)
         customPerks[#customPerks + 1] = entry
     end
 
+    -- Homebrew feats and spells (authored in the pickers) fold their effects
+    -- under the same level gate; their display lives in the pickers and the
+    -- sheet's quick-reference sections, which read the character directly.
+    -- (Field names, not the lists - a nil list would truncate the array
+    -- constructor and silently skip the rest.)
+    for _, field in ipairs({ "custom_feats", "custom_spells" }) do
+        for _, p in ipairs(type(char[field]) == "table" and char[field] or {}) do
+            if CharacterSheet.PerkActive(char, p) then
+                activeCustom[#activeCustom + 1] = p
+            end
+        end
+    end
+
+    -- Owned PACK feats (every rank up to the owned one) and known pack spells
+    -- fold their machine-readable effects the same way - e.g. a rank-I feat
+    -- granting skill accomplishment. Packs come through the ns accessors,
+    -- like the modifier table and hit dice already do.
+    local featPack = ns.GetFeatPack and ns.GetFeatPack()
+    if featPack and type(char.feats) == "table" then
+        for _, line in ipairs(type(featPack.lines) == "table" and featPack.lines or {}) do
+            local owned = type(line) == "table" and tonumber(char.feats[line.id]) or 0
+            local ranks = type(line.ranks) == "table" and line.ranks or {}
+            for i = 1, math.min(owned, #ranks) do
+                local rank = ranks[i]
+                if type(rank) == "table" and type(rank.effects) == "table" then
+                    activeCustom[#activeCustom + 1] = rank
+                end
+            end
+        end
+    end
+    local spellPack = ns.GetSpellPack and ns.GetSpellPack()
+    if spellPack and type(char.spells) == "table" then
+        local byId = {}
+        for _, s in ipairs(type(spellPack.spells) == "table" and spellPack.spells or {}) do
+            if type(s) == "table" and s.id then byId[s.id] = s end
+        end
+        for _, id in ipairs(char.spells) do
+            local spell = byId[id]
+            if spell and type(spell.effects) == "table" then
+                activeCustom[#activeCustom + 1] = spell
+            end
+        end
+    end
+
     -- Effects come from traits, gained homebrew perks, selected sphere perks
     -- that carry machine-readable effects, and the choice-derived effects above.
     local effectPerks = {}
@@ -477,6 +528,7 @@ function CharacterSheet.Compute(char, system, itemLib)
     -- Skills grouped under their governing attribute.
     local accomplishedSkills = ListToSet(char.accomplished_skills)
     for id in pairs(extraSkills) do accomplishedSkills[id] = true end
+    for id in pairs(fx.accomplishSkill) do accomplishedSkills[id] = true end
     local skills = {}
     for _, skill in ipairs(system.skills or {}) do
         local mod = modifier[skill.attribute] or 0
@@ -540,11 +592,18 @@ function CharacterSheet.Compute(char, system, itemLib)
     local cfg = ns.DerivedConfig()
     local primary = char.primary_attribute
 
-    -- Mana source: the primary attribute if it is one of the system's spell
-    -- attributes, otherwise the configured fallback attribute (else none).
-    local isCaster = false
+    -- Casting source. An explicit cast_attribute (the spells-pack model) wins;
+    -- else the primary attribute when it is one of the system's spell
+    -- attributes (the classic model); else the configured mana fallback.
+    -- Either of the first two makes the character a caster (save DC, spell
+    -- attack rows); the fallback only feeds mana.
+    local castAttr = (char.cast_attribute and modifier[char.cast_attribute] ~= nil)
+        and char.cast_attribute or nil
+    local isCaster = castAttr ~= nil
     for _, id in ipairs(cfg.spell_attributes) do if id == primary then isCaster = true end end
-    local spellMod = isCaster and (modifier[primary] or 0)
+    local castingMod = castAttr and modifier[castAttr] or (modifier[primary] or 0)
+    local spellMod = castAttr and modifier[castAttr]
+        or (isCaster and (modifier[primary] or 0))
         or (cfg.mana_attribute and (modifier[cfg.mana_attribute] or 0)) or 0
 
     -- AC / initiative attributes. A system may constrain them to candidate
@@ -570,9 +629,14 @@ function CharacterSheet.Compute(char, system, itemLib)
     local moveMod = cfg.movement_attribute and (modifier[cfg.movement_attribute] or 0) or 0
     local hitDieMod = cfg.hit_die_attribute and (modifier[cfg.hit_die_attribute] or 0) or 0
 
-    -- Stored max mana wins when set; otherwise the system's mana formula. This is
-    -- the fx-free base (trait/perk effects are added as `mana.max` in derived).
-    local manaBase = char.max_mana or math.max(0, cfg.mana_multiplier * spellMod)
+    -- Stored max mana wins when set; otherwise the system's mana formula:
+    -- mana_base + a per-level share (rounded up) + multiplier x casting-source
+    -- modifier. The defaults (base 0, per-level 0, multiplier 2) reproduce the
+    -- classic "2 x modifier"; an AIAS-style "3 + half level + cast modifier"
+    -- is mana_base 3, mana_per_level 0.5, mana_multiplier 1. This is the
+    -- fx-free base (trait/perk effects are added as `mana.max` in derived).
+    local manaBase = char.max_mana or math.max(0,
+        cfg.mana_base + math.ceil(level * cfg.mana_per_level) + cfg.mana_multiplier * spellMod)
 
     local derived = {
         accomplishment = accomplishment,
@@ -599,7 +663,8 @@ function CharacterSheet.Compute(char, system, itemLib)
         actions = cfg.actions_base + fx.actions,
         -- The save DC is a spellcasting number: non-casters carry none (the
         -- sheet hides the row), so a martial's primary cannot fake one.
-        save_dc = isCaster and (cfg.save_dc_base + (modifier[primary] or 0) + accomplishment + fx.saveDC) or nil,
+        save_dc = isCaster and (cfg.save_dc_base + castingMod + accomplishment + fx.saveDC) or nil,
+        cast_attribute = castAttr,   -- explicit pick only; nil for classic casters
         attack_modifier = fx.attack,
     }
     -- Level-granted extra actions (and any other level_bonuses.actions).
@@ -607,13 +672,13 @@ function CharacterSheet.Compute(char, system, itemLib)
         if lvl <= level and bonus.actions then derived.actions = derived.actions + bonus.actions end
     end
 
-    -- Spellcasting (casters only): spell attack = primary modifier +
+    -- Spellcasting (casters only): spell attack = casting-source modifier +
     -- accomplishment + spell_attack effects. When the system declares
     -- spell_schools (records or plain strings), one row per school folds in
     -- the school-targeted spell_attack / save_dc effects.
     if isCaster then
         local spell = {
-            attack = (modifier[primary] or 0) + accomplishment + fx.spellAttack,
+            attack = castingMod + accomplishment + fx.spellAttack,
             dc = derived.save_dc,
             schools = {},
         }

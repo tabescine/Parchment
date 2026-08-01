@@ -16,7 +16,8 @@
 -- Reads from: ns.Schema.
 -- Exposes on ns: the data API (GetSystem, HasSystem, GetCharacter, the item
 --   library API GetItemLibrary/GetItem/SetItem/DeleteItem/NextItemKey and the
---   shared MISSING_ITEM sentinel, ...), the module registry (RegisterModule,
+--   shared MISSING_ITEM sentinel, the pack API GetPackLibrary/GetActivePack/
+--   GetFeatPack/GetSpellPack, ...), the module registry (RegisterModule,
 --   OpenModule), shared helpers (Print, DeepCopy, FindById, AttrName,
 --   SaveToDisk, ShareSystem), and ns.Addon.
 
@@ -69,8 +70,9 @@ local MODULE_COMMANDS = {
     combat = "initiative",
     init = "initiative",   -- legacy alias for /pmt combat
     sheet = "sheet",
-    perks = "perks",
-    perkwizard = "perkwizard",
+    feats = "feats",
+    spellbook = "spellbook",
+    spells = "spellbook",   -- alias for /pmt spellbook
     items = "items",
     import = "import",
     edit = "edit",
@@ -243,6 +245,59 @@ function ns.NextItemKey()
     return key
 end
 
+-- Feat / spell packs. Packs are standalone importable rule collections (see
+-- Schema.ValidateFeatPack / ValidateSpellPack) in their own SavedVariables
+-- global: one library per kind, keyed by pack_name, plus an active-pack
+-- pointer per kind. Modules/Packs.lua manages the libraries and activation;
+-- everything else reads the active pack through GetFeatPack / GetSpellPack.
+-- All ParchmentPackDB access stays here, like the other SV globals.
+
+local PACK_KINDS = { feats = true, spells = true }
+
+-- Returns the library for a pack kind ({ [name] = { name, pack, from, time } }).
+function ns.GetPackLibrary(kind)
+    if not PACK_KINDS[kind] then return {} end
+    ParchmentPackDB = ParchmentPackDB or {}
+    ParchmentPackDB[kind] = ParchmentPackDB[kind] or {}
+    return ParchmentPackDB[kind]
+end
+
+-- Returns the active pack NAME for a kind, or nil. A pointer left dangling at
+-- a deleted library entry reads as "no active pack" rather than erroring.
+function ns.GetActivePackName(kind)
+    if not PACK_KINDS[kind] or type(ParchmentPackDB) ~= "table" then return nil end
+    local name = ParchmentPackDB["active_" .. kind]
+    if name ~= nil and ns.GetPackLibrary(kind)[name] then return name end
+    return nil
+end
+
+-- Sets (or, with nil, clears) the active pack pointer for a kind. Refuses a
+-- name the library does not hold. Returns true when the pointer was written.
+function ns.SetActivePackName(kind, name)
+    if not PACK_KINDS[kind] then return false end
+    if name ~= nil and not ns.GetPackLibrary(kind)[name] then return false end
+    ParchmentPackDB = ParchmentPackDB or {}
+    ParchmentPackDB["active_" .. kind] = name
+    return true
+end
+
+-- Returns the active pack definition table for a kind, or nil.
+function ns.GetActivePack(kind)
+    local name = ns.GetActivePackName(kind)
+    local entry = name and ns.GetPackLibrary(kind)[name]
+    return type(entry) == "table" and entry.pack or nil
+end
+
+-- The active feats pack definition, or nil when none is active.
+function ns.GetFeatPack()
+    return ns.GetActivePack("feats")
+end
+
+-- The active spells pack definition, or nil when none is active.
+function ns.GetSpellPack()
+    return ns.GetActivePack("spells")
+end
+
 -- Finds a record by its `id` field in a list of records. Returns nil when
 -- absent. The system data is full of such lists (attributes, skills, perks,
 -- traits); modules share this instead of re-rolling the loop.
@@ -263,6 +318,22 @@ function ns.AttrName(id)
     if not id then return "(none)" end
     local attr = ns.GetAttribute(id)
     return attr and attr.name or id
+end
+
+-- Display text for a cost record ({ ap = n, mana = n }): "1 AP, 2 Mana".
+-- Returns nil when there is nothing to show, so callers can hide the field.
+-- Shared by the feat/spell pickers and the sheet's quick-reference rows.
+function ns.FormatCost(cost)
+    if type(cost) ~= "table" then return nil end
+    local parts = {}
+    if type(cost.ap) == "number" and cost.ap > 0 then
+        parts[#parts + 1] = cost.ap .. " AP"
+    end
+    if type(cost.mana) == "number" and cost.mana > 0 then
+        parts[#parts + 1] = cost.mana .. " Mana"
+    end
+    if #parts == 0 then return nil end
+    return table.concat(parts, ", ")
 end
 
 -- Maps an attribute value to its modifier via the system's modifier table,
@@ -303,6 +374,8 @@ function ns.DerivedConfig()
         mana_attribute     = d.mana_attribute,           -- mana source for non-casters
         initiative_tiebreaker = d.initiative_tiebreaker, -- attr deciding equal initiative rolls
         mana_multiplier    = d.mana_multiplier or 2,
+        mana_base          = d.mana_base or 0,           -- flat mana floor
+        mana_per_level     = d.mana_per_level or 0,      -- x level, rounded up
         movement_attribute = d.movement_attribute,       -- +per_step per positive modifier
         ac_attributes      = d.ac_attributes,            -- candidate attrs for AC (pick or best)
         init_attributes    = d.init_attributes,          -- candidate attrs for initiative
@@ -312,11 +385,6 @@ function ns.DerivedConfig()
         save_dc_base       = d.save_dc_base or 10,
         actions_base       = d.actions_base or 2,
     }
-end
-
--- Returns the perk tree (sphere) record for an id, or nil.
-function ns.GetPerkTree(id)
-    return ns.FindById(ns.GetSystem().perk_trees, id)
 end
 
 -- Module registry.
@@ -376,8 +444,8 @@ local function PrintHelp()
     Print("  " .. C_GOLD .. "/pmt characters|r - manage characters (select / delete)")
     Print("  " .. C_GOLD .. "/pmt sheet|r   - open the character sheet")
     Print("  " .. C_GOLD .. "/pmt combat|r  - open the combat tracker (initiative, HP, timer)")
-    Print("  " .. C_GOLD .. "/pmt perks|r   - open the perk tree viewer")
-    Print("  " .. C_GOLD .. "/pmt perkwizard|r - write a homebrew perk for the active character")
+    Print("  " .. C_GOLD .. "/pmt feats|r   - browse and learn feats (ability lines)")
+    Print("  " .. C_GOLD .. "/pmt spellbook|r - browse and learn spells")
     Print("  " .. C_GOLD .. "/pmt items|r   - browse your item library (create, edit, hand out items)")
     Print("  " .. C_GOLD .. "/pmt new|r     - create a character (guided wizard)")
     Print("  " .. C_GOLD .. "/pmt edit|r    - open the character editor")
@@ -385,7 +453,9 @@ local function PrintHelp()
     Print("  " .. C_GOLD .. "/pmt config|r  - open settings")
     Print("  " .. C_GOLD .. "/pmt dm|r      - toggle DM mode; |r" .. C_GOLD .. "dm who|r / |r"
         .. C_GOLD .. "dm accept <name>|r query or set who you recognize")
-    Print("  " .. C_GOLD .. "/pmt share|r   - DM: send your system to the group")
+    Print("  " .. C_GOLD .. "/pmt share|r   - DM: send your system to the group; |r" .. C_GOLD
+        .. "share feats|r / |r" .. C_GOLD .. "share spells|r / |r" .. C_GOLD
+        .. "share all|r for the active packs")
     Print("  " .. C_GOLD .. "/pmt systems|r - manage your system library (activate / delete)")
     Print("  " .. C_GOLD .. "/pmt rolls|r   - toggle public (party-visible) dice rolls")
     Print("  " .. C_GOLD .. "/pmt party|r   - live party overview (HP/Mana/AC of group members)")
@@ -466,8 +536,24 @@ local function RunValidation()
         for _, issue in ipairs(issues) do Print("  " .. C_RED .. issue .. "|r") end
     end
 
+    -- Active packs, validated against the system they claim (Packs.PairedSystem
+    -- keeps a foreign pack from failing cross-references against this one).
+    local packs = { feats = ns.GetFeatPack(), spells = ns.GetSpellPack() }
+    for kind, pack in pairs(packs) do
+        local validate = (kind == "feats") and ns.Schema.ValidateFeatPack
+            or ns.Schema.ValidateSpellPack
+        local pok, pissues = validate(pack, ns.Packs.PairedSystem(pack))
+        local label = ns.Packs.Label(kind) .. " '" .. tostring(pack.pack_name) .. "'"
+        if pok then
+            Print(C_GREEN .. label .. " is valid." .. "|r")
+        else
+            Print(C_RED .. label .. " has " .. #pissues .. " issue(s):" .. "|r")
+            for _, issue in ipairs(pissues) do Print("  " .. C_RED .. issue .. "|r") end
+        end
+    end
+
     for key, char in pairs(ns.GetCharacters()) do
-        local cok, cissues = ns.Schema.ValidateCharacter(char, system)
+        local cok, cissues = ns.Schema.ValidateCharacter(char, system, packs)
         if cok then
             Print(C_GREEN .. "character '" .. (char.name or key) .. "' is valid." .. "|r")
         else
@@ -549,7 +635,16 @@ local function HandleSlash(input)
     elseif cmd == "dm" then
         HandleDMRole(arg)
     elseif cmd == "share" then
-        ns.ShareSystem()
+        local what = strtrim(arg or ""):lower()
+        if what == "feats" or what == "spells" then
+            ns.Packs.Share(what)
+        elseif what == "all" then
+            ns.ShareSystem()
+            ns.Packs.Share("feats")
+            ns.Packs.Share("spells")
+        else
+            ns.ShareSystem()
+        end
     elseif cmd == "systems" then
         -- The system library lives in the hub (activate / delete per row).
         if ns.HubUI then ns.HubUI.Open("systems") end
@@ -601,6 +696,7 @@ function Parchment:OnInitialize()
     local g = self.db.global
     ParchmentCharDB = ParchmentCharDB or {}
     ParchmentItemDB = ParchmentItemDB or {}
+    ParchmentPackDB = ParchmentPackDB or {}
     -- No ruleset ships with Parchment: the system stays empty until the user
     -- imports one (/pmt import) or adopts a DM-shared one.
     ParchmentSystemDB = ParchmentSystemDB or {}

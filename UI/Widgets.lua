@@ -6,13 +6,49 @@
 -- ({ id, name, tooltip? }). The only custom control is a numeric Stepper.
 --
 -- Reads from: ns.UI (palette), ns.FindById.
--- Exposes on ns.Widgets: .Stepper, .ListItems, .AttrItems, .TraitItems,
---   .RacialItems, .SaveItems, .TraitName, .CandidateSet, .AttrPickText
+-- Exposes on ns.Widgets: .Stepper, .ScrollingEdit, .ListItems, .AttrItems,
+--   .TraitItems, .RacialItems, .SaveItems, .TraitName, .CandidateSet,
+--   .AttrPickText
 
 local ADDON, ns = ...
 
 local Widgets = {}
 ns.Widgets = Widgets
+
+-- A multi-line EditBox inside a scroll frame filling `container` (a bordered
+-- frame the caller styles). Long text scrolls within the border instead of
+-- overflowing it onto whatever sits below, and the view follows the cursor
+-- while typing (the standard scrolling-edit pattern, hand-rolled because
+-- InputScrollFrameTemplate's own cursor tracking makes typed input jump).
+-- Clicking the container's empty area focuses the box. Returns the EditBox.
+function Widgets.ScrollingEdit(container)
+    local scroll = CreateFrame("ScrollFrame", nil, container, "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", 8, -7)
+    scroll:SetPoint("BOTTOMRIGHT", -26, 7)
+    local e = CreateFrame("EditBox", nil, scroll)
+    e:SetMultiLine(true)
+    e:SetAutoFocus(false)
+    e:SetFontObject(ChatFontNormal)
+    local c = ns.UI.TEXT
+    e:SetTextColor(c[1], c[2], c[3])
+    e:SetWidth(10)
+    scroll:SetScrollChild(e)
+    scroll:SetScript("OnSizeChanged", function(_, w) e:SetWidth(w) end)
+    e:SetScript("OnEscapePressed", e.ClearFocus)
+    e:SetScript("OnCursorChanged", function(_, _, cursorY, _, cursorH)
+        local offset = scroll:GetVerticalScroll()
+        local viewH = scroll:GetHeight()
+        local top = -(cursorY or 0)
+        if top < offset then
+            scroll:SetVerticalScroll(math.max(0, top))
+        elseif top + (cursorH or 0) > offset + viewH then
+            scroll:SetVerticalScroll(top + (cursorH or 0) - viewH)
+        end
+    end)
+    container:EnableMouse(true)
+    container:SetScript("OnMouseDown", function() e:SetFocus() end)
+    return e
+end
 
 -- Picker item-list builders, shared by the editor and wizard.
 

@@ -2,12 +2,13 @@
 """Parchment converter.
 
 Reads a JSON or TOML file describing a Parchment *system definition*, a
-*character* or an *item library* and emits a Lua SavedVariables file that can
-be dropped straight into:
+*character*, an *item library*, a *feats pack* or a *spells pack* and emits a
+Lua SavedVariables file that can be dropped straight into:
 
     WTF/Account/<ACCOUNT>/SavedVariables/ParchmentSystemDB.lua
     WTF/Account/<ACCOUNT>/SavedVariables/ParchmentCharDB.lua
     WTF/Account/<ACCOUNT>/SavedVariables/ParchmentItemDB.lua
+    WTF/Account/<ACCOUNT>/SavedVariables/ParchmentPackDB.lua
 
 The schema is the same one the addon uses (see Tools/examples/). The converter
 is deliberately generic: it does not hardcode any ruleset's attributes or
@@ -15,14 +16,21 @@ skills, it just transcodes the structure. The one piece of schema knowledge it
 applies is that object keys which look like integers (e.g. a level_bonuses map
 keyed "3", "9") become Lua numeric keys, so the addon's numeric lookups work.
 
+Note: feats and spells packs share ParchmentPackDB. Converting one pack kind
+writes a file holding only that kind - merge by importing in-game (/pmt
+import) instead when you need both, or convert both and combine the `feats`
+and `spells` tables by hand.
+
 Usage:
-    python parchment_converter.py INPUT [-o OUTPUT] [-t system|character|items|auto]
+    python parchment_converter.py INPUT [-o OUTPUT]
+                                        [-t system|character|items|feats|spells|auto]
                                         [-k KEY] [--var VARNAME]
 
 Examples:
     python parchment_converter.py examples/sample.system.json
     python parchment_converter.py examples/sample.character.json -o ParchmentCharDB.lua
     python parchment_converter.py examples/sample.items.json
+    python parchment_converter.py examples/sample.feats.json
 """
 
 import argparse
@@ -124,20 +132,28 @@ def strip_meta(data):
 
 
 def detect_type(data):
-    """Guesses 'system', 'character' or 'items' from the structure.
+    """Guesses 'system', 'character', 'items', 'feats' or 'spells'.
 
-    Mirrors the addon's own detection order (Modules/ImportExport.lua): `items`
-    is checked last, so it only marks a library on a file that is nothing else.
+    Mirrors the addon's own detection order (Modules/ImportExport.lua): the
+    explicit `kind` field wins, then the sniffed shapes, with `items` last so
+    it only marks a library on a file that is nothing else.
     """
+    if data.get("kind") in ("feats", "spells"):
+        return data["kind"]
     if "characters" in data:
         return "character"
     if "system_name" in data or "perk_trees" in data or "modifier_table" in data:
         return "system"
+    if "pack_name" in data and "lines" in data:
+        return "feats"
+    if "pack_name" in data and "spells" in data:
+        return "spells"
     if "name" in data and ("attributes" in data or "level" in data):
         return "character"
     if "items" in data:
         return "items"
-    sys.exit("could not auto-detect type; pass -t system, -t character or -t items.")
+    sys.exit("could not auto-detect type; pass -t system, -t character, "
+             "-t items, -t feats or -t spells.")
 
 
 def build_system(data):
@@ -169,11 +185,29 @@ def build_items(data):
     return "ParchmentItemDB", strip_meta(data)
 
 
+def build_pack(data, kind):
+    """Returns (varname, lua_table_value) for a feats or spells pack.
+
+    Packs live in ParchmentPackDB as per-kind libraries keyed by pack_name,
+    with an active_<kind> pointer - the same layout Modules/Packs.lua keeps,
+    so the file installs the pack already activated.
+    """
+    pack = strip_meta(data)
+    name = pack.get("pack_name")
+    if not name:
+        sys.exit("pack has no pack_name field.")
+    return "ParchmentPackDB", {
+        kind: {name: {"name": name, "pack": pack}},
+        "active_" + kind: name,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description="Convert JSON/TOML to Parchment SavedVariables Lua.")
     parser.add_argument("input", help="input .json or .toml file")
     parser.add_argument("-o", "--output", help="output .lua file (default: <VARNAME>.lua)")
-    parser.add_argument("-t", "--type", choices=["system", "character", "items", "auto"],
+    parser.add_argument("-t", "--type",
+                        choices=["system", "character", "items", "feats", "spells", "auto"],
                         default="auto")
     parser.add_argument("-k", "--key", help="SavedVariables key for a single character")
     parser.add_argument("--var", help="override the global variable name")
@@ -188,6 +222,8 @@ def main():
         varname, table = build_system(data)
     elif kind == "items":
         varname, table = build_items(data)
+    elif kind in ("feats", "spells"):
+        varname, table = build_pack(data, kind)
     else:
         varname, table = build_character(data, args.key)
     if args.var:

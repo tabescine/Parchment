@@ -92,7 +92,8 @@ end
 -- Rolls a named d20 check (e.g. "Perception", +5) and announces the result:
 -- always printed locally; with public rolls on and a group, the breakdown is
 -- also sent to party/raid chat, where the preceding RandomRoll system line
--- lets everyone verify the raw die.
+-- lets everyone verify the raw die. The chat copy is parenthesized, the
+-- usual convention for out-of-character lines in an RP channel.
 function Dice.Check(label, modifier)
     modifier = modifier or 0
     Dice.Request(modifier, function(total, raw)
@@ -100,7 +101,7 @@ function Dice.Check(label, modifier)
             modifier >= 0 and "+" or "-", math.abs(modifier), total)
         ns.Print(line)
         if PublicEnabled() and IsInGroup() then
-            SendChatMessage(line, IsInRaid() and "RAID" or "PARTY")
+            SendChatMessage("(" .. line .. ")", IsInRaid() and "RAID" or "PARTY")
         end
     end)
 end

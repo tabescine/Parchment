@@ -26,7 +26,7 @@
 --
 -- Reads from: ns.GetActiveCharacter, ns.GetSystem, ns.GetItemLibrary,
 --   ns.CharacterSheet.Compute, ns.Items, ns.SetCharacter, ns.Systems.RefreshAll,
---   ns.PerkWizardUI (the ability-path header shortcut), ns.ItemWizardUI (the
+--   ns.ItemWizardUI (the
 --   inventory headers' add flow).
 -- Exposes on ns.CharacterSheetUI: Open, Toggle, RefreshIfShown, and
 --   ShowCharacter (read-only view of a received/cached character).
@@ -398,6 +398,21 @@ local function RenderOverview(content, sheet, ctx)
     Row(content, "Accomplishment Bonus", Signed(d.accomplishment), 0, nil, Tip("Accomplishment Bonus",
         "From the system's accomplishment table at level " .. sheet.level .. "."))
     Row(content, "Primary Attribute", d.primary_attribute or "-")
+    if d.cast_attribute then
+        Row(content, "Cast Attribute", aName(d.cast_attribute), 0, nil, Tip("Cast Attribute",
+            "Spellcasting is driven by " .. aName(d.cast_attribute) .. " (modifier "
+            .. Signed(aMod(d.cast_attribute)) .. "). It gates spell ranks in the spellbook."))
+    end
+    -- The shared pick ledger (perks, feats, spells), own sheet only: a viewed
+    -- character counts against the VIEWER's system and packs, which may not be
+    -- the ones it was built with.
+    if not ctx.viewChar and ctx.char then
+        local spent, budget = ns.Picks.Points(ctx.char)
+        Row(content, "Picks", spent .. " / " .. budget,
+            0, spent > budget and ns.UI.RED or nil, Tip("Picks",
+            "One shared pool buys perk ranks, feat ranks and spells: "
+            .. spent .. " spent of " .. budget .. " at level " .. sheet.level .. "."))
+    end
     if d.attack_modifier ~= 0 then
         Row(content, "Global Attack Modifier", Signed(d.attack_modifier), 0, C_DIM)
     end
@@ -725,7 +740,7 @@ end
 -- (an equipped weapon) its attack total. The row-wide hover button carries the
 -- breakdown, a left-click affordance (the attack roll on a weapon, removal on a
 -- missing item) and, on the own sheet, right-click to drop the item - the same
--- convention the perk tree uses for removing a node.
+-- convention the feat and spell pickers use for removing an entry.
 local function InventoryRow(content, entry, kind, ctx)
     local y = content.y
     content.rowIndex = content.rowIndex + 1
@@ -821,9 +836,11 @@ local function RenderSpellcasting(content, sheet, ctx)
         dcHead:SetText("DC")
         content.y = content.y - 14
         -- Hover breakdown, mirroring the weapon-attack tooltip: the effect
-        -- shares fall out as differences from the structural parts (primary
-        -- modifier + accomplishment, DC additionally save_dc_base).
-        local primaryAttr = modById[sheet.derived.primary_attribute]
+        -- shares fall out as differences from the structural parts (casting
+        -- modifier + accomplishment, DC additionally save_dc_base). The
+        -- casting source is the explicit cast attribute when one is set,
+        -- else the classic primary.
+        local primaryAttr = modById[sheet.derived.cast_attribute or sheet.derived.primary_attribute]
         local primaryMod = primaryAttr and primaryAttr.modifier or 0
         local primaryName = primaryAttr and primaryAttr.name or "primary"
         local dcBase = ns.DerivedConfig().save_dc_base
@@ -877,6 +894,8 @@ end
 -- Sends prose to group chat, chunked under the client's 255-byte message cap:
 -- split on newlines, then on word boundaries. Colour escapes are stripped
 -- (SendChatMessage rejects them); outside a group the text just prints locally.
+-- Each sent chunk is parenthesized, the usual convention for out-of-character
+-- lines in an RP channel (every chunk, so a split message stays marked).
 local CHAT_MAX = 240
 local function PostToChat(text)
     text = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
@@ -889,10 +908,139 @@ local function PostToChat(text)
         while #line > CHAT_MAX do
             local cut = line:sub(1, CHAT_MAX):match(".*()%s")
             if not cut or cut <= 1 then cut = CHAT_MAX + 1 end
-            SendChatMessage(line:sub(1, cut - 1), channel)
+            SendChatMessage("(" .. line:sub(1, cut - 1) .. ")", channel)
             line = line:sub(cut):gsub("^%s+", "")
         end
-        if line ~= "" then SendChatMessage(line, channel) end
+        if line ~= "" then SendChatMessage("(" .. line .. ")", channel) end
+    end
+end
+
+-- Quick-reference sections for known feats and spells: one paragraph per
+-- owned feat rank / known spell, its mechanics (type, cost, range, save,
+-- concentration, damage) inline as a soft-blue tag ahead of the rules text,
+-- so the numbers are on the sheet without opening a picker. Entries resolve
+-- against the VIEWER's active packs; ids that do not resolve (a viewed
+-- character built on packs we lack, or stale picks) are summarized in one
+-- dim line rather than dropped silently.
+local function RenderFeatsSpells(content, sheet, ctx)
+    local char = ctx.char
+    if not char then return end
+
+    -- Joins the mechanics of a feat rank or spell into one bracket tag.
+    local function MetaTag(entry, extra)
+        local parts = {}
+        if entry.type then parts[#parts + 1] = entry.type end
+        local cost = ns.FormatCost(entry.cost)
+        if cost then parts[#parts + 1] = cost end
+        if entry.range then parts[#parts + 1] = entry.range end
+        if entry.save then parts[#parts + 1] = ns.AttrName(entry.save) .. " save" end
+        if entry.concentration then parts[#parts + 1] = "Concentration" end
+        if entry.damage then parts[#parts + 1] = entry.damage end
+        for _, e in ipairs(extra or {}) do parts[#parts + 1] = e end
+        if #parts == 0 then return "" end
+        return "|cff8ec6ff[" .. table.concat(parts, " - ") .. "]|r  "
+    end
+
+    -- Feats: every owned rank of every line, in pack order.
+    local featPack = ns.GetFeatPack()
+    local featRows, unresolvedFeats = {}, 0
+    if type(char.feats) == "table" then
+        if featPack then
+            for _, line in ipairs(featPack.lines or {}) do
+                local owned = ns.Feats.Rank(char, line.id)
+                for i = 1, math.min(owned, #(line.ranks or {})) do
+                    featRows[#featRows + 1] = { line = line, rank = line.ranks[i], index = i }
+                end
+            end
+        end
+        for lineId in pairs(char.feats) do
+            if not (featPack and ns.Feats.Line(featPack, lineId)) then
+                unresolvedFeats = unresolvedFeats + 1
+            end
+        end
+    end
+    local homebrewFeats = (type(char.custom_feats) == "table") and char.custom_feats or {}
+    if #featRows > 0 or unresolvedFeats > 0 or #homebrewFeats > 0 then
+        Header(content, "FEATS", (not ctx.viewChar) and ns.FeatsUI and {
+            text = "open browser", hint = "Click: open the feats browser",
+            click = function() ns.FeatsUI.Open() end,
+        } or nil)
+        for _, r in ipairs(featRows) do
+            local title = (r.rank.name or "?") .. "  |cff8ec6ff(" .. (r.line.name or r.line.id)
+                .. " " .. r.index .. ")|r"
+            Paragraph(content, title .. ":", MetaTag(r.rank) .. (r.rank.description or ""), C_DIM,
+                ctx.postSpec((r.rank.name or "?") .. ": " .. (r.rank.description or "")))
+        end
+        for _, rec in ipairs(homebrewFeats) do
+            if type(rec) == "table" then
+                local pending = not ns.CharacterSheet.PerkActive(char, rec)
+                local title = (rec.name or "?") .. "  |cff8ec6ff(homebrew"
+                    .. (pending and (", pending until level " .. (rec.level or 1)) or "") .. ")|r"
+                local body = MetaTag(rec) .. (rec.description or "")
+                if pending then
+                    Paragraph(content, nil, "|cff9e998c" .. title .. ":|r  " .. body, C_DIM)
+                else
+                    Paragraph(content, title .. ":", body, C_DIM,
+                        ctx.postSpec((rec.name or "?") .. ": " .. (rec.description or "")))
+                end
+            end
+        end
+        if unresolvedFeats > 0 then
+            Paragraph(content, nil, unresolvedFeats
+                .. " feat line(s) not shown - no matching feats pack active.", C_DIM)
+        end
+    end
+
+    -- Spells: known ids, grouped by the pack's rank-sorted order.
+    local spellPack = ns.GetSpellPack()
+    local spellRows, unresolvedSpells = {}, 0
+    if type(char.spells) == "table" then
+        if spellPack then
+            for _, spell in ipairs(ns.Spells.SpellsOf(spellPack)) do
+                if ns.Spells.Knows(char, spell.id) then spellRows[#spellRows + 1] = spell end
+            end
+        end
+        for _, id in ipairs(char.spells) do
+            if not (spellPack and ns.Spells.Spell(spellPack, id)) then
+                unresolvedSpells = unresolvedSpells + 1
+            end
+        end
+    end
+    local homebrewSpells = (type(char.custom_spells) == "table") and char.custom_spells or {}
+    if #spellRows > 0 or unresolvedSpells > 0 or #homebrewSpells > 0 then
+        Header(content, "SPELLS", (not ctx.viewChar) and ns.SpellbookUI and {
+            text = "open spellbook", hint = "Click: open the spellbook",
+            click = function() ns.SpellbookUI.Open() end,
+        } or nil)
+        for _, spell in ipairs(spellRows) do
+            local school = spellPack and ns.Spells.School(spellPack, spell.school)
+            local title = (spell.name or "?") .. "  |cff8ec6ff("
+                .. ((school and school.name) or spell.school or "?")
+                .. " " .. tostring(spell.rank or "?") .. ")|r"
+            Paragraph(content, title .. ":", MetaTag(spell) .. (spell.description or ""), C_DIM,
+                ctx.postSpec((spell.name or "?") .. ": " .. (spell.description or "")))
+        end
+        for _, rec in ipairs(homebrewSpells) do
+            if type(rec) == "table" then
+                local pending = not ns.CharacterSheet.PerkActive(char, rec)
+                local school = rec.school and spellPack and ns.Spells.School(spellPack, rec.school)
+                local title = (rec.name or "?") .. "  |cff8ec6ff(homebrew"
+                    .. (rec.school and (", " .. ((school and school.name) or rec.school)
+                        .. (rec.rank and (" " .. rec.rank) or "")) or "")
+                    .. (pending and (", pending until level " .. (rec.level or 1)) or "") .. ")|r"
+                local body = MetaTag(rec) .. (rec.description or "")
+                if pending then
+                    Paragraph(content, nil, "|cff9e998c" .. title .. ":|r  " .. body, C_DIM)
+                else
+                    Paragraph(content, title .. ":", body, C_DIM,
+                        ctx.postSpec((rec.name or "?") .. ": " .. (rec.description or "")))
+                end
+            end
+        end
+        if unresolvedSpells > 0 then
+            Paragraph(content, nil, unresolvedSpells
+                .. " spell(s) not shown - no matching spells pack active.", C_DIM)
+        end
     end
 end
 
@@ -922,16 +1070,11 @@ local function RenderProse(content, sheet, ctx)
         end
     end
 
-    -- Homebrew ability path. On the own sheet the header carries a shortcut to
-    -- the perk wizard (a character with none yet reaches it from the perk tree's
-    -- Homebrew sphere, which is where this section would be empty anyway).
+    -- Homebrew ability path (custom_perks: import-authored homebrew grants).
     -- Perks written for a level the character has not reached are marked pending
     -- and dimmed title and all: the plan stays readable without looking active.
     if #sheet.custom_perks > 0 then
-        Header(content, "ABILITY PATH", (not ctx.viewChar) and ns.PerkWizardUI and {
-            text = "+ new perk", hint = "Click: write a homebrew perk",
-            click = function() ns.PerkWizardUI.Open() end,
-        } or nil)
+        Header(content, "ABILITY PATH")
         for _, p in ipairs(sheet.custom_perks) do
             local title = "Lv" .. (p.level or "?") .. " " .. p.name
                 .. (p.pending and " (pending)" or "")
@@ -963,6 +1106,9 @@ local function RenderBody(self)
 
     local ctx = {
         viewChar = self.viewChar,
+        -- The raw character record behind the sheet (the viewed one, or the
+        -- roster entry): feats/spells/picks render from it, not from Compute.
+        char = self.viewChar or (self.charKey and ns.GetCharacter(self.charKey)) or nil,
         accomplishment = sheet.derived.accomplishment,
         modById = {},
     }
@@ -986,6 +1132,7 @@ local function RenderBody(self)
     RenderWeapons(content, sheet, ctx)
     RenderInventory(content, sheet, ctx)
     RenderSpellcasting(content, sheet, ctx)
+    RenderFeatsSpells(content, sheet, ctx)
     RenderProse(content, sheet, ctx)
 
     CanvasFinish(content)

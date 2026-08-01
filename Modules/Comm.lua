@@ -48,7 +48,7 @@ local handlers = {}
 -- recognized DM (see IsAuthoritative). Player-to-DM types (INITSUBMIT, TURNEND,
 -- VITALS, ...) are not gated here; they are bound to the sender by their own
 -- handlers.
-local AUTHORITATIVE = { SYSTEM = true, INIT = true }
+local AUTHORITATIVE = { SYSTEM = true, INIT = true, FEATS = true, SPELLS = true }
 
 -- This client's recognized DM (canonical name; session memory only). Distinct
 -- from db.profile.dm. nil means "no DM recognized yet" - the bootstrap state in
@@ -64,7 +64,7 @@ local GROUP_DIST = { PARTY = true, RAID = true, INSTANCE_CHAT = true }
 -- given type from one sender. Caps the cost a single peer can impose - SYSTEM
 -- decompresses ~100 KB on the main thread, VITALS arrives at edit frequency.
 -- Types absent here are unlimited (REQ/CHAR are self-throttled by `pending`).
-local MIN_INTERVAL = { SYSTEM = 3, VITALS = 0.5, INIT = 0.25, CHAR = 2 }
+local MIN_INTERVAL = { SYSTEM = 3, VITALS = 0.5, INIT = 0.25, CHAR = 2, FEATS = 3, SPELLS = 3 }
 -- [sender][type] = GetTime() of the last accepted message (pruned on roster
 -- change). Nested by sender so a departing member's row drops in one step.
 local recvAt = {}

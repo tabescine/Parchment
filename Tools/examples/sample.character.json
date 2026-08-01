@@ -10,6 +10,7 @@
   "primary_attribute": "wits",
   "ac_attribute": "wits",
   "init_attribute": "wits",
+  "cast_attribute": "spirit",
   "max_hp": 26,
   "current_hp": 24,
   "temp_hp": 2,
@@ -38,6 +39,12 @@
     "toughness",
     "toughness"
   ],
+  "spells": [
+    "hearth_mend"
+  ],
+  "feats": {
+    "keen_study": 1
+  },
   "inventory": [
     {
       "item_id": "itm_1",

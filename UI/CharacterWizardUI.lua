@@ -81,7 +81,8 @@ local function BuildFrame()
     Label(p3, "Origins", PAD, y); f.originBtn = FieldButton(p3, y); y = y - ROW_H
     Label(p3, "Primary", PAD, y); f.primaryBtn = FieldButton(p3, y, 120); y = y - ROW_H
     Label(p3, "AC attr", PAD, y); f.acBtn = FieldButton(p3, y, 120); y = y - ROW_H
-    Label(p3, "Init attr", PAD, y); f.initBtn = FieldButton(p3, y, 120)
+    Label(p3, "Init attr", PAD, y); f.initBtn = FieldButton(p3, y, 120); y = y - ROW_H
+    Label(p3, "Cast attr", PAD, y); f.castBtn = FieldButton(p3, y, 120)
 
     -- Page 4: Proficiencies.
     local p4 = NewPage(f); f.pages[4] = p4

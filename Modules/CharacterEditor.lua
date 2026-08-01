@@ -7,9 +7,9 @@
 --
 -- Validation is soft: Warnings reports problems but nothing here blocks an edit.
 --
--- Reads from: ns.CharacterSheet.Compute, ns.Schema, ns.PerkTree, ns.GetModifier,
---   ns.GetHitDie, ns.GetItemLibrary, and the character data API
---   (Get/SetCharacter(s), SetActiveCharacter).
+-- Reads from: ns.CharacterSheet.Compute, ns.Schema, ns.Picks, ns.GetModifier,
+--   ns.GetHitDie, ns.GetItemLibrary, ns.GetFeatPack, ns.GetSpellPack, and the
+--   character data API (Get/SetCharacter(s), SetActiveCharacter).
 -- Exposes on ns.CharacterEditor: NewBlank, HitDieSize, InitResources, Races,
 --   AttributePoints, AccomplishTargets, AccomplishTargetDesc, LevelUp,
 --   LevelDown, Warnings, SaveNew, Delete.
@@ -208,7 +208,14 @@ function CE.LevelUp(char, hpGain, system)
     local sheet = ns.CharacterSheet.Compute(char, system, ns.GetItemLibrary())
     char.hit_dice = sheet.derived.hit_dice
 
-    local notes = { "+1 perk point" }
+    -- The pick gain is the ledger's per-level delta (system.progression may
+    -- reshape it; the classic default is one per level).
+    local gained = ns.Picks.Budget(char) - ns.Picks.Budget({ level = char.level - 1 })
+    local notes = {}
+    if gained > 0 then
+        notes[#notes + 1] = "+" .. gained .. " pick" .. (gained == 1 and "" or "s")
+            .. " (perk, feat or spell)"
+    end
     local b = system.level_bonuses and system.level_bonuses[char.level]
     if b then
         if b.attribute_points then notes[#notes + 1] = "+" .. b.attribute_points .. " attribute point" end
@@ -235,7 +242,8 @@ function CE.Warnings(char, system)
     local w = {}
     local sheet = ns.CharacterSheet.Compute(char, system, ns.GetItemLibrary())
 
-    local _, issues = ns.Schema.ValidateCharacter(char, system)
+    local _, issues = ns.Schema.ValidateCharacter(char, system,
+        { feats = ns.GetFeatPack(), spells = ns.GetSpellPack() })
     for _, i in ipairs(issues) do w[#w + 1] = i end
 
     local used, avail = CE.AttributePoints(char, system)
@@ -282,9 +290,10 @@ function CE.Warnings(char, system)
 
     if #(char.origin_traits or {}) > 2 then w[#w + 1] = "More than 2 origin traits selected." end
 
-    local invested, available = ns.PerkTree.Points(char)
+    local invested, available = ns.Picks.Points(char)
     if invested > available then
-        w[#w + 1] = string.format("Perk points: %d used of %d available", invested, available)
+        w[#w + 1] = string.format("Picks (perks, feats, spells): %d used of %d available",
+            invested, available)
     end
     return w
 end

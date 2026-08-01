@@ -1,6 +1,6 @@
 -- Shared helpers for Parchment's out-of-client tests (see Tests/run.lua).
 --
--- The pure modules (Schema, JSON, TOML, CharacterSheet, PerkTree, the data
+-- The pure modules (Schema, JSON, TOML, CharacterSheet, Picks, the data
 -- API in Core, ...) run under plain lua5.1; these helpers install the few
 -- WoW/Ace globals their file scopes touch. Tests that exercise behaviour
 -- behind a WoW API (UnitName, comm plumbing, AceDB) override the relevant

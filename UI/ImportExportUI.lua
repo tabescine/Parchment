@@ -103,6 +103,15 @@ local function DoExportItems(self)
     SetStatus(self, "Exported the item library as " .. self.format:upper() .. ". Press Ctrl+C to copy.", false)
 end
 
+local function DoExportPack(self, kind)
+    local exporter = (kind == "feats") and IE.ExportFeatPack or IE.ExportSpellPack
+    local str, err = exporter(self.format)
+    if not str then return SetStatus(self, err, true) end
+    ShowText(self, str)
+    SetStatus(self, "Exported the active " .. ns.Packs.Label(kind) .. " as "
+        .. self.format:upper() .. ". Press Ctrl+C to copy.", false)
+end
+
 -- Flips the export format between JSON and TOML and relabels the toggle.
 local function ToggleFormat(self)
     self.format = (self.format == "json") and "toml" or "json"
@@ -114,7 +123,7 @@ local function DoImport(self)
     SetStatus(self, msg, not ok)
     if not ok then return end
     -- Refresh every data-driven window: a character import must reach the
-    -- editor and perk viewer too, not just the sheet.
+    -- editor and the feat/spell pickers too, not just the sheet.
     if ns.Systems and ns.Systems.RefreshAll then
         ns.Systems.RefreshAll()
     elseif ns.CharacterSheetUI then
@@ -132,15 +141,15 @@ local function BuildContent(f)
     instr:SetPoint("RIGHT", f, "RIGHT", -2, 0)
     instr:SetJustifyH("LEFT")
     instr:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
-    instr:SetText("Export copies a character, the system or your item library out in the chosen "
-        .. "format. Import auto-detects JSON, TOML or a Lua table, and what it holds. "
-        .. "Click the box, then Ctrl+A/Ctrl+C to copy or Ctrl+V to paste. "
-        .. "Large pastes are captured instantly - use Clear before pasting over an export.")
+    instr:SetText("Export copies a character, the system, your item library or the active "
+        .. "feat/spell pack out in the chosen format. Import auto-detects JSON, TOML or a Lua "
+        .. "table, and what it holds. Click the box, then Ctrl+A/Ctrl+C to copy or Ctrl+V to "
+        .. "paste. Large pastes are captured instantly - use Clear before pasting over an export.")
 
     -- Bordered text area containing a scrolling multi-line edit box.
     local box = CreateFrame("Frame", nil, f, "BackdropTemplate")
     box:SetPoint("TOPLEFT", 0, -62)
-    box:SetPoint("BOTTOMRIGHT", 0, 88)
+    box:SetPoint("BOTTOMRIGHT", 0, 112)
     box:SetBackdrop({
         bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -181,25 +190,29 @@ local function BuildContent(f)
         if userInput then f.pasteData = nil end
     end)
     UI.SetPlaceholder(editBox,
-        "Paste a system, character or item library here (JSON, TOML, or Lua - comments are "
-        .. "fine), or use the Export buttons below.", "TOPLEFT")
+        "Paste a system, character, item library or feat/spell pack here (JSON, TOML, or Lua - "
+        .. "comments are fine), or use the Export buttons below.", "TOPLEFT")
 
     -- Status line.
     f.status = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    f.status:SetPoint("BOTTOMLEFT", 2, 64)
-    f.status:SetPoint("BOTTOMRIGHT", -2, 64)
+    f.status:SetPoint("BOTTOMLEFT", 2, 88)
+    f.status:SetPoint("BOTTOMRIGHT", -2, 88)
     f.status:SetJustifyH("LEFT")
     f.status:SetWordWrap(true)
 
-    -- Top button row: the three export actions. The format toggle sits on the
-    -- bottom row instead: three exports plus a 110px toggle would run past the
-    -- panel's right edge once the hub is dragged down to its minimum width.
+    -- Export rows (two, so no row runs past the panel's right edge once the
+    -- hub is dragged down to its minimum width). The format toggle sits on
+    -- the bottom row for the same reason.
     local expChar = MakeButton(f, "Export Char", 88, function() DoExportCharacter(f) end)
-    expChar:SetPoint("BOTTOMLEFT", 0, 34)
+    expChar:SetPoint("BOTTOMLEFT", 0, 58)
     local expSys = MakeButton(f, "Export System", 96, function() DoExportSystem(f) end)
-    expSys:SetPoint("BOTTOMLEFT", 92, 34)
+    expSys:SetPoint("BOTTOMLEFT", 92, 58)
     local expItems = MakeButton(f, "Export Items", 92, function() DoExportItems(f) end)
-    expItems:SetPoint("BOTTOMLEFT", 192, 34)
+    expItems:SetPoint("BOTTOMLEFT", 192, 58)
+    local expFeats = MakeButton(f, "Export Feats", 92, function() DoExportPack(f, "feats") end)
+    expFeats:SetPoint("BOTTOMLEFT", 0, 34)
+    local expSpells = MakeButton(f, "Export Spells", 96, function() DoExportPack(f, "spells") end)
+    expSpells:SetPoint("BOTTOMLEFT", 96, 34)
 
     -- Bottom button row: import, clear and the format toggle.
     local importBtn = MakeButton(f, "Import", 64, function() DoImport(f) end)

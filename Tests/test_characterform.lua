@@ -77,7 +77,7 @@ local function widget()
 end
 
 local BTNS = { "raceBtn", "racialBtn", "originBtn", "primaryBtn", "acBtn",
-    "initBtn", "skillsBtn", "weaponsBtn", "savesBtn" }
+    "initBtn", "castBtn", "skillsBtn", "weaponsBtn", "savesBtn" }
 local function formFrame()
     local f = { steppers = { str = widget() }, modText = { str = widget() } }
     for _, name in ipairs({ "nameBox", "playerBox", "quoteBox", "pointsText" }) do f[name] = widget() end
@@ -149,6 +149,7 @@ do
     assert(f.originBtn.text == "origin_traits:o1")
     assert(f.primaryBtn.text == "Attr(str)")
     assert(f.acBtn.text == "agi" and f.initBtn.text == "agi")
+    assert(f.castBtn.text == "(none)", "no cast attribute reads as (none)")
     assert(f.skillsBtn.text == "1 / 2" and f.weaponsBtn.text == "0 / 1" and f.savesBtn.text == "1 / 1")
     assert(origins[1] == "origin_traits:o1" and tg.skills == 2)
 

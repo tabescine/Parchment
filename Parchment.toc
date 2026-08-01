@@ -1,9 +1,9 @@
 ## Interface: 120005
 ## Title: Parchment
-## Notes: System-agnostic TTRPG toolkit - character sheets, initiative, and perk trees.
+## Notes: System-agnostic TTRPG toolkit - character sheets, initiative, feats and spellbooks.
 ## Author: Parchment
 ## Version: 0.2.0
-## SavedVariables: ParchmentSystemDB, ParchmentCharDB, ParchmentItemDB, ParchmentDB
+## SavedVariables: ParchmentSystemDB, ParchmentCharDB, ParchmentItemDB, ParchmentPackDB, ParchmentDB
 
 # Embedded libraries (load first so LibStub and the Ace3 modules exist).
 embeds.xml
@@ -18,6 +18,8 @@ TOML.lua
 Core.lua
 Modules\Comm.lua
 Modules\Systems.lua
+Modules\Packs.lua
+Modules\Picks.lua
 Modules\Dice.lua
 
 # Shared UI chrome (defines ns.UI; must load before panels that use it).
@@ -39,13 +41,16 @@ UI\InitiativeUI.lua
 Modules\ImportExport.lua
 UI\ImportExportUI.lua
 UI\HubPanels.lua
-Modules\PerkTree.lua
-UI\PerkTreeUI.lua
+Modules\Feats.lua
+UI\FeatsUI.lua
+Modules\Spells.lua
+UI\SpellbookUI.lua
+Modules\Homebrew.lua
 Modules\CharacterEditor.lua
 UI\CharacterForm.lua
 UI\CharacterEditorUI.lua
 UI\CharacterWizardUI.lua
-UI\PerkWizardUI.lua
+UI\HomebrewUI.lua
 UI\ItemWizardUI.lua
 UI\ConfigUI.lua
 Modules\Minimap.lua

@@ -42,7 +42,7 @@ read_globals = wow_api
 -- are the SavedVariables declared in Parchment.toc; StaticPopupDialogs and
 -- UISpecialFrames are WoW tables addons add their own keys to.
 globals = {
-    "ParchmentSystemDB", "ParchmentCharDB", "ParchmentItemDB", "ParchmentDB",
+    "ParchmentSystemDB", "ParchmentCharDB", "ParchmentItemDB", "ParchmentPackDB", "ParchmentDB",
     "StaticPopupDialogs", "UISpecialFrames",
 }
 

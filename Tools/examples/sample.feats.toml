@@ -1,0 +1,101 @@
+# =============================================================================
+# Parchment Sample Feats - annotated demo feats pack (NOT a real ruleset).
+#
+# A feats pack is a standalone import: a collection of ability LINES, each a
+# ladder of RANKS. Rank position is the prerequisite chain - taking rank 3
+# requires ranks 1 and 2, no explicit prerequisites needed. Characters record
+# their picks as { line id = rank } (see sample.character.toml).
+#
+# Import it in-game with /pmt import (paste the whole file). It pairs with the
+# system named by `for_system`: when that system is active, the pack activates
+# alongside it. sample.feats.json is the same pack in JSON.
+#
+# Only `pack_name` and `lines` are required (and `id`, `name`, `attribute`
+# plus at least one named rank per line). Everything else is optional display
+# or gating data. /pmt validate reports problems after import.
+# =============================================================================
+
+kind = "feats"                       # marks the file as a feats pack for import
+pack_name = "Parchment Sample Feats" # required; names the entry in the pack library
+for_system = "Parchment Sample"      # the system this pack belongs to (advisory)
+version = "1.0"                      # free-form, for your own bookkeeping
+
+# Default attribute score needed per rank: rank 1 needs 5, rank 2 needs 6...
+# A rank may override this with its own attribute_req. Without this list (or
+# an override), ranks have no attribute gate at all.
+rank_attribute_req = [5, 6, 7]
+
+# -----------------------------------------------------------------------------
+# Each [[lines]] is one ability line, governed by one attribute (checked
+# against the paired system's attribute ids). Ranks are ordered: position 1
+# is rank I. Per rank:
+#   name          - required
+#   type          - free-form display tag ("active", "passive", "reaction")
+#   cost          - { ap = n, mana = n }, shown on pickers and the sheet
+#   range         - free-form display text ("melee", "self", "15m", "touch")
+#   save          - attribute id of the saving throw the rank forces, if any
+#   attribute_req - overrides rank_attribute_req for this rank
+#   description   - the rules text
+#   effects       - optional mechanical effects, same vocabulary as perks
+# -----------------------------------------------------------------------------
+[[lines]]
+id = "iron_grip"
+name = "Iron Grip"
+attribute = "might"
+description = "Holds, locks and throws - controlling a foe with raw strength."
+
+[[lines.ranks]]
+name = "Firm Hold"
+type = "active"
+cost = { ap = 1 }
+range = "melee"
+save = "might"
+description = "Seize a creature in melee. It must pass a Might save or be held until it breaks free."
+
+[[lines.ranks]]
+name = "Wrenching Twist"
+type = "passive"
+description = "A creature you hold suffers -2 on attacks against anyone but you."
+
+[[lines.ranks]]
+name = "Heaving Throw"
+type = "active"
+cost = { ap = 2 }
+range = "melee"
+attribute_req = 8            # steeper than the default rank-3 requirement of 7
+description = "Hurl a held creature 3m; it lands prone."
+
+[[lines]]
+id = "keen_study"
+name = "Keen Study"
+attribute = "wits"
+
+[[lines.ranks]]
+name = "Fieldnotes"
+type = "passive"
+description = "You may re-ask the GM one detail question per scene."
+effects = [{ type = "skill", skill = "lore", value = 1 }]
+
+[[lines.ranks]]
+name = "Pattern Sense"
+type = "active"
+cost = { ap = 1 }
+description = "Study a foe: learn one of its resistances or weaknesses."
+
+[[lines]]
+id = "warding_soul"
+name = "Warding Soul"
+attribute = "spirit"
+
+[[lines.ranks]]
+name = "Steady Spirit"
+type = "passive"
+description = "+1 to Spirit saving throws."
+effects = [{ type = "save", id = "spirit", value = 1 }]
+
+[[lines.ranks]]
+name = "Shared Calm"
+type = "active"
+cost = { ap = 1, mana = 1 }
+range = "10m"
+description = "An ally you can see gains +2 on their next saving throw."
