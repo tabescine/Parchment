@@ -193,16 +193,32 @@ function CE.AccomplishTargetDesc(which)
     return tostring(base)
 end
 
--- Raises the character's level by one, adding hpGain to max/current HP and
--- refreshing the hit-dice string. Returns ok, notes (list of milestone gains).
+-- The mana the system's formula grants between two levels: the per-level
+-- share is the only level-dependent term (base and the casting modifier do
+-- not move with level), so the delta is the rounded-up share's step. Applied
+-- to the STORED max on level change - InitResources persisted the level-1
+-- base, and Compute prefers a stored max, so without this mana never scales.
+local function ManaDelta(fromLevel, toLevel)
+    local per = ns.DerivedConfig().mana_per_level
+    return math.ceil(toLevel * per) - math.ceil(fromLevel * per)
+end
+
+-- Raises the character's level by one, adding hpGain to max/current HP,
+-- applying the system's per-level mana gain and refreshing the hit-dice
+-- string. Returns ok, notes (list of milestone gains).
 function CE.LevelUp(char, hpGain, system)
     local maxLevel = system.max_level or 30
     if (char.level or 1) >= maxLevel then return false, { "Already at maximum level." } end
 
+    local manaGain = ManaDelta(char.level or 1, (char.level or 1) + 1)
     char.level = (char.level or 1) + 1
     hpGain = hpGain or 0
     char.max_hp = (char.max_hp or 0) + hpGain
     char.current_hp = (char.current_hp or 0) + hpGain
+    if manaGain ~= 0 then
+        char.max_mana = math.max(0, (char.max_mana or 0) + manaGain)
+        char.current_mana = math.max(0, (char.current_mana or 0) + manaGain)
+    end
 
     local sheet = ns.CharacterSheet.Compute(char, system, ns.GetItemLibrary())
     char.hit_dice = sheet.derived.hit_dice
@@ -221,15 +237,23 @@ function CE.LevelUp(char, hpGain, system)
         if b.actions then notes[#notes + 1] = "+" .. b.actions .. " action" end
         if b.weapon_dice then notes[#notes + 1] = "+" .. b.weapon_dice .. " weapon die" end
     end
+    if manaGain > 0 then notes[#notes + 1] = "+" .. manaGain .. " mana" end
     return true, notes
 end
 
 -- Lowers the character's level by one (e.g. to undo an accidental level-up) and
--- refreshes the hit-dice string. Does not touch HP, which is managed manually.
--- Returns ok, note.
+-- refreshes the hit-dice string. Does not touch HP, which is managed manually
+-- (the gain was a user-chosen roll) - but the mana delta is deterministic, so
+-- it IS taken back, keeping down a true undo of up. Returns ok, note.
 function CE.LevelDown(char, system)
     if (char.level or 1) <= 1 then return false, "Already at level 1." end
+    local manaLoss = ManaDelta(char.level - 1, char.level)
     char.level = char.level - 1
+    if manaLoss ~= 0 then
+        char.max_mana = math.max(0, (char.max_mana or 0) - manaLoss)
+        char.current_mana = math.min(char.max_mana,
+            math.max(0, (char.current_mana or 0) - manaLoss))
+    end
     char.hit_dice = ns.CharacterSheet.Compute(char, system, ns.GetItemLibrary()).derived.hit_dice
     return true, "now level " .. char.level
 end
