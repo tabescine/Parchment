@@ -8,6 +8,8 @@
 -- answer renders only while its question is the pending one, so nobody can
 -- pop this window unasked.
 --
+-- Mechanism modeled on Total RP 3's chat links (see Modules/ChatLinks.lua).
+--
 -- Reads from: ns.ChatLinks, ns.Comm (NormalizeName), ns.UI.
 -- Exposes on ns.ChatLinkUI: Show, OnAnswer, and .frame.
 
