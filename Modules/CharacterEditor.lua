@@ -215,8 +215,11 @@ function CE.LevelUp(char, hpGain, system)
     hpGain = hpGain or 0
     char.max_hp = (char.max_hp or 0) + hpGain
     char.current_hp = (char.current_hp or 0) + hpGain
-    if manaGain ~= 0 then
-        char.max_mana = math.max(0, (char.max_mana or 0) + manaGain)
+    -- Only a STORED max is adjusted. A character imported without one runs on
+    -- Compute's live formula, which scales with level by itself - materializing
+    -- 0 + delta here would both be wrong and freeze that scaling.
+    if manaGain ~= 0 and char.max_mana then
+        char.max_mana = math.max(0, char.max_mana + manaGain)
         char.current_mana = math.max(0, (char.current_mana or 0) + manaGain)
     end
 
@@ -249,8 +252,8 @@ function CE.LevelDown(char, system)
     if (char.level or 1) <= 1 then return false, "Already at level 1." end
     local manaLoss = ManaDelta(char.level - 1, char.level)
     char.level = char.level - 1
-    if manaLoss ~= 0 then
-        char.max_mana = math.max(0, (char.max_mana or 0) - manaLoss)
+    if manaLoss ~= 0 and char.max_mana then
+        char.max_mana = math.max(0, char.max_mana - manaLoss)
         char.current_mana = math.min(char.max_mana,
             math.max(0, (char.current_mana or 0) - manaLoss))
     end
