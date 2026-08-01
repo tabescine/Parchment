@@ -1,2 +1,5 @@
 # Local planning notes, not part of the repo
 FUTURE_WORK.md
+
+# Local packaging output (the release workflow builds its own)
+*.zip
