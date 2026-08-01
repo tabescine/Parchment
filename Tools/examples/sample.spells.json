@@ -1,0 +1,102 @@
+{
+  "_note": "Parchment Sample spells pack in JSON. JSON allows no comments - see sample.spells.toml for the fully annotated reference; both import identically.",
+  "cast_attributes": [
+    "spirit",
+    "wits"
+  ],
+  "for_system": "Parchment Sample",
+  "kind": "spells",
+  "pack_name": "Parchment Sample Spells",
+  "rank_cast_req": [
+    6,
+    8
+  ],
+  "schools": [
+    {
+      "description": "Flame called by will; bright, hungry and quick.",
+      "id": "emberlore",
+      "name": "Emberlore",
+      "opposed": "frostlore"
+    },
+    {
+      "description": "Cold drawn from stillness; patient, binding and slow.",
+      "id": "frostlore",
+      "name": "Frostlore",
+      "opposed": "emberlore"
+    },
+    {
+      "description": "Homely magic of mending and shelter; pairs with any school.",
+      "id": "hearthbond",
+      "name": "Hearthbond"
+    }
+  ],
+  "spells": [
+    {
+      "cost": {
+        "mana": 1
+      },
+      "damage": "1d8 fire",
+      "description": "A darting mote of flame. Make a spell attack; on a hit the target takes 1d8 fire damage.",
+      "id": "ember_bolt",
+      "name": "Ember Bolt",
+      "range": "20m",
+      "rank": 1,
+      "school": "emberlore",
+      "type": "attack"
+    },
+    {
+      "concentration": true,
+      "cost": {
+        "mana": 3
+      },
+      "description": "Drifting embers shroud you: attacks against you suffer -1 while you concentrate.",
+      "id": "cinder_veil",
+      "name": "Cinder Veil",
+      "range": "self",
+      "rank": 2,
+      "school": "emberlore",
+      "type": "concentration"
+    },
+    {
+      "cost": {
+        "mana": 2
+      },
+      "damage": "1d6 frost",
+      "description": "Ice grips a creature. On a failed Might save it takes 1d6 frost damage and cannot move for a round.",
+      "id": "frost_bind",
+      "name": "Frost Bind",
+      "range": "15m",
+      "rank": 1,
+      "save": "might",
+      "school": "frostlore",
+      "type": "save"
+    },
+    {
+      "cost": {
+        "mana": 1
+      },
+      "description": "Close a wound with warm light: a touched creature heals 1d6 HP.",
+      "id": "hearth_mend",
+      "name": "Hearth Mend",
+      "range": "touch",
+      "rank": 1,
+      "school": "hearthbond",
+      "type": "utility"
+    },
+    {
+      "concentration": true,
+      "cost": {
+        "ap": 3,
+        "mana": 3
+      },
+      "description": "A faint ring of warmth: allies inside gain +1 AC while you concentrate.",
+      "id": "shelter_ring",
+      "name": "Shelter Ring",
+      "range": "5m",
+      "rank": 2,
+      "school": "hearthbond",
+      "type": "concentration"
+    }
+  ],
+  "version": "1.0"
+}

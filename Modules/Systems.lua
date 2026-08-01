@@ -8,7 +8,7 @@
 --
 -- Reads from: ns.Addon.db.global (systemLibrary), ns.Comm, ns.ImportExport
 --   (StripMeta), ns.Print, ns.DeepCopy, ns.HubUI, ns.CharacterSheetUI,
---   ns.PerkTreeUI, ns.ItemWizardUI.
+--   ns.FeatsUI, ns.SpellbookUI, ns.ItemWizardUI.
 --   Owns ParchmentSystemDB swaps. The library is browsed/managed in the
 --   hub's Systems panel (UI/HubPanels.lua).
 -- Exposes on ns.Systems: Store, SetActive, GetLibrary, ConfirmDelete,
@@ -30,7 +30,8 @@ end
 -- Sys.RefreshAll so import flows can refresh after character-only changes.
 local function RefreshAll()
     if ns.CharacterSheetUI then ns.CharacterSheetUI.RefreshIfShown() end
-    if ns.PerkTreeUI and ns.PerkTreeUI.frame and ns.PerkTreeUI.frame:IsShown() then ns.PerkTreeUI.Open() end
+    if ns.FeatsUI and ns.FeatsUI.RefreshIfShown then ns.FeatsUI.RefreshIfShown() end
+    if ns.SpellbookUI and ns.SpellbookUI.RefreshIfShown then ns.SpellbookUI.RefreshIfShown() end
     if ns.CharacterEditorUI and ns.CharacterEditorUI.RefreshIfShown then ns.CharacterEditorUI.RefreshIfShown() end
     if ns.CharacterWizardUI and ns.CharacterWizardUI.RefreshIfShown then ns.CharacterWizardUI.RefreshIfShown() end
     if ns.ItemWizardUI and ns.ItemWizardUI.RefreshIfShown then ns.ItemWizardUI.RefreshIfShown() end
@@ -57,6 +58,9 @@ function Sys.SetActive(system, from)
     end
     ParchmentSystemDB = ns.DeepCopy(system)
     Sys.Store(ParchmentSystemDB, from)
+    -- The active system changed, so re-resolve which feat/spell packs pair
+    -- with it (Modules/Packs.lua; loads after this file, hence the guard).
+    if ns.Packs then ns.Packs.SyncToSystem() end
     RefreshAll()
 end
 

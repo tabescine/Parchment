@@ -1,15 +1,14 @@
--- The effect vocabulary (CharacterSheet.EFFECT_TYPES) and the perk-commit seam
--- (PerkTree.CommitPerk / DeletePerk) the perk wizard is built on.
+-- The effect vocabulary (CharacterSheet.EFFECT_TYPES) behind homebrew perks
+-- and trait bonuses.
 --
--- Every vocabulary entry is driven end to end: a wizard-shaped homebrew perk
--- carrying that one effect must move the computed sheet exactly where the entry
--- claims it points. The expectation table is keyed by effect id and checked for
+-- Every vocabulary entry is driven end to end: a homebrew perk carrying that
+-- one effect must move the computed sheet exactly where the entry claims it
+-- points. The expectation table is keyed by effect id and checked for
 -- completeness, so a new effect type without a test fails this file.
 local T = dofile((TEST_ROOT or "") .. "Tests/wow_stubs.lua")
 T.InstallLifecycleStubs({})
 local ns = T.load({}, "Core.lua")
 T.load(ns, "Modules/CharacterSheet.lua")
-T.load(ns, "Modules/PerkTree.lua")
 local CS = ns.CharacterSheet
 
 ParchmentSystemDB = {
@@ -128,6 +127,17 @@ local EXPECT = {
         local s = SheetWith({ type = "all_skills", value = 1 })
         assert(skill(s, "s1") == skill(base, "s1") + 1 and skill(s, "s2") == skill(base, "s2") + 1)
     end,
+    accomplish_skill = function()
+        -- Grants accomplishment (the level table's bonus, here 2), not a flat
+        -- value; s2 is the base character's unaccomplished skill.
+        local s = SheetWith({ type = "accomplish_skill", skill = "s2" })
+        assert(skill(s, "s2") == skill(base, "s2") + 2, "accomplish_skill must add the accomplishment bonus")
+        assert(skill(s, "s1") == skill(base, "s1"), "accomplish_skill leaked onto another skill")
+        -- s1 is already accomplished by hand: the grant must not stack.
+        local twice = SheetWith({ type = "accomplish_skill", skill = "s1" })
+        assert(skill(twice, "s1") == skill(base, "s1"),
+            "accomplishment must not stack with an existing accomplished pick")
+    end,
     skill = function()
         local s = SheetWith({ type = "skill", skill = "s1", value = 2 })
         assert(skill(s, "s1") == skill(base, "s1") + 2, "skill effect missed its target")
@@ -219,26 +229,5 @@ assert(after.custom_perks[1].pending == nil and after.custom_perks[1].name == "L
 assert(after.custom_perks ~= growing.custom_perks, "Compute must not expose the raw perk table")
 assert(after.custom_perks[1] ~= growing.custom_perks[1], "display entries must be copies")
 
--- The commit seam: append, replace, and delete.
-local PT = ns.PerkTree
-local char = { name = "C", level = 1 }
-local first = { id = "hb-1", name = "First", level = 1, effects = {} }
-assert(PT.CommitPerk(char, first) == 1, "first commit must land at index 1")
-assert(char.custom_perks[1] == first, "commit must store the record it was given")
-local second = { id = "hb-2", name = "Second", level = 2, effects = {} }
-assert(PT.CommitPerk(char, second) == 2)
-local edited = { id = "hb-1", name = "First (edited)", level = 3, effects = {} }
-assert(PT.CommitPerk(char, edited, 1) == 1, "an indexed commit replaces in place")
-assert(char.custom_perks[1].name == "First (edited)" and #char.custom_perks == 2,
-    "replacing must not grow the list")
--- An index past the end appends rather than punching a hole in the list.
-assert(PT.CommitPerk(char, { name = "Third" }, 9) == 3)
-assert(#char.custom_perks == 3)
-assert(PT.CommitPerk(nil, first) == nil and PT.CommitPerk(char, "nope") == nil,
-    "commit must reject unusable arguments")
-
-assert(PT.DeletePerk(char, 1) == true)
-assert(#char.custom_perks == 2 and char.custom_perks[1].name == "Second",
-    "delete must shift later perks down")
-assert(PT.DeletePerk(char, 9) == false and PT.DeletePerk(char, nil) == false)
-assert(PT.DeletePerk({}, 1) == false, "a character with no perks must not throw")
+-- (The perk-commit seam these effects used to travel through died with the
+-- perk wizard; homebrew perks are import-authored data now.)

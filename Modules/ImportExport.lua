@@ -2,17 +2,18 @@
 --
 -- Turns the live data into copyable text and turns pasted text back into data.
 -- Import accepts JSON, TOML, or a Lua table literal (sandboxed loadstring with
--- an empty environment), auto-detects whether it is a system, a character or an
--- item library, validates against the schema, and only commits on success - via
--- ns.Systems.SetActive for systems, the character data API for characters and
--- ns.SetItem for items, never by touching the SavedVariables globals directly.
+-- an empty environment), auto-detects whether it is a system, a character, an
+-- item library or a feats/spells pack, validates against the schema, and only
+-- commits on success - via ns.Systems.SetActive for systems, the character
+-- data API for characters, ns.SetItem for items and ns.Packs.Import for
+-- packs, never by touching the SavedVariables globals directly.
 -- Export produces pretty JSON (or TOML) matching the converter's format.
 --
--- Reads from: ns.JSON, ns.TOML, ns.Schema, ns.Systems, ns.GetSystem,
+-- Reads from: ns.JSON, ns.TOML, ns.Schema, ns.Systems, ns.Packs, ns.GetSystem,
 --   ns.GetCharacter(s), ns.SetCharacter, ns.NextCharacterKey, ns.SetActiveCharacter,
---   ns.GetItemLibrary, ns.SetItem.
--- Exposes on ns.ImportExport: ExportSystem, ExportCharacter, ExportItems, Import,
---   StripMeta.
+--   ns.GetItemLibrary, ns.SetItem, ns.GetFeatPack, ns.GetSpellPack.
+-- Exposes on ns.ImportExport: ExportSystem, ExportCharacter, ExportItems,
+--   ExportFeatPack, ExportSpellPack, Import, StripMeta.
 
 local ADDON, ns = ...
 
@@ -50,14 +51,23 @@ end
 IE.StripMeta = StripMeta
 
 -- Classifies a decoded table as a system, a single character, a full character
--- DB, an item library, or nil when it matches none.
+-- DB, an item library, a feats/spells pack, or nil when it matches none.
 local function DetectKind(data)
     if type(data) ~= "table" then return nil end
+    -- The explicit pack discriminator wins outright: packs also carry sniffable
+    -- fields other kinds use (a spells pack has `spells`, like a character; a
+    -- pack pairing field must never be `system_name` or the system branch
+    -- would swallow it - which is why packs use `for_system`).
+    if data.kind == "feats" or data.kind == "spells" then return data.kind end
     -- A `characters` field must be a table to be a roster; a scalar there (e.g.
     -- `{"characters": 5}`) is malformed, not a DB - falling through to a clean
     -- "could not tell" refusal instead of later throwing from pairs(5).
     if type(data.characters) == "table" then return "character_db" end
     if data.system_name or data.perk_trees or data.modifier_table then return "system" end
+    -- Pack sniffs for hand-authored files that omit `kind`: pack_name plus the
+    -- kind's payload list. Characters have no pack_name, so `spells` is safe.
+    if data.pack_name and type(data.lines) == "table" then return "feats" end
+    if data.pack_name and type(data.spells) == "table" then return "spells" end
     if data.name and (data.attributes or data.level) then return "character" end
     -- Item libraries are checked last: `items` is only a library marker on a
     -- payload that is nothing else, so a system or character that happens to
@@ -141,6 +151,22 @@ function IE.ExportItems(format)
     return Encode({ items = StripMeta(lib) }, format)
 end
 
+-- Exports the active feats pack. format is "json" (default) or "toml".
+-- Returns the string, or nil plus an error.
+function IE.ExportFeatPack(format)
+    local pack = ns.GetFeatPack()
+    if not pack then return nil, "no feats pack active to export." end
+    return Encode(pack, format)
+end
+
+-- Exports the active spells pack. format is "json" (default) or "toml".
+-- Returns the string, or nil plus an error.
+function IE.ExportSpellPack(format)
+    local pack = ns.GetSpellPack()
+    if not pack then return nil, "no spells pack active to export." end
+    return Encode(pack, format)
+end
+
 -- Imports pasted text. Returns ok, message.
 --
 -- On success the data is written to SavedVariables and, for a single character,
@@ -190,6 +216,23 @@ function IE.Import(text)
         return true, "imported system '" .. (clean.system_name or "?") .. "'."
     end
 
+    if kind == "feats" or kind == "spells" then
+        local clean = StripMeta(data)
+        local validate = (kind == "feats") and ns.Schema.ValidateFeatPack
+            or ns.Schema.ValidateSpellPack
+        -- Cross-references resolve against the active system only when the
+        -- pack claims it by name (Packs.PairedSystem) - a pack for another
+        -- system must not fail against whatever happens to be loaded.
+        local ok, issues = validate(clean, ns.Packs.PairedSystem(clean))
+        if not ok then
+            return false, ns.Packs.Label(kind) .. " invalid: " .. SummarizeIssues(issues)
+        end
+        local activated = ns.Packs.Import(kind, clean, "import")
+        return true, "imported " .. ns.Packs.Label(kind) .. " '" .. clean.pack_name .. "'"
+            .. (activated and " (now active)."
+                or (" (stored; it pairs with system '" .. tostring(clean.for_system) .. "')."))
+    end
+
     if kind == "item_db" then
         local incoming = StripMeta(data.items)   -- DetectKind proved it is a table
         -- Validate the whole payload BEFORE writing anything, like the roster
@@ -212,8 +255,10 @@ function IE.Import(text)
     end
 
     -- Validate characters against the active system, or shape-only when none is
-    -- loaded yet (so a character can be imported before its system).
+    -- loaded yet (so a character can be imported before its system). The active
+    -- packs join in the same spirit: absent packs mean shape-only feats/spells.
     local validateSystem = ns.HasSystem() and ns.GetSystem() or nil
+    local validatePacks = { feats = ns.GetFeatPack(), spells = ns.GetSpellPack() }
 
     if kind == "character_db" then
         local incoming = data.characters or {}
@@ -224,7 +269,7 @@ function IE.Import(text)
             if type(charKey) ~= "string" then
                 return false, "character key '" .. tostring(charKey) .. "' is not a string."
             end
-            local ok, issues = ns.Schema.ValidateCharacter(char, validateSystem)
+            local ok, issues = ns.Schema.ValidateCharacter(char, validateSystem, validatePacks)
             if not ok then
                 return false, "character '" .. tostring(charKey) .. "' invalid: " .. SummarizeIssues(issues)
             end
@@ -251,7 +296,7 @@ function IE.Import(text)
     if not key then return false, "character has no key; add a \"_key\" field." end
     if type(key) ~= "string" then return false, "the \"_key\" field must be a string." end
     local clean = StripMeta(data)
-    local ok, issues = ns.Schema.ValidateCharacter(clean, validateSystem)
+    local ok, issues = ns.Schema.ValidateCharacter(clean, validateSystem, validatePacks)
     if not ok then return false, "character invalid: " .. SummarizeIssues(issues) end
 
     -- Keys are auto-generated "Character-N", so an export from another install

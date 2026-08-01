@@ -60,6 +60,16 @@ min = 1
 max = 8
 
 # -----------------------------------------------------------------------------
+# progression: the shared pick budget for perks, feats and spells. Every perk
+# rank, feat rank and known spell spends one pick from the same pool:
+#   budget = picks_level_1 + picks_per_level x (level - 1)
+# Both default to 1 (one pick per level) when this section is absent.
+# -----------------------------------------------------------------------------
+[progression]
+picks_level_1 = 3     # characters start with three picks...
+picks_per_level = 1   # ...and gain one more per level after the first
+
+# -----------------------------------------------------------------------------
 # accomplish_targets: suggested counts of accomplished ("proficient") skills /
 # weapons / saves. Soft guidance only - the editor shows warnings, it never
 # blocks. Each target may be written three ways (all three shown here):

@@ -37,6 +37,13 @@ end
 ns.HasSystem = function() return false end
 ns.GetSystem = function() return {} end
 ns.Systems = { SetActive = function() end }
+ns.GetFeatPack = function() return nil end
+ns.GetSpellPack = function() return nil end
+ns.Packs = {
+    Label = function(kind) return kind .. " pack" end,
+    PairedSystem = function() return nil end,
+    Import = function() return true end,
+}
 
 -- An in-memory item library behind the ns data API, with Core's SetItem
 -- semantics (stamp the key onto `id`, bump `version` past the stored copy's).

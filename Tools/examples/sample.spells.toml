@@ -1,0 +1,115 @@
+# =============================================================================
+# Parchment Sample Spells - annotated demo spells pack (NOT a real ruleset).
+#
+# A spells pack is a standalone import: schools plus a flat spell list.
+# Spells are gated by rank (via rank_cast_req against the character's cast
+# attribute), not by each other. Characters record known spells as a flat id
+# list and their casting attribute as cast_attribute.
+#
+# Import it in-game with /pmt import (paste the whole file). It pairs with the
+# system named by `for_system`. sample.spells.json is the same pack in JSON.
+#
+# Only `pack_name` and `spells` are required (and `id`, `name`, `school`,
+# `rank` per spell). /pmt validate reports problems after import.
+# =============================================================================
+
+kind = "spells"                       # marks the file as a spells pack for import
+pack_name = "Parchment Sample Spells" # required; names the entry in the pack library
+for_system = "Parchment Sample"       # the system this pack belongs to (advisory)
+version = "1.0"
+
+# Which attributes may serve as a character's cast_attribute, and the score
+# that attribute must reach per spell rank (rank 1 needs 6, rank 2 needs 8).
+cast_attributes = ["spirit", "wits"]
+rank_cast_req = [6, 8]
+
+# -----------------------------------------------------------------------------
+# Schools. `opposed` locks two schools against each other: a character who
+# knows a spell from one may not learn from the other. Declare the lock from
+# BOTH sides (validation flags one-way declarations). A school without
+# `opposed` pairs freely.
+# -----------------------------------------------------------------------------
+[[schools]]
+id = "emberlore"
+name = "Emberlore"
+opposed = "frostlore"
+description = "Flame called by will; bright, hungry and quick."
+
+[[schools]]
+id = "frostlore"
+name = "Frostlore"
+opposed = "emberlore"
+description = "Cold drawn from stillness; patient, binding and slow."
+
+[[schools]]
+id = "hearthbond"
+name = "Hearthbond"
+description = "Homely magic of mending and shelter; pairs with any school."
+
+# -----------------------------------------------------------------------------
+# Spells. Per spell:
+#   id, name, school, rank - required (school must exist above)
+#   type          - free-form display tag ("attack", "save", "utility",
+#                   "reaction", "concentration")
+#   cost          - { mana = n, ap = n }; ap only when it differs from the
+#                   system's standard cast action
+#   range         - free-form display text
+#   save          - attribute id of the imposed saving throw, if any
+#   damage        - free-form display text ("1d8 fire")
+#   concentration - true when the spell must be maintained
+#   description   - the rules text
+# -----------------------------------------------------------------------------
+[[spells]]
+id = "ember_bolt"
+name = "Ember Bolt"
+school = "emberlore"
+rank = 1
+type = "attack"
+cost = { mana = 1 }
+range = "20m"
+damage = "1d8 fire"
+description = "A darting mote of flame. Make a spell attack; on a hit the target takes 1d8 fire damage."
+
+[[spells]]
+id = "cinder_veil"
+name = "Cinder Veil"
+school = "emberlore"
+rank = 2
+type = "concentration"
+cost = { mana = 3 }
+range = "self"
+concentration = true
+description = "Drifting embers shroud you: attacks against you suffer -1 while you concentrate."
+
+[[spells]]
+id = "frost_bind"
+name = "Frost Bind"
+school = "frostlore"
+rank = 1
+type = "save"
+cost = { mana = 2 }
+range = "15m"
+save = "might"
+damage = "1d6 frost"
+description = "Ice grips a creature. On a failed Might save it takes 1d6 frost damage and cannot move for a round."
+
+[[spells]]
+id = "hearth_mend"
+name = "Hearth Mend"
+school = "hearthbond"
+rank = 1
+type = "utility"
+cost = { mana = 1 }
+range = "touch"
+description = "Close a wound with warm light: a touched creature heals 1d6 HP."
+
+[[spells]]
+id = "shelter_ring"
+name = "Shelter Ring"
+school = "hearthbond"
+rank = 2
+type = "concentration"
+cost = { mana = 3, ap = 3 }   # a ritual: costs more than the standard cast action
+range = "5m"
+concentration = true
+description = "A faint ring of warmth: allies inside gain +1 AC while you concentrate."

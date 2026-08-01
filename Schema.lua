@@ -9,7 +9,7 @@
 --
 -- Reads from: nothing (pure functions over the tables passed in).
 -- Exposes on ns.Schema: .ValidateSystem, .ValidateCharacter, .ValidateItem,
---   .ValidateItemLibrary
+--   .ValidateItemLibrary, .ValidateFeatPack, .ValidateSpellPack
 
 local ADDON, ns = ...
 
@@ -22,6 +22,12 @@ local PERK_REQUIRED = { id = "string", name = "string" }
 local WEAPON_REQUIRED = { id = "string", name = "string" }
 local CHAR_REQUIRED = { name = "string", level = "number", attributes = "table" }
 local ITEM_REQUIRED = { id = "string", name = "string", kind = "string" }
+local FEAT_PACK_REQUIRED = { pack_name = "string", lines = "table" }
+local FEAT_LINE_REQUIRED = { id = "string", name = "string", attribute = "string" }
+local FEAT_RANK_REQUIRED = { name = "string" }
+local SPELL_PACK_REQUIRED = { pack_name = "string", spells = "table" }
+local SPELL_SCHOOL_REQUIRED = { id = "string", name = "string" }
+local SPELL_REQUIRED = { id = "string", name = "string", school = "string", rank = "number" }
 
 -- The item kinds the sheet knows how to render. A kind outside this set is
 -- reported: the mechanics (equip toggle, bonus folding, counter) are chosen by
@@ -125,6 +131,72 @@ local function CheckNumeric(value, ctx, field, limit, issues)
     elseif limit and (value > limit or value < -limit) then
         Report(issues, ctx,
             "field '" .. field .. "' is outside [-" .. limit .. ", " .. limit .. "]")
+    end
+end
+
+-- Checks an optional string field for type only. Pack text (descriptions,
+-- ranges, types) carries rules prose of arbitrary length, so unlike item text
+-- it is not capped - matching how system perk text is treated.
+local function CheckString(value, ctx, field, issues)
+    if value ~= nil and type(value) ~= "string" then
+        Report(issues, ctx, "field '" .. field .. "' should be string, got " .. type(value))
+    end
+end
+
+-- Checks an optional version field: packs and systems stamp these as either
+-- "1.01" strings or plain numbers, so both pass.
+local function CheckVersion(value, ctx, issues)
+    if value ~= nil and type(value) ~= "string" and type(value) ~= "number" then
+        Report(issues, ctx, "field 'version' should be string or number, got " .. type(value))
+    end
+end
+
+-- Checks an optional list of finite numbers (the per-rank requirement tables).
+local function CheckNumberList(list, ctx, field, issues)
+    if list == nil then return end
+    if type(list) ~= "table" then
+        Report(issues, ctx, "field '" .. field .. "' should be a list, got " .. type(list))
+        return
+    end
+    for i, n in ipairs(list) do
+        CheckNumeric(n, ctx, field .. "[" .. i .. "]", nil, issues)
+        if type(n) ~= "number" then
+            Report(issues, ctx, field .. "[" .. i .. "] should be number, got " .. type(n))
+        end
+    end
+end
+
+-- Checks an optional cost record ({ ap = n, mana = n }): both fields optional,
+-- numeric, finite and non-negative. Costs render on the sheet and pickers, so
+-- a malformed one degrades display but must never poison arithmetic.
+local function CheckCost(cost, ctx, issues)
+    if cost == nil then return end
+    if type(cost) ~= "table" then
+        Report(issues, ctx, "field 'cost' should be a table, got " .. type(cost))
+        return
+    end
+    for _, field in ipairs({ "ap", "mana" }) do
+        local v = cost[field]
+        CheckNumeric(v, ctx, "cost." .. field, MAX_BONUS, issues)
+        if type(v) == "number" and v < 0 then
+            Report(issues, ctx, "cost." .. field .. " must not be negative")
+        end
+    end
+end
+
+-- Checks an optional effects list: each entry must be a table. Effect contents
+-- follow the shared vocabulary (Modules/CharacterSheet.lua) where unknown
+-- types are informational, so only the container shape is enforced here.
+local function CheckEffects(effects, ctx, issues)
+    if effects == nil then return end
+    if type(effects) ~= "table" then
+        Report(issues, ctx, "field 'effects' should be a list, got " .. type(effects))
+        return
+    end
+    for j, e in ipairs(effects) do
+        if type(e) ~= "table" then
+            Report(issues, ctx .. ".effects[" .. j .. "]", "should be a table, got " .. type(e))
+        end
     end
 end
 
@@ -301,6 +373,17 @@ function Schema.ValidateSystem(system)
         end
     end
 
+    -- Progression config: the pick budget knobs are plain numbers.
+    if system.progression ~= nil then
+        if type(system.progression) ~= "table" then
+            Report(issues, "system", "field 'progression' should be a table, got "
+                .. type(system.progression))
+        else
+            CheckNumeric(system.progression.picks_level_1, "progression", "picks_level_1", nil, issues)
+            CheckNumeric(system.progression.picks_per_level, "progression", "picks_per_level", nil, issues)
+        end
+    end
+
     -- Derived-stat config: any attribute it names must exist.
     local ds = system.derived_stats
     if type(ds) == "table" then
@@ -411,7 +494,8 @@ function Schema.ValidateSystem(system)
     return #issues == 0, issues
 end
 
--- Validates a single character against an optional system definition.
+-- Validates a single character against an optional system definition and
+-- optional feat/spell packs.
 --
 -- Returns two values: ok, issues
 --   ok     - true when no issues were found
@@ -420,7 +504,12 @@ end
 -- When `system` is supplied, attribute keys, the primary/ac attributes,
 -- accomplished skills/saves and selected perks are checked against it. When
 -- `system` is nil only the character's own shape is validated.
-function Schema.ValidateCharacter(char, system)
+--
+-- `packs` is an optional { feats = featPack, spells = spellPack } table (the
+-- active packs, see ns.GetFeatPack/GetSpellPack). Pack membership resolves
+-- independently of the system: char.feats/char.spells are shape-checked
+-- always, and checked against the packs whenever those are at hand.
+function Schema.ValidateCharacter(char, system, packs)
     local issues = {}
     if type(char) ~= "table" then
         return false, { "character: entry is not a table" }
@@ -434,6 +523,97 @@ function Schema.ValidateCharacter(char, system)
     -- id set is what the system adds here - see CheckInventory.
     local weaponIds = (type(system) == "table") and IdSet(system.weapons) or nil
     CheckInventory(char, weaponIds, issues)
+
+    -- Feats and spells, like the inventory, are checked with or without a
+    -- system - their references live in packs, not the system definition.
+    local featPack = type(packs) == "table" and type(packs.feats) == "table" and packs.feats or nil
+    local spellPack = type(packs) == "table" and type(packs.spells) == "table" and packs.spells or nil
+
+    -- char.feats is a { [lineId] = rank } map onto the feat pack's lines.
+    if char.feats ~= nil then
+        if type(char.feats) ~= "table" then
+            Report(issues, "character", "field 'feats' should be a table, got " .. type(char.feats))
+        else
+            for lineId, rank in pairs(char.feats) do
+                local ctx = "character.feats[" .. tostring(lineId) .. "]"
+                if type(lineId) ~= "string" then
+                    Report(issues, "character.feats", "key '" .. tostring(lineId) .. "' should be a string")
+                elseif type(rank) ~= "number" or rank ~= rank or rank == math.huge
+                    or rank == -math.huge or rank < 1 then
+                    Report(issues, ctx, "rank should be a number of at least 1")
+                elseif featPack then
+                    local line
+                    for _, l in ipairs(AsTable(featPack.lines)) do
+                        if type(l) == "table" and l.id == lineId then line = l end
+                    end
+                    if not line then
+                        Report(issues, ctx, "unknown feat line")
+                    elseif type(line.ranks) == "table" and rank > #line.ranks then
+                        Report(issues, ctx, "rank " .. rank .. " exceeds the line's "
+                            .. #line.ranks .. " rank(s)")
+                    end
+                end
+            end
+        end
+    end
+
+    -- char.spells is a flat list of spell ids from the spell pack. Beyond
+    -- membership, knowing spells from two mutually-opposed schools violates
+    -- the pack's exclusivity locks.
+    if char.spells ~= nil then
+        if type(char.spells) ~= "table" then
+            Report(issues, "character", "field 'spells' should be a table, got " .. type(char.spells))
+        else
+            local spellById = {}
+            if spellPack then
+                for _, s in ipairs(AsTable(spellPack.spells)) do
+                    if type(s) == "table" and s.id then spellById[s.id] = s end
+                end
+            end
+            local schoolsKnown = {}
+            for i, id in ipairs(char.spells) do
+                if type(id) ~= "string" then
+                    Report(issues, "character.spells[" .. i .. "]", "should be a string, got " .. type(id))
+                elseif spellPack then
+                    local spell = spellById[id]
+                    if not spell then
+                        Report(issues, "character.spells", "unknown spell '" .. id .. "'")
+                    elseif type(spell.school) == "string" then
+                        schoolsKnown[spell.school] = true
+                    end
+                end
+            end
+            if spellPack then
+                for _, school in ipairs(AsTable(spellPack.schools)) do
+                    if type(school) == "table" and schoolsKnown[school.id]
+                        and type(school.opposed) == "string" and schoolsKnown[school.opposed]
+                        -- Report each opposed pair once, not once per side.
+                        and school.id < school.opposed then
+                        Report(issues, "character.spells", "knows spells from opposed schools '"
+                            .. school.id .. "' and '" .. school.opposed .. "'")
+                    end
+                end
+            end
+        end
+    end
+
+    -- The cast attribute must be one of the spell pack's candidates when that
+    -- pack constrains them (the system-side existence check is below, with
+    -- the other attribute picks).
+    if char.cast_attribute ~= nil then
+        CheckString(char.cast_attribute, "character", "cast_attribute", issues)
+        local candidates = spellPack and AsTable(spellPack.cast_attributes) or {}
+        if type(char.cast_attribute) == "string" and #candidates > 0 then
+            local ok = false
+            for _, id in ipairs(candidates) do
+                if id == char.cast_attribute then ok = true end
+            end
+            if not ok then
+                Report(issues, "character", "cast_attribute '" .. char.cast_attribute
+                    .. "' is not one of the spell pack's cast_attributes")
+            end
+        end
+    end
 
     if type(system) ~= "table" then
         return #issues == 0, issues
@@ -461,12 +641,15 @@ function Schema.ValidateCharacter(char, system)
         end
     end
 
-    -- Primary and AC attribute selections.
+    -- Primary, AC and cast attribute selections.
     if char.primary_attribute and not attrIds[char.primary_attribute] then
         Report(issues, "character", "unknown primary_attribute '" .. tostring(char.primary_attribute) .. "'")
     end
     if char.ac_attribute and not attrIds[char.ac_attribute] then
         Report(issues, "character", "unknown ac_attribute '" .. tostring(char.ac_attribute) .. "'")
+    end
+    if type(char.cast_attribute) == "string" and not attrIds[char.cast_attribute] then
+        Report(issues, "character", "unknown cast_attribute '" .. char.cast_attribute .. "'")
     end
 
     -- When the system constrains AC/initiative to candidate attributes, an
@@ -502,29 +685,43 @@ function Schema.ValidateCharacter(char, system)
         end
     end
 
-    -- Custom-perk effects must reference real skills/attributes; a `replaces`
-    -- target must be a real sphere perk.
-    for i, perk in ipairs(AsTable(char.custom_perks)) do
-        local pctx = "custom_perks[" .. i .. "]"
-        if type(perk) ~= "table" then
-            Report(issues, pctx, "should be a table, got " .. type(perk))
-        else
-            if perk.replaces and not perkIds[perk.replaces] then
-                Report(issues, pctx, "replaces unknown perk '" .. tostring(perk.replaces) .. "'")
-            end
-            for j, e in ipairs(AsTable(perk.effects)) do
-                local ctx = pctx .. ".effects[" .. j .. "]"
-                if type(e) ~= "table" then
-                    Report(issues, ctx, "should be a table, got " .. type(e))
-                else
-                    if e.type == "skill" and (e.skill or e.id) and not skillIds[e.skill or e.id] then
-                        Report(issues, ctx, "unknown skill '" .. tostring(e.skill or e.id) .. "'")
+    -- Homebrew lists (perks, feats, spells): effects must reference real
+    -- skills/attributes; a perk's `replaces` target must be a real sphere
+    -- perk; feats/spells additionally carry picker metadata (cost, save)
+    -- whose shape is bounded like the pack equivalents.
+    for _, listName in ipairs({ "custom_perks", "custom_feats", "custom_spells" }) do
+        for i, rec in ipairs(AsTable(char[listName])) do
+            local pctx = listName .. "[" .. i .. "]"
+            if type(rec) ~= "table" then
+                Report(issues, pctx, "should be a table, got " .. type(rec))
+            else
+                if listName == "custom_perks" and rec.replaces and not perkIds[rec.replaces] then
+                    Report(issues, pctx, "replaces unknown perk '" .. tostring(rec.replaces) .. "'")
+                end
+                if listName ~= "custom_perks" then
+                    CheckNumeric(rec.level, pctx, "level", nil, issues)
+                    CheckCost(rec.cost, pctx, issues)
+                    CheckString(rec.type, pctx, "type", issues)
+                    CheckString(rec.range, pctx, "range", issues)
+                    if rec.save ~= nil and type(rec.save) == "string" and not attrIds[rec.save] then
+                        Report(issues, pctx, "unknown save attribute '" .. rec.save .. "'")
                     end
-                    if (e.type == "attribute" or e.type == "save") and e.id and not attrIds[e.id] then
-                        Report(issues, ctx, "unknown attribute '" .. tostring(e.id) .. "'")
-                    end
-                    if e.add_modifier and not attrIds[e.add_modifier] then
-                        Report(issues, ctx, "unknown add_modifier attribute '" .. tostring(e.add_modifier) .. "'")
+                end
+                for j, e in ipairs(AsTable(rec.effects)) do
+                    local ctx = pctx .. ".effects[" .. j .. "]"
+                    if type(e) ~= "table" then
+                        Report(issues, ctx, "should be a table, got " .. type(e))
+                    else
+                        if (e.type == "skill" or e.type == "accomplish_skill")
+                            and (e.skill or e.id) and not skillIds[e.skill or e.id] then
+                            Report(issues, ctx, "unknown skill '" .. tostring(e.skill or e.id) .. "'")
+                        end
+                        if (e.type == "attribute" or e.type == "save") and e.id and not attrIds[e.id] then
+                            Report(issues, ctx, "unknown attribute '" .. tostring(e.id) .. "'")
+                        end
+                        if e.add_modifier and not attrIds[e.add_modifier] then
+                            Report(issues, ctx, "unknown add_modifier attribute '" .. tostring(e.add_modifier) .. "'")
+                        end
                     end
                 end
             end
@@ -556,6 +753,151 @@ function Schema.ValidateCharacter(char, system)
         end
     end
 
+    return #issues == 0, issues
+end
+
+-- Validates a feats pack: an importable collection of ability lines, each a
+-- ladder of ranks (rank N implicitly requires rank N-1 - array position IS the
+-- prerequisite chain, so no graph is validated here).
+--
+-- Returns two values: ok, issues (as ValidateSystem).
+--
+-- `system` is optional: when given, line attributes and rank saves must name
+-- attributes that exist in it; when nil (comm receive before adoption, or a
+-- pack imported ahead of its system) only the pack's own shape is validated.
+function Schema.ValidateFeatPack(pack, system)
+    local issues = {}
+    if type(pack) ~= "table" then
+        return false, { "feat pack: definition is not a table" }
+    end
+    if pack.kind ~= nil and pack.kind ~= "feats" then
+        Report(issues, "feat pack", "field 'kind' should be \"feats\", got '" .. tostring(pack.kind) .. "'")
+    end
+    CheckRequired(pack, FEAT_PACK_REQUIRED, "feat pack", issues)
+    CheckString(pack.for_system, "feat pack", "for_system", issues)
+    CheckVersion(pack.version, "feat pack", issues)
+    CheckNumberList(pack.rank_attribute_req, "feat pack", "rank_attribute_req", issues)
+
+    local attrIds = (type(system) == "table") and IdSet(system.attributes) or nil
+    local lineSeen = {}
+    for i, line in ipairs(AsTable(pack.lines)) do
+        local ctx = "line[" .. i .. "]"
+        if CheckRequired(line, FEAT_LINE_REQUIRED, ctx, issues) then
+            if lineSeen[line.id] then Report(issues, ctx, "duplicate id '" .. line.id .. "'") end
+            lineSeen[line.id] = true
+            if attrIds and not attrIds[line.attribute] then
+                Report(issues, ctx, "unknown attribute '" .. tostring(line.attribute) .. "'")
+            end
+            CheckString(line.description, ctx, "description", issues)
+            if type(line.ranks) ~= "table" then
+                Report(issues, ctx, "field 'ranks' should be a table, got " .. type(line.ranks))
+            elseif #line.ranks == 0 then
+                Report(issues, ctx, "has no ranks")
+            else
+                for r, rank in ipairs(line.ranks) do
+                    local rctx = ctx .. ".rank[" .. r .. "]"
+                    if CheckRequired(rank, FEAT_RANK_REQUIRED, rctx, issues) then
+                        CheckString(rank.type, rctx, "type", issues)
+                        CheckString(rank.range, rctx, "range", issues)
+                        CheckString(rank.description, rctx, "description", issues)
+                        CheckString(rank.save, rctx, "save", issues)
+                        if attrIds and rank.save and not attrIds[rank.save] then
+                            Report(issues, rctx, "unknown save attribute '" .. tostring(rank.save) .. "'")
+                        end
+                        CheckNumeric(rank.attribute_req, rctx, "attribute_req", nil, issues)
+                        CheckCost(rank.cost, rctx, issues)
+                        CheckEffects(rank.effects, rctx, issues)
+                    end
+                end
+            end
+        end
+    end
+    return #issues == 0, issues
+end
+
+-- Validates a spells pack: schools (with optional mutual exclusion via
+-- `opposed`) plus a flat spell list gated by rank and cast attribute.
+--
+-- Returns two values: ok, issues (as ValidateSystem).
+--
+-- `system` is optional, exactly as in ValidateFeatPack: cast attributes and
+-- spell saves resolve against it only when it is at hand.
+function Schema.ValidateSpellPack(pack, system)
+    local issues = {}
+    if type(pack) ~= "table" then
+        return false, { "spell pack: definition is not a table" }
+    end
+    if pack.kind ~= nil and pack.kind ~= "spells" then
+        Report(issues, "spell pack", "field 'kind' should be \"spells\", got '" .. tostring(pack.kind) .. "'")
+    end
+    CheckRequired(pack, SPELL_PACK_REQUIRED, "spell pack", issues)
+    CheckString(pack.for_system, "spell pack", "for_system", issues)
+    CheckVersion(pack.version, "spell pack", issues)
+    CheckNumberList(pack.rank_cast_req, "spell pack", "rank_cast_req", issues)
+
+    local attrIds = (type(system) == "table") and IdSet(system.attributes) or nil
+    for i, id in ipairs(AsTable(pack.cast_attributes)) do
+        if type(id) ~= "string" then
+            Report(issues, "spell pack", "cast_attributes[" .. i .. "] should be string, got " .. type(id))
+        elseif attrIds and not attrIds[id] then
+            Report(issues, "spell pack", "unknown attribute '" .. id .. "' in cast_attributes")
+        end
+    end
+
+    -- Schools first, so spells and opposition can resolve against the full set.
+    local schoolIds, opposedOf = {}, {}
+    for i, school in ipairs(AsTable(pack.schools)) do
+        local ctx = "school[" .. i .. "]"
+        if CheckRequired(school, SPELL_SCHOOL_REQUIRED, ctx, issues) then
+            if schoolIds[school.id] then Report(issues, ctx, "duplicate id '" .. school.id .. "'") end
+            schoolIds[school.id] = true
+            CheckString(school.description, ctx, "description", issues)
+            CheckString(school.opposed, ctx, "opposed", issues)
+            if type(school.opposed) == "string" then opposedOf[school.id] = school.opposed end
+        end
+    end
+    -- Opposition must point at a real school, never at itself, and must be
+    -- declared from both sides - the lock is symmetric in play, so a one-way
+    -- declaration is almost certainly an authoring slip.
+    for id, opp in pairs(opposedOf) do
+        if not schoolIds[opp] then
+            Report(issues, "school '" .. id .. "'", "opposed school '" .. opp .. "' not found")
+        elseif opp == id then
+            Report(issues, "school '" .. id .. "'", "opposes itself")
+        elseif opposedOf[opp] ~= id then
+            Report(issues, "school '" .. id .. "'", "opposes '" .. opp .. "' but '" .. opp
+                .. "' does not oppose it back")
+        end
+    end
+
+    local hasSchools = next(schoolIds) ~= nil
+    local spellSeen = {}
+    for i, spell in ipairs(AsTable(pack.spells)) do
+        local ctx = "spell[" .. i .. "]"
+        if CheckRequired(spell, SPELL_REQUIRED, ctx, issues) then
+            if spellSeen[spell.id] then Report(issues, ctx, "duplicate id '" .. spell.id .. "'") end
+            spellSeen[spell.id] = true
+            if hasSchools and not schoolIds[spell.school] then
+                Report(issues, ctx, "unknown school '" .. tostring(spell.school) .. "'")
+            end
+            if type(spell.rank) == "number" and spell.rank < 1 then
+                Report(issues, ctx, "rank must be at least 1")
+            end
+            CheckString(spell.type, ctx, "type", issues)
+            CheckString(spell.range, ctx, "range", issues)
+            CheckString(spell.damage, ctx, "damage", issues)
+            CheckString(spell.description, ctx, "description", issues)
+            CheckString(spell.save, ctx, "save", issues)
+            if attrIds and spell.save and not attrIds[spell.save] then
+                Report(issues, ctx, "unknown save attribute '" .. tostring(spell.save) .. "'")
+            end
+            if spell.concentration ~= nil and type(spell.concentration) ~= "boolean" then
+                Report(issues, ctx, "field 'concentration' should be boolean, got " .. type(spell.concentration))
+            end
+            CheckCost(spell.cost, ctx, issues)
+            CheckEffects(spell.effects, ctx, issues)
+        end
+    end
     return #issues == 0, issues
 end
 

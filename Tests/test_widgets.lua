@@ -6,7 +6,7 @@ local ns = T.load({}, "Core.lua")
 T.load(ns, "UI/Window.lua")
 T.load(ns, "UI/Widgets.lua")
 T.load(ns, "Modules/CharacterSheet.lua")
-T.load(ns, "Modules/PerkTree.lua")
+T.load(ns, "Modules/Picks.lua")
 T.load(ns, "Modules/CharacterEditor.lua")
 local W = ns.Widgets
 

@@ -214,7 +214,7 @@ for _, mutate in ipairs({
     reports(Schema.ValidateCharacter, c, badCharSys)  -- must not throw; verdict is irrelevant
 end
 
--- Homebrew perks written in game (UI/PerkWizardUI): the shapes the wizard
+-- Homebrew perks (import-authored custom_perks): the shapes such data
 -- produces must validate clean against the system its pickers were drawn from.
 local wizSys = MinimalSystem()
 wizSys.skills = { { id = "s1", name = "S1", attribute = "a" } }

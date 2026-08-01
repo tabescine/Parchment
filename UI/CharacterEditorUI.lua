@@ -6,7 +6,7 @@
 -- validation. New / Characters / Delete / Close manage the roster. Selection
 -- inputs reuse ns.Dialogs.Pick; numeric inputs use ns.Widgets.Stepper.
 --
--- Edits mutate the live character (and refresh the sheet/perk viewer); there is
+-- Edits mutate the live character (and refresh the sheet and pickers); there is
 -- no per-field undo, but import/export provides backup.
 --
 -- Reads from: ns.CharacterEditor, ns.CharacterSheet.Compute, ns.GetSystem,
@@ -31,7 +31,7 @@ StaticPopupDialogs["PARCHMENT_DELETE_CHAR"] = {
     OnAccept = function(_, key)
         ns.CharacterEditor.Delete(key)
         -- Refresh every window that shows the character (RefreshAll covers the
-        -- perk tree, whose self.char would otherwise point at the deleted table)
+        -- pickers, whose self.char would otherwise point at the deleted table)
         -- and push vitals, mirroring the hub roster's delete path.
         if ns.Systems then ns.Systems.RefreshAll() end
         if ns.Party then ns.Party.OnVitalsChanged() end
@@ -67,15 +67,14 @@ local function PerLevelHp(char)
     return hpMod + (die + 1) / 2
 end
 
--- Recomputes and redraws the editor plus the sheet / perk viewer if open.
+-- Recomputes and redraws the editor plus the sheet / pickers if open.
 -- Also pushes a (throttled) vitals update to the group - edits here can
 -- change HP/Mana/level, which the party overview displays.
 local function Changed(self)
     Refresh(self)
     if ns.CharacterSheetUI then ns.CharacterSheetUI.RefreshIfShown() end
-    if ns.PerkTreeUI and ns.PerkTreeUI.frame and ns.PerkTreeUI.frame:IsShown() then
-        ns.PerkTreeUI.Open()
-    end
+    if ns.FeatsUI and ns.FeatsUI.RefreshIfShown then ns.FeatsUI.RefreshIfShown() end
+    if ns.SpellbookUI and ns.SpellbookUI.RefreshIfShown then ns.SpellbookUI.RefreshIfShown() end
     if ns.Party then ns.Party.OnVitalsChanged() end
 end
 
@@ -100,6 +99,8 @@ local function TextBox(content, y, width) return Form.TextBox(content, CTRL_X, y
 
 -- A bordered multi-line text area (for notes) that wraps within its width.
 -- Spans from PAD to the content's right edge so it grows with the window.
+-- The text scrolls inside the border (ns.Widgets.ScrollingEdit) - notes
+-- longer than the box must not overflow onto the warnings below.
 local function NotesBox(content, y, height)
     local box = CreateFrame("Frame", nil, content, "BackdropTemplate")
     box:SetPoint("TOPLEFT", PAD, y)
@@ -113,15 +114,7 @@ local function NotesBox(content, y, height)
     })
     box:SetBackdropColor(0, 0, 0, 0.4)
     box:SetBackdropBorderColor(0.45, 0.38, 0.24, 1)
-    local e = CreateFrame("EditBox", nil, box)
-    e:SetMultiLine(true)
-    e:SetAutoFocus(false)
-    e:SetFontObject(ChatFontNormal)
-    e:SetTextColor(UI.TEXT[1], UI.TEXT[2], UI.TEXT[3])
-    e:SetPoint("TOPLEFT", 8, -7)
-    e:SetPoint("BOTTOMRIGHT", -8, 7)
-    e:SetScript("OnEscapePressed", e.ClearFocus)
-    return e
+    return ns.Widgets.ScrollingEdit(box)
 end
 
 -- Builds the editor once. Lays out persistent widgets; Refresh fills values.
@@ -192,6 +185,7 @@ local function BuildFrame()
     Label(c, "Primary", PAD, y); f.primaryBtn = FieldButton(c, y, 120); adv()
     Label(c, "AC attr", PAD, y); f.acBtn = FieldButton(c, y, 120); adv()
     Label(c, "Init attr", PAD, y); f.initBtn = FieldButton(c, y, 120); adv()
+    Label(c, "Cast attr", PAD, y); f.castBtn = FieldButton(c, y, 120); adv()
 
     -- Accomplished.
     y = y - 6; Header(c, "ACCOMPLISHED", y); y = y - 24

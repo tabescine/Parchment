@@ -15,10 +15,11 @@ do  -- Core replaces ns.Addon with the real AceAddon-stub object.
     for k, v in pairs(core) do ns[k] = v end
 end
 T.load(ns, "Modules/Systems.lua")
+T.load(ns, "Modules/Packs.lua")
 T.load(ns, "Modules/ImportExport.lua")
 T.load(ns, "Modules/Items.lua")
 T.load(ns, "Modules/CharacterSheet.lua")
-ParchmentCharDB, ParchmentSystemDB = {}, {}
+ParchmentCharDB, ParchmentSystemDB, ParchmentPackDB = {}, {}, {}
 ns.Addon:OnInitialize()
 
 -- Mirrors ImportExport's NormalizeKeys for comparing raw decodes.
@@ -33,10 +34,15 @@ local function normalize(value)
     return out
 end
 
--- Import the system, then the character, through the real dialog path.
+-- Import the system, both packs, then the character, through the real dialog
+-- path (the packs first: the sheet folds owned pack-feat effects).
 local ok, msg = ns.ImportExport.Import(T.readfile("Tools/examples/sample.system.toml"))
 assert(ok, tostring(msg))
 assert(ns.HasSystem() and ns.GetSystem().system_name == "Parchment Sample")
+ok, msg = ns.ImportExport.Import(T.readfile("Tools/examples/sample.feats.toml"))
+assert(ok, tostring(msg))
+ok, msg = ns.ImportExport.Import(T.readfile("Tools/examples/sample.spells.toml"))
+assert(ok, tostring(msg))
 ok, msg = ns.ImportExport.Import(T.readfile("Tools/examples/sample.character.toml"))
 assert(ok, tostring(msg))
 local char, key = ns.GetActiveCharacter()
@@ -51,14 +57,19 @@ for _, a in ipairs(sheet.attributes) do attrs[a.id] = a end
 for _, s in ipairs(sheet.skills) do skills[s.id] = s end
 assert(attrs.wits.final == 9 and attrs.wits.modifier == 1)   -- 8 + Human's +1
 assert(attrs.might.final == 5 and attrs.might.modifier == -1)
-assert(skills.lore.total == 8, "lore expected +8, got " .. skills.lore.total)
+-- Lore: wits +1 mod, accomplished +3... plus the Fieldnotes feat's +1 skill
+-- effect from the sample feats pack (owned pack feat ranks fold effects).
+assert(skills.lore.total == 9, "lore expected +9, got " .. skills.lore.total)
 assert(skills.endurance.total == 0)                          -- might -1 + Hardened +1
 local d = sheet.derived
 assert(d.hp.max == 32 and d.hp.current == 24 and d.hp.temp == 2)  -- 26 +2 Hardened +4 Toughness
 assert(d.mana.max == 8 and d.hit_dice == "5d6")
 assert(d.ac == 11 and d.initiative == 2 and d.movement == 12.5)
 assert(d.actions == 3 and d.accomplishment == 3)
-assert(d.save_dc == nil, "Wren is no caster - no save DC")
+-- Wren casts via cast_attribute (Spirit 6, modifier 0): DC 10 + 0 + acc 3.
+assert(d.save_dc == 13, "cast_attribute must make Wren a caster (DC 13)")
+assert(d.cast_attribute == "spirit")
+assert(d.spell and d.spell.attack == 3, "spell attack = spirit mod 0 + acc 3")
 assert(d.init_attribute == "wits", "explicit in-list init pick must be honored")
 local sphere = {}
 for _, p in ipairs(sheet.sphere_perks) do sphere[p.name] = p end
@@ -99,6 +110,20 @@ assert(sheet.derived.ac == 12 and sheet.derived.ac_equipment.total == 1,
     "equipped equipment must add its AC on top of the 11 above")
 assert(inv.gear[1].count == 12, "the character's own count wins over the item's default_count")
 
+-- The sample packs validate against the sample system, and Wren's feat,
+-- spell and cast-attribute picks all resolve against them.
+local featPack = normalize(assert(ns.TOML.decode(T.readfile("Tools/examples/sample.feats.toml"))))
+local spellPack = normalize(assert(ns.TOML.decode(T.readfile("Tools/examples/sample.spells.toml"))))
+local pOk, pIssues = ns.Schema.ValidateFeatPack(featPack, ns.GetSystem())
+assert(pOk, "sample feats pack must validate: " .. tostring((pIssues or {})[1]))
+pOk, pIssues = ns.Schema.ValidateSpellPack(spellPack, ns.GetSystem())
+assert(pOk, "sample spells pack must validate: " .. tostring((pIssues or {})[1]))
+pOk, pIssues = ns.Schema.ValidateCharacter(char, ns.GetSystem(),
+    { feats = featPack, spells = spellPack })
+assert(pOk, "Wren must validate against the packs: " .. tostring((pIssues or {})[1]))
+assert(featPack.for_system == ns.GetSystem().system_name, "feat pack pairing name")
+assert(spellPack.for_system == ns.GetSystem().system_name, "spell pack pairing name")
+
 -- The JSON twins must decode to exactly the TOML data (minus the _note).
 local sysToml = normalize(assert(ns.TOML.decode(T.readfile("Tools/examples/sample.system.toml"))))
 local sysJson = normalize(assert(ns.JSON.decode(T.readfile("Tools/examples/sample.system.json"))))
@@ -112,6 +137,12 @@ local itemsToml = normalize(assert(ns.TOML.decode(T.readfile("Tools/examples/sam
 local itemsJson = normalize(assert(ns.JSON.decode(T.readfile("Tools/examples/sample.items.json"))))
 itemsJson._note = nil
 T.assert_deepeq(itemsToml, itemsJson, "item twins")
+local featsJson = normalize(assert(ns.JSON.decode(T.readfile("Tools/examples/sample.feats.json"))))
+featsJson._note = nil
+T.assert_deepeq(featPack, featsJson, "feat pack twins")
+local spellsJson = normalize(assert(ns.JSON.decode(T.readfile("Tools/examples/sample.spells.json"))))
+spellsJson._note = nil
+T.assert_deepeq(spellPack, spellsJson, "spell pack twins")
 
 -- Export round-trips: what export produces, import's parsers reproduce.
 local sysOut = ns.ImportExport.ExportSystem("toml")

@@ -88,6 +88,19 @@ assert(got[1][1].id == "perk_1" and got[1][400].name == "Perk Number 400", "payl
 wire.receive("Parchment", "1@@@not-valid-encoded-deflate@@@", "PARTY", "DungeonMaster-Realm")
 assert(#got == 1, "corrupt compressed body must be ignored")
 
+-- The shipped sample packs must fit the wire comfortably: encoded (compressed
+-- when that pays) under the 128 KB send ceiling. This is the guard the pack
+-- feature relies on for FEATS/SPELLS shares.
+codec = {}
+T.load(codec, "TOML.lua")
+for _, file in ipairs({ "Tools/examples/sample.feats.toml", "Tools/examples/sample.spells.toml" }) do
+    local pack = assert(codec.TOML.decode(T.readfile(file)))
+    wire.sent = nil
+    local sendOk = ns.Comm.Send(pack.kind == "feats" and "FEATS" or "SPELLS", pack)
+    assert(sendOk and wire.sent, file .. " failed to send")
+    assert(#wire.sent < 128 * 1024, file .. " exceeds the wire ceiling")
+end
+
 -- Decompression bomb: a tiny wire body that expands past the size ceiling must be
 -- dropped BEFORE it is deserialized into state - decode runs ahead of the version
 -- and trust gates, so this cap is the only thing bounding the cost. The payload is

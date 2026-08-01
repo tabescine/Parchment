@@ -182,6 +182,76 @@ ns.HubUI.RegisterPanel({
     Build = BuildSystems, Refresh = RefreshSystems,
 })
 
+-- Rule packs panel ------------------------------------------------------------
+
+-- One list for both kinds (feats first): a pack row activates its pack on
+-- click - each kind has its own active slot - and X deletes via the shared
+-- confirm. Activation is an explicit user choice, so a pack claiming another
+-- system may still be activated; the pairing note in the meta line says what
+-- it belongs to, and the next system switch re-resolves (Packs.SyncToSystem).
+
+local PACK_KIND_LABEL = { feats = "Feats", spells = "Spells" }
+
+local function MakePackRow(content)
+    return CreateListRow(content, function(row)
+        if row.packKind and row.packName then
+            ns.Packs.ConfirmDelete(row.packKind, row.packName)
+        end
+    end)
+end
+
+local function RefreshPacks(panel)
+    local list = {}
+    for kind in pairs(PACK_KIND_LABEL) do
+        for name, entry in pairs(ns.GetPackLibrary(kind)) do
+            list[#list + 1] = { kind = kind, name = name, entry = entry }
+        end
+    end
+    table.sort(list, function(a, b)
+        if a.kind ~= b.kind then return a.kind < b.kind end
+        return a.name < b.name
+    end)
+
+    if #list == 0 then
+        ns.UI.Empty(panel, "No feat or spell packs yet.\n\nImport one, or adopt one your DM shares.",
+            "Import a pack", function() ns.HubUI.Open("import") end)
+        panel.content:SetHeight(10)
+        return
+    end
+    ns.UI.HideEmpty(panel)
+
+    PlaceRows(panel.content, list, function(row, item)
+        row.packKind, row.packName = item.kind, item.name
+        local active = ns.GetActivePackName(item.kind) == item.name
+        row.name:SetText("|cff8ec6ff[" .. PACK_KIND_LABEL[item.kind] .. "]|r " .. item.name
+            .. (active and "  |cff66d966[active]|r" or ""))
+        local c = active and UI.GOLD or UI.TEXT
+        row.name:SetTextColor(c[1], c[2], c[3])
+        local pack = item.entry.pack or {}
+        row.meta:SetText((pack.for_system and ("for " .. pack.for_system) or "any system")
+            .. (item.entry.from and ("  -  from " .. item.entry.from) or ""))
+        row:SetScript("OnClick", function()
+            if ns.Packs.Activate(item.kind, item.name) then
+                ns.Print("now using " .. ns.Packs.Label(item.kind) .. " '" .. item.name .. "'.")
+                ns.HubUI.RefreshIfShown("packs")
+            end
+        end)
+    end, MakePackRow)
+end
+
+local function BuildPacks(panel)
+    BuildList(panel, "ParchmentHubPackScroll",
+        "Click a pack to activate it (one active per kind). X deletes (asks first).")
+    FooterButton(panel, "Share feats", 100, 0, function() ns.Packs.Share("feats") end)
+    FooterButton(panel, "Share spells", 100, 104, function() ns.Packs.Share("spells") end)
+    FooterButton(panel, "Import / Export", 110, 208, function() ns.HubUI.Open("import") end)
+end
+
+ns.HubUI.RegisterPanel({
+    id = "packs", label = "Rule packs", order = 35,
+    Build = BuildPacks, Refresh = RefreshPacks,
+})
+
 -- Items panel -----------------------------------------------------------------
 
 -- Rows carry the library key; the item wizard owns both the editor and the

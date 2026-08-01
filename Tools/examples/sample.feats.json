@@ -1,0 +1,103 @@
+{
+  "_note": "Parchment Sample feats pack in JSON. JSON allows no comments - see sample.feats.toml for the fully annotated reference; both import identically.",
+  "for_system": "Parchment Sample",
+  "kind": "feats",
+  "lines": [
+    {
+      "attribute": "might",
+      "description": "Holds, locks and throws - controlling a foe with raw strength.",
+      "id": "iron_grip",
+      "name": "Iron Grip",
+      "ranks": [
+        {
+          "cost": {
+            "ap": 1
+          },
+          "description": "Seize a creature in melee. It must pass a Might save or be held until it breaks free.",
+          "name": "Firm Hold",
+          "range": "melee",
+          "save": "might",
+          "type": "active"
+        },
+        {
+          "description": "A creature you hold suffers -2 on attacks against anyone but you.",
+          "name": "Wrenching Twist",
+          "type": "passive"
+        },
+        {
+          "attribute_req": 8,
+          "cost": {
+            "ap": 2
+          },
+          "description": "Hurl a held creature 3m; it lands prone.",
+          "name": "Heaving Throw",
+          "range": "melee",
+          "type": "active"
+        }
+      ]
+    },
+    {
+      "attribute": "wits",
+      "id": "keen_study",
+      "name": "Keen Study",
+      "ranks": [
+        {
+          "description": "You may re-ask the GM one detail question per scene.",
+          "effects": [
+            {
+              "skill": "lore",
+              "type": "skill",
+              "value": 1
+            }
+          ],
+          "name": "Fieldnotes",
+          "type": "passive"
+        },
+        {
+          "cost": {
+            "ap": 1
+          },
+          "description": "Study a foe: learn one of its resistances or weaknesses.",
+          "name": "Pattern Sense",
+          "type": "active"
+        }
+      ]
+    },
+    {
+      "attribute": "spirit",
+      "id": "warding_soul",
+      "name": "Warding Soul",
+      "ranks": [
+        {
+          "description": "+1 to Spirit saving throws.",
+          "effects": [
+            {
+              "id": "spirit",
+              "type": "save",
+              "value": 1
+            }
+          ],
+          "name": "Steady Spirit",
+          "type": "passive"
+        },
+        {
+          "cost": {
+            "ap": 1,
+            "mana": 1
+          },
+          "description": "An ally you can see gains +2 on their next saving throw.",
+          "name": "Shared Calm",
+          "range": "10m",
+          "type": "active"
+        }
+      ]
+    }
+  ],
+  "pack_name": "Parchment Sample Feats",
+  "rank_attribute_req": [
+    5,
+    6,
+    7
+  ],
+  "version": "1.0"
+}

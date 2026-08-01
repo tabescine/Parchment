@@ -150,6 +150,22 @@ function Form.WirePickers(f, get, after)
             W.AttrItems(ns.GetSystem(), allow), 1, { t.init_attribute },
             function(ids) local tt = get(); if tt then tt.init_attribute = ids[1] end end)
     end)
+    -- Cast attribute: restricted to the active spell pack's candidates when
+    -- one declares them; without a pack, any attribute. "(none)" clears the
+    -- pick - the character then casts by the classic primary-attribute rule.
+    f.castBtn:SetScript("OnClick", function()
+        local t = get(); if not t then return end
+        local pack = ns.GetSpellPack()
+        local allow = W.CandidateSet(pack and pack.cast_attributes or nil)
+        local items = { { id = "__none", name = "(none)" } }
+        for _, it in ipairs(W.AttrItems(ns.GetSystem(), allow)) do items[#items + 1] = it end
+        Pick("Cast Attribute", "Choose the spellcasting attribute", items, 1,
+            { t.cast_attribute or "__none" },
+            function(ids)
+                local tt = get()
+                if tt then tt.cast_attribute = (ids[1] ~= "__none") and ids[1] or nil end
+            end)
+    end)
     f.skillsBtn:SetScript("OnClick", function()
         local t = get(); if not t then return end
         local items = W.ListItems(ns.GetSystem().skills)
@@ -212,6 +228,7 @@ function Form.FillCommon(f, target, system, sheet, showTotal)
     f.primaryBtn:SetText(ns.AttrName(target.primary_attribute))
     f.acBtn:SetText(W.AttrPickText(target.ac_attribute, sheet.derived.ac_attribute))
     f.initBtn:SetText(W.AttrPickText(target.init_attribute, sheet.derived.init_attribute))
+    f.castBtn:SetText(target.cast_attribute and ns.AttrName(target.cast_attribute) or "(none)")
 
     local tg = CE.AccomplishTargets(sheet)
     f.skillsBtn:SetText(string.format("%d / %d", #(target.accomplished_skills or {}), tg.skills))
