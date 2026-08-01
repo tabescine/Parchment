@@ -257,7 +257,7 @@ end
 -- status on show would wipe an import's own outcome (the import triggers a
 -- RefreshAll that re-shows this very panel).
 ns.HubUI.RegisterPanel({
-    id = "import", label = "Import / export", order = 50,
+    id = "import", label = "Import / export", order = 50, icon = "inv_misc_note_01",
     Build = BuildContent,
 })
 

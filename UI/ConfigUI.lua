@@ -165,7 +165,7 @@ Refresh = function(self)
 end
 
 ns.HubUI.RegisterPanel({
-    id = "settings", label = "Settings", order = 90,
+    id = "settings", label = "Settings", order = 90, icon = "trade_engineering",
     Build = BuildContent, Refresh = Refresh,
 })
 

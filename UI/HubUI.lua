@@ -22,13 +22,15 @@ local ADDON, ns = ...
 
 local UI = ns.UI
 local PAD = 14
-local SIDEBAR_W = 116
+local SIDEBAR_W = 128
 local ROW_H = 30
+local NAV_H = 26
 
--- Font for the selected sidebar button (see Select): gold, and the same size
--- as UIPanelButtonTemplate's normal font. Read off _G so a client without it
--- simply keeps the template's greyed-out disabled font.
-local SELECTED_FONT = _G.GameFontNormal
+-- Blizzard textures for the sidebar entries (TRP3-style flat nav; Parchment
+-- ships no art). The friends-list bar is cropped past its rounded left cap;
+-- the quest-title gradient marks the selected entry.
+local TEX_HOVER = "Interface\\FriendsFrame\\UI-FriendsFrame-HighlightBar"
+local TEX_SELECTED = "Interface\\QuestFrame\\UI-QuestTitleHighlight"
 
 local HubUI = {}
 ns.HubUI = HubUI
@@ -48,16 +50,38 @@ local function PanelById(id)
     end
 end
 
--- Shows a panel: sidebar buttons reflect the selection (the active panel's
--- button is disabled - it is "where you are", not an unavailable screen, hence
--- the SELECTED_FONT set in BuildFrame), the panel frame is built lazily and
--- refreshed on every show.
+-- Repaints every sidebar entry: label (with the panel's live count when it
+-- declares one), selected band, and font. Selection disables the entry - it
+-- is "where you are", not an unavailable screen; motion scripts stay alive so
+-- a truncation tooltip could still fire (the TRP3 pattern).
+local function UpdateSidebar(self)
+    for _, p in ipairs(panels) do
+        local b = p.button
+        if b then
+            local selected = p.id == self.current
+            local label = p.label
+            if p.count then
+                local ok, n = pcall(p.count)
+                if ok and n then label = label .. "  (" .. n .. ")" end
+            end
+            b.label:SetText(label)
+            b.label:SetFontObject(selected and _G.GameFontNormal or _G.GameFontHighlight)
+            b.sel:SetShown(selected)
+            b:SetEnabled(not selected)
+        end
+    end
+end
+
+-- Shows a panel: the sidebar reflects the selection, the page title takes the
+-- panel's label, and the panel frame is built lazily and refreshed on every
+-- show.
 local function Select(self, id)
     local chosen = PanelById(id) or PanelById(self.current) or panels[1]
     if not chosen then return end
     self.current = chosen.id
+    UpdateSidebar(self)
+    self.pageTitle:SetText(chosen.label)
     for _, p in ipairs(panels) do
-        if p.button then p.button:SetEnabled(p ~= chosen) end
         if p.frame then p.frame:Hide() end
     end
     if not chosen.frame then
@@ -75,21 +99,45 @@ local function BuildFrame()
         minW = 540, minH = 380, maxW = 940, maxH = 820, dbKey = "hubWindow",
     })
 
-    -- Sidebar.
+    -- Sidebar: flat nav entries (icon + label) instead of gray panel buttons.
+    -- Hover lights the row additively; the selected entry carries a gold band
+    -- and gold text and stops reacting (see UpdateSidebar).
     local y = -46
     for _, p in ipairs(panels) do
-        local b = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-        b:SetSize(SIDEBAR_W, 24)
+        local b = CreateFrame("Button", nil, f)
+        b:SetSize(SIDEBAR_W, NAV_H)
         b:SetPoint("TOPLEFT", PAD, y)
-        -- Selection is expressed by disabling the button (Select), so its
-        -- disabled font is what carries the "you are here" reading.
-        if SELECTED_FONT and b.SetDisabledFontObject then
-            b:SetDisabledFontObject(SELECTED_FONT)
+        b:SetMotionScriptsWhileDisabled(true)
+
+        local hl = b:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetAllPoints()
+        hl:SetTexture(TEX_HOVER)
+        hl:SetTexCoord(0.25, 1, 0, 1)
+        hl:SetBlendMode("ADD")
+        hl:SetAlpha(0.6)
+
+        b.sel = b:CreateTexture(nil, "BACKGROUND")
+        b.sel:SetAllPoints()
+        b.sel:SetTexture(TEX_SELECTED)
+        b.sel:SetAlpha(0.7)
+        b.sel:Hide()
+
+        if p.icon then
+            b.icon = b:CreateTexture(nil, "ARTWORK")
+            b.icon:SetSize(16, 16)
+            b.icon:SetPoint("LEFT", 4, 0)
+            b.icon:SetTexture("Interface\\Icons\\" .. p.icon)
         end
-        b:SetText(p.label)
+        b.label = b:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+        b.label:SetPoint("LEFT", p.icon and 26 or 6, 0)
+        b.label:SetPoint("RIGHT", -2, 0)
+        b.label:SetJustifyH("LEFT")
+        b.label:SetWordWrap(false)
+        b.label:SetText(p.label)
+
         b:SetScript("OnClick", function() Select(f, p.id) end)
         p.button = b
-        y = y - 27
+        y = y - NAV_H - 2
     end
 
     local divider = f:CreateTexture(nil, "BACKGROUND")
@@ -98,9 +146,24 @@ local function BuildFrame()
     divider:SetPoint("BOTTOMLEFT", PAD + SIDEBAR_W + 7, 14)
     divider:SetWidth(1)
 
-    -- Content pane; panel frames fill it.
+    -- Page header: the panel's name large, over a gold rule (the Blizzard
+    -- options-divider atlas when the client has it, a plain line otherwise).
+    f.pageTitle = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightHuge")
+    f.pageTitle:SetPoint("TOPLEFT", PAD + SIDEBAR_W + 16, -46)
+    f.pageTitle:SetJustifyH("LEFT")
+    local rule = f:CreateTexture(nil, "ARTWORK")
+    local okAtlas = pcall(rule.SetAtlas, rule, "Options_HorizontalDivider", true)
+    if not okAtlas then
+        rule:SetColorTexture(UI.LINE[1], UI.LINE[2], UI.LINE[3], UI.LINE[4])
+        rule:SetHeight(1)
+    end
+    rule:SetPoint("TOPLEFT", f.pageTitle, "BOTTOMLEFT", 0, -6)
+    rule:SetPoint("RIGHT", f, "RIGHT", -PAD, 0)
+    rule:SetVertexColor(1, 0.675, 0.125)
+
+    -- Content pane; panel frames fill it, below the header.
     f.body = CreateFrame("Frame", nil, f)
-    f.body:SetPoint("TOPLEFT", PAD + SIDEBAR_W + 16, -46)
+    f.body:SetPoint("TOPLEFT", PAD + SIDEBAR_W + 16, -84)
     f.body:SetPoint("BOTTOMRIGHT", -PAD, 14)
 
     return f
@@ -134,6 +197,7 @@ end
 function HubUI.RefreshIfShown(panelId)
     local f = HubUI.frame
     if not (f and f:IsShown()) then return end
+    UpdateSidebar(f)   -- data changed somewhere; the nav counts follow it
     if panelId and f.current ~= panelId then return end
     local p = PanelById(f.current)
     if p and p.frame and p.Refresh then p.Refresh(p.frame) end
@@ -150,10 +214,23 @@ end
 local function CreateCharRow(content)
     local row = CreateFrame("Button", nil, content)
     row:SetHeight(ROW_H)
+    row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 
+    -- Engraved row band + additive hover bar (both Blizzard textures; the
+    -- band's TexCoords slice the thin title gradient out of the achievement
+    -- frame sheet - the trick TRP3 Extended's database rows use).
+    local band = row:CreateTexture(nil, "BACKGROUND")
+    band:SetPoint("TOPLEFT", 0, -1)
+    band:SetPoint("BOTTOMRIGHT", 0, 1)
+    band:SetTexture("Interface\\ACHIEVEMENTFRAME\\UI-Achievement-Title")
+    band:SetTexCoord(0, 1, 0.40625, 0.60125)
+    band:SetAlpha(0.35)
     local hl = row:CreateTexture(nil, "HIGHLIGHT")
     hl:SetAllPoints(row)
-    hl:SetColorTexture(UI.HILITE[1], UI.HILITE[2], UI.HILITE[3], UI.HILITE[4])
+    hl:SetTexture("Interface\\FriendsFrame\\UI-FriendsFrame-HighlightBar")
+    hl:SetTexCoord(0.25, 1, 0, 1)
+    hl:SetBlendMode("ADD")
+    hl:SetAlpha(0.6)
 
     row.name = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     row.name:SetPoint("TOPLEFT", 6, -2)
@@ -187,11 +264,36 @@ local function CreateCharRow(content)
     row.meta:SetPoint("RIGHT", del, "LEFT", -4, 0)
     row.meta:SetWordWrap(false)
 
-    row:SetScript("OnClick", function(self)
+    -- Left-click activates; right-click opens the secondary verbs as a
+    -- context menu (modern Menu API; without it right-click just activates
+    -- too). Every entry documents itself with a hover tooltip.
+    local function Activate(self)
         if self.key and ns.SetActiveCharacter(self.key) then
             ActiveChanged()
             HubUI.RefreshIfShown("characters")
         end
+    end
+    row:SetScript("OnClick", function(self, mouseButton)
+        if mouseButton == "RightButton" and MenuUtil then
+            local key, name = self.key, self.charName or self.key or "?"
+            MenuUtil.CreateContextMenu(self, function(_, root)
+                root:CreateTitle(name)
+                local tip = MenuUtil.SetElementTooltip
+                local e = root:CreateButton("Set active", function() Activate(self) end)
+                if tip then tip(e, "Every window renders the active character.") end
+                e = root:CreateButton("Edit", function()
+                    Activate(self)
+                    ns.OpenModule("edit")
+                end)
+                if tip then tip(e, "Makes it active and opens the editor.") end
+                e = root:CreateButton(DELETE or "Delete", function()
+                    StaticPopup_Show("PARCHMENT_DELETE_CHAR", name, nil, key)
+                end)
+                if tip then tip(e, "Asks first. Export a backup from Import / export.") end
+            end)
+            return
+        end
+        Activate(self)
     end)
     return row
 end
@@ -268,7 +370,12 @@ local function BuildCharacters(panel)
 end
 
 HubUI.RegisterPanel({
-    id = "characters", label = "Characters", order = 10,
+    id = "characters", label = "Characters", order = 10, icon = "inv_helmet_20",
+    count = function()
+        local n = 0
+        for _ in pairs(ns.GetCharacters()) do n = n + 1 end
+        return n
+    end,
     Build = BuildCharacters, Refresh = RefreshCharacters,
 })
 
