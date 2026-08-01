@@ -25,6 +25,8 @@ local wow_api = {
     "IsInGroup", "IsInRaid", "GetNumGroupMembers",
     -- Chat, rolls, reload
     "SendChatMessage", "DEFAULT_CHAT_FRAME", "RandomRoll", "RANDOM_ROLL_RESULT",
+    "ChatFrameUtil", "ChatFrame_AddMessageEventFilter", "hooksecurefunc", "SetItemRef",
+    "IsShiftKeyDown", "IsAltKeyDown",
     "ReloadUI",
     -- Addon metadata + libraries
     "LibStub", "C_AddOns", "GetAddOnMetadata",

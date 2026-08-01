@@ -135,6 +135,18 @@ local function AcquireCard(self)
         card.desc:SetWordWrap(true)
         card:SetScript("OnClick", function(c, mouseButton)
             local f = c.window
+            -- Shift-click posts the card as a chat link (pack and homebrew
+            -- cards alike) instead of any other click behaviour.
+            if mouseButton ~= "RightButton" and IsShiftKeyDown and IsShiftKeyDown() then
+                if c.homebrewIndex then
+                    local rec = ns.Homebrew.List(f.char, "feat")[c.homebrewIndex]
+                    if rec then ns.ChatLinks.PostLink(ns.ChatLinks.Homebrew("feat", rec)) end
+                elseif c.line then
+                    ns.ChatLinks.PostLink(ns.ChatLinks.FeatRank(
+                        c.line, c.line.ranks[c.rankIndex], c.rankIndex))
+                end
+                return
+            end
             -- Homebrew cards edit on left-click and delete on right-click via
             -- the homebrew wizard; pack cards only remove ranks.
             if c.homebrewIndex then
@@ -428,7 +440,8 @@ local function BuildFrame()
     f.legend:SetPoint("RIGHT", f.points, "LEFT", -12, 0)
     f.legend:SetJustifyH("LEFT")
     f.legend:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
-    f.legend:SetText("Click a line to unfold it - Learn takes the next rank, right-click the top rank removes it")
+    f.legend:SetText("Click a line to unfold it - Learn takes the next rank, right-click the top rank"
+        .. " removes it, shift-click a card links it in chat")
 
     f.msg = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     f.msg:SetPoint("TOPLEFT", 130, -72)

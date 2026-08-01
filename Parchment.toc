@@ -20,12 +20,14 @@ Modules\Comm.lua
 Modules\Systems.lua
 Modules\Packs.lua
 Modules\Picks.lua
+Modules\ChatLinks.lua
 Modules\Dice.lua
 
 # Shared UI chrome (defines ns.UI; must load before panels that use it).
 UI\Window.lua
 UI\Dialogs.lua
 UI\Widgets.lua
+UI\ChatLinkUI.lua
 # The hub (management window). Loads before the files that register panels.
 UI\HubUI.lua
 

@@ -20,6 +20,7 @@ local MANIFEST = {
     "test_feats.lua",
     "test_spells.lua",
     "test_homebrew.lua",
+    "test_chatlinks.lua",
     "test_initiative.lua",
     "test_init_adopt.lua",
     "test_widgets.lua",
