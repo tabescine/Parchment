@@ -152,13 +152,10 @@ local function CreateRow(content)
     rm:SetHighlightTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Up")
     rm:SetScript("OnClick", function()
         if not CanEdit() then return end
-        -- Read the combatant BEFORE removing it: the notice names it and
-        -- quotes its initiative, so a misclick can be typed straight back in.
         local c = IT.GetState().combatants[row.index]
-        IT.Remove(row.index)
-        Refresh(InitiativeUI.frame)
-        Sync()
-        if c then ns.Print("removed " .. c.name .. " (initiative " .. tostring(c.init) .. ").") end
+        if not c then return end
+        StaticPopup_Show("PARCHMENT_INIT_REMOVE", c.name, nil,
+            { index = row.index, name = c.name })
     end)
     rm:SetScript("OnEnter", function(self)
         if not CanEdit() then return end
@@ -744,6 +741,26 @@ StaticPopupDialogs["PARCHMENT_SET_NPC_HP"] = {
         popup:Hide()
     end,
     EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
+-- Remove confirmation: the X sits 4px from the move-up arrow, and a deleted
+-- combatant's place in the order is not recoverable. The index is re-checked
+-- against the name on accept - a sync while the dialog stood may have moved
+-- the rows under it.
+StaticPopupDialogs["PARCHMENT_INIT_REMOVE"] = {
+    text = "Remove %s from the combat?",
+    button1 = "Remove",
+    button2 = CANCEL,
+    OnAccept = function(_, data)
+        if not CanEdit() then return end
+        local c = IT.GetState().combatants[data.index]
+        if not (c and c.name == data.name) then return end
+        IT.Remove(data.index)
+        RefreshIfShown()
+        Sync()
+        ns.Print("removed " .. c.name .. " (initiative " .. tostring(c.init) .. ").")
+    end,
     timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
 }
 
