@@ -228,3 +228,37 @@ char = Char()
 char.cast_attribute = "ghost"
 ok, issues = Schema.ValidateCharacter(char, System())
 assert(not ok and findIssue(issues, "unknown cast_attribute 'ghost'"))
+
+-- Click-to-roll checks ({ attribute } or { skill }) on feat ranks and spells:
+-- shape-only without a system, resolved against it when given.
+local function CheckSystem()
+    local s = System()
+    s.skills = { { id = "sneak", name = "Sneak", attribute = "wit" } }
+    return s
+end
+pack = FeatPack()
+pack.lines[1].ranks[1].check = { attribute = "pow" }
+pack.lines[1].ranks[2].check = { skill = "sneak" }
+assert(Schema.ValidateFeatPack(pack), "valid checks must pass without a system")
+assert(Schema.ValidateFeatPack(pack, CheckSystem()), "valid checks must pass with a system")
+pack.lines[1].ranks[1].check = { attribute = "ghost" }
+assert(Schema.ValidateFeatPack(pack), "check attributes must not resolve without a system")
+ok, issues = Schema.ValidateFeatPack(pack, CheckSystem())
+assert(not ok and findIssue(issues, "unknown check attribute 'ghost'"))
+pack = FeatPack()
+pack.lines[1].ranks[1].check = { skill = "ghost" }
+ok, issues = Schema.ValidateFeatPack(pack, CheckSystem())
+assert(not ok and findIssue(issues, "unknown check skill 'ghost'"))
+pack = FeatPack()
+pack.lines[1].ranks[1].check = "pow"
+ok, issues = Schema.ValidateFeatPack(pack)
+assert(not ok and findIssue(issues, "'check' should be a table"))
+pack = FeatPack()
+pack.lines[1].ranks[1].check = { attribute = "pow", skill = "sneak" }
+ok, issues = Schema.ValidateFeatPack(pack)
+assert(not ok and findIssue(issues, "exactly one of 'attribute' or 'skill'"))
+pack = FeatPack()
+pack.lines[1].ranks[1].check = {}
+ok, issues = Schema.ValidateFeatPack(pack)
+assert(not ok and findIssue(issues, "exactly one of 'attribute' or 'skill'"))
+

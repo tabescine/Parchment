@@ -199,6 +199,37 @@ local function CheckEffects(effects, ctx, issues)
     end
 end
 
+-- Checks an optional click-to-roll check ({ attribute = id } or
+-- { skill = id }, exactly one of the two): the sheet rolls d20 + that
+-- modifier when the feat/spell row is clicked. attrIds/skillIds are the
+-- system's id sets, or nil when no system is at hand (only the shape is
+-- enforced then, as everywhere else in the pack validators).
+local function CheckRollCheck(check, ctx, attrIds, skillIds, issues)
+    if check == nil then return end
+    if type(check) ~= "table" then
+        Report(issues, ctx, "field 'check' should be a table, got " .. type(check))
+        return
+    end
+    local hasAttr, hasSkill = check.attribute ~= nil, check.skill ~= nil
+    if hasAttr == hasSkill then
+        Report(issues, ctx, "field 'check' needs exactly one of 'attribute' or 'skill'")
+        return
+    end
+    if hasAttr then
+        if type(check.attribute) ~= "string" then
+            Report(issues, ctx, "check.attribute should be a string, got " .. type(check.attribute))
+        elseif attrIds and not attrIds[check.attribute] then
+            Report(issues, ctx, "unknown check attribute '" .. check.attribute .. "'")
+        end
+    else
+        if type(check.skill) ~= "string" then
+            Report(issues, ctx, "check.skill should be a string, got " .. type(check.skill))
+        elseif skillIds and not skillIds[check.skill] then
+            Report(issues, ctx, "unknown check skill '" .. check.skill .. "'")
+        end
+    end
+end
+
 -- Validates one item-library record (id, name, kind plus the per-kind extras).
 -- Bails after the required-field check so a non-record cannot be probed further.
 local function CheckItem(item, ctx, issues)
@@ -627,6 +658,7 @@ function Schema.ValidateCharacter(char, system, packs)
                 if rec.save ~= nil and type(rec.save) == "string" and not attrIds[rec.save] then
                     Report(issues, pctx, "unknown save attribute '" .. rec.save .. "'")
                 end
+                CheckRollCheck(rec.check, pctx, attrIds, skillIds, issues)
                 for j, e in ipairs(AsTable(rec.effects)) do
                     local ctx = pctx .. ".effects[" .. j .. "]"
                     if type(e) ~= "table" then
@@ -674,6 +706,7 @@ function Schema.ValidateFeatPack(pack, system)
     CheckNumberList(pack.rank_attribute_req, "feat pack", "rank_attribute_req", issues)
 
     local attrIds = (type(system) == "table") and IdSet(system.attributes) or nil
+    local skillIds = (type(system) == "table") and IdSet(system.skills) or nil
     local lineSeen = {}
     for i, line in ipairs(AsTable(pack.lines)) do
         local ctx = "line[" .. i .. "]"
@@ -702,6 +735,7 @@ function Schema.ValidateFeatPack(pack, system)
                         CheckNumeric(rank.attribute_req, rctx, "attribute_req", nil, issues)
                         CheckCost(rank.cost, rctx, issues)
                         CheckEffects(rank.effects, rctx, issues)
+                        CheckRollCheck(rank.check, rctx, attrIds, skillIds, issues)
                     end
                 end
             end
@@ -731,6 +765,7 @@ function Schema.ValidateSpellPack(pack, system)
     CheckNumberList(pack.rank_cast_req, "spell pack", "rank_cast_req", issues)
 
     local attrIds = (type(system) == "table") and IdSet(system.attributes) or nil
+    local skillIds = (type(system) == "table") and IdSet(system.skills) or nil
     for i, id in ipairs(AsTable(pack.cast_attributes)) do
         if type(id) ~= "string" then
             Report(issues, "spell pack", "cast_attributes[" .. i .. "] should be string, got " .. type(id))
@@ -791,6 +826,7 @@ function Schema.ValidateSpellPack(pack, system)
             end
             CheckCost(spell.cost, ctx, issues)
             CheckEffects(spell.effects, ctx, issues)
+            CheckRollCheck(spell.check, ctx, attrIds, skillIds, issues)
         end
     end
     return #issues == 0, issues

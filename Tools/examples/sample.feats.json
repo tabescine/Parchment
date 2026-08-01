@@ -54,10 +54,13 @@
           "type": "passive"
         },
         {
+          "check": {
+            "skill": "lore"
+          },
           "cost": {
             "ap": 1
           },
-          "description": "Study a foe: learn one of its resistances or weaknesses.",
+          "description": "Study a foe: pass a Lore Check to learn one of its resistances or weaknesses.",
           "name": "Pattern Sense",
           "type": "active"
         }
