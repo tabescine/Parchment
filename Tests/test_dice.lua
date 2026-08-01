@@ -26,7 +26,8 @@ ns.Dice.Check("Perception", -1)
 assert(printed[1] == "Perception: 7 (d20) - 1 = 6", tostring(printed[1]))
 assert(#sent == 0)
 
--- With a token: it rides the line, and the local print is rewritten.
+-- With a token: it replaces the label as the line's head, and the local
+-- print is rewritten.
 ns.Dice.Check("Bolt attack", 3, "[PMT:Bolt:1]")
-assert(printed[2] == "RW<Me>Bolt attack: 7 (d20) + 3 = 10 [PMT:Bolt:1]", tostring(printed[2]))
+assert(printed[2] == "RW<Me>[PMT:Bolt:1]: 7 (d20) + 3 = 10", tostring(printed[2]))
 assert(#sent == 0, "public rolls off must never reach chat")
