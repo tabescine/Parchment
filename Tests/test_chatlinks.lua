@@ -15,10 +15,12 @@ ns.Comm = {
         return true
     end,
 }
-IsInGroup = function() return true end
-IsInRaid = function() return false end
-local said = {}
-SendChatMessage = function(msg, channel) said[#said + 1] = { msg = msg, channel = channel } end
+-- Chat-input stubs: an "active" edit box capturing Insert, and the
+-- open-a-fresh-input fallback.
+local inserted, opened = {}, {}
+local activeBox = { Insert = function(_, text) inserted[#inserted + 1] = text end }
+ChatEdit_GetActiveWindow = function() return activeBox end
+ChatFrame_OpenChat = function(text) opened[#opened + 1] = text end
 
 T.load(ns, "Modules/ChatLinks.lua")
 local CL = ns.ChatLinks
@@ -47,12 +49,14 @@ assert(player == "Tab-Realm" and id == "Lancet:1")
 assert(CL.ParseHref("addon:totalrp3:X:Y") == nil)
 assert(CL.ParseHref("item:12345") == nil)
 
--- PostLink: parenthesized token to the group channel.
+-- PostLink inserts the bare token into the open chat input; with none open
+-- it pre-fills a fresh input instead. Nothing is sent by the addon itself.
 assert(CL.PostLink({ title = "Ward", lines = {} }))
-assert(said[1].channel == "PARTY" and said[1].msg == "([PMT:Ward:1])", said[1].msg)
-IsInGroup = function() return false end
-assert(CL.PostLink({ title = "Ward", lines = {} }) == false, "no group, no post")
-IsInGroup = function() return true end
+assert(inserted[1] == "[PMT:Ward:1]", tostring(inserted[1]))
+ChatEdit_GetActiveWindow = function() return nil end
+assert(CL.PostLink({ title = "Ward", lines = {} }))
+assert(opened[1] == "[PMT:Ward:2]", tostring(opened[1]))
+ChatEdit_GetActiveWindow = function() return activeBox end
 
 -- Builders produce title + symbolic-colored lines.
 ParchmentSystemDB = { system_name = "Mini", attributes = { { id = "vit", name = "Vitality" } } }

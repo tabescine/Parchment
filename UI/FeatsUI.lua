@@ -441,7 +441,7 @@ local function BuildFrame()
     f.legend:SetJustifyH("LEFT")
     f.legend:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
     f.legend:SetText("Click a line to unfold it - Learn takes the next rank, right-click the top rank"
-        .. " removes it, shift-click a card links it in chat")
+        .. " removes it, shift-click a card puts its link in chat")
 
     f.msg = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     f.msg:SetPoint("TOPLEFT", 130, -72)
