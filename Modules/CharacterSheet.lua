@@ -1,14 +1,14 @@
 -- Parchment - Character Sheet (logic)
 --
--- Resolves a raw character (base attributes + trait/perk selections) against a
--- system definition into a fully computed sheet: final attributes with their
--- bonus sources, modifiers, derived stats, skills and saving throws with
--- totals, weapons, traits and perks. Pure data in, pure data out - the UI layer
+-- Resolves a raw character (base attributes + trait/feat/spell selections)
+-- against a system definition into a fully computed sheet: final attributes
+-- with their bonus sources, modifiers, derived stats, skills and saving
+-- throws with totals, weapons and traits. Pure data in, pure data out - the UI layer
 -- renders whatever this returns, so the same compute path can be unit-tested
 -- without a running client.
 --
 -- Parchment's computation model. Imported systems supply the data (attributes,
--- modifier_table, skills, perks, traits) and, via the optional `derived_stats`
+-- modifier_table, skills, traits) and, via the optional `derived_stats`
 -- block, declare which attributes drive the derived stats. The fixed formulas:
 --   final attribute   = base + fixed trait bonuses (+/-)
 --   modifier          = system modifier_table[final]
@@ -27,13 +27,13 @@
 -- Which attribute fills each role is configured per system (see ns.DerivedConfig);
 -- an unset role contributes 0, so no specific attribute id is ever assumed.
 --
--- Homebrew per-character perks (custom_perks, import-authored homebrew
--- grants) carry the same machine-readable effects as traits, but they are
--- level-gated: a perk folds into these totals only once the character has
--- reached the level it is gained at (see .PerkActive). A perk written ahead of
--- time stays on the sheet as pending and contributes nothing until then.
--- Conditional racial effects are never folded - they are surfaced for the
--- player to apply.
+-- Homebrew feats and spells (custom_feats/custom_spells) carry the same
+-- machine-readable effects as traits, but they are level-gated: a record
+-- folds into these totals only once the character has reached the level it
+-- is gained at (see .HomebrewActive). One written ahead of time renders as
+-- pending and contributes nothing until then. Owned pack feat ranks and
+-- known pack spells fold their effects too. Conditional racial effects are
+-- never folded - they are surfaced for the player to apply.
 --
 -- Items are references, not copies: each char.inventory entry names a library
 -- item, resolved on every Compute (ns.Items.Resolve), so an edit to the library
@@ -48,8 +48,9 @@
 --
 -- Reads from: ns.GetModifier, ns.GetHitDie, ns.GetAccomplishmentBonus,
 --   ns.Items.Resolve, system.
--- Exposes on ns.CharacterSheet: .Compute, .PerkActive (the one active/pending
---   test for homebrew perks, shared with Picks.Spent and the UIs),
+-- Exposes on ns.CharacterSheet: .Compute, .HomebrewActive (the one
+--   active/pending test for homebrew records, shared with Picks.Spent and
+--   the UIs),
 --   .EFFECT_TYPES and .EffectType (the effect vocabulary - see the table
 --   for the per-entry fields).
 
@@ -94,7 +95,8 @@ local function AddUnique(list, value)
     list[#list + 1] = value
 end
 
--- Effect vocabulary, shared by trait bonuses/penalties and custom-perk effects.
+-- Effect vocabulary, shared by trait bonuses/penalties, pack feat/spell
+-- effects, and homebrew records.
 -- Each effect is a record { type = <id>, value = N, ... }; this table is the
 -- one place that says what a type means.
 --
@@ -108,7 +110,7 @@ end
 --               which adds a copy of that attribute's modifier to the skill/save
 --               ("twice your X modifier on skill Y")
 --   apply(acc, e, v, source)  folds the effect into the accumulator; v is the
---               effect's numeric value and source the trait/perk name
+--               effect's numeric value and source the granting record's name
 --
 -- Any type outside this table (attribute_points, damage_reduction, ...) is
 -- informational: it is surfaced to the player but never folded into totals.
@@ -198,16 +200,16 @@ function CharacterSheet.EffectType(id)
     return EFFECT_BY_ID[id]
 end
 
--- True when a homebrew perk has already been gained: its level (absent or
--- non-numeric means 1, so an unlevelled perk is always active) is at or below
+-- True when a homebrew record (custom feat or spell) has already been
+-- gained: its level (absent or non-numeric means 1, so an unlevelled record
 -- the character's. The single place the active/pending line is drawn - Compute,
 -- Picks.Spent and the UIs all ask here.
-function CharacterSheet.PerkActive(char, perk)
-    local gainedAt = tonumber(type(perk) == "table" and perk.level) or 1
+function CharacterSheet.HomebrewActive(char, record)
+    local gainedAt = tonumber(type(record) == "table" and record.level) or 1
     return gainedAt <= ((type(char) == "table" and char.level) or 1)
 end
 
--- Folds a single effect entry into the accumulator. source is the trait/perk
+-- Folds a single effect entry into the accumulator. source is the record
 -- name, recorded for attribute bonus provenance.
 local function ApplyEffect(acc, e, source)
     local spec = EFFECT_BY_ID[e.type]
@@ -215,16 +217,16 @@ local function ApplyEffect(acc, e, source)
     spec.apply(acc, e, e.value or 0, source)
 end
 
--- Accumulates every effect from the selected traits and the character's custom
--- perks into one structure the rest of compute reads from.
-local function AccumulateEffects(traits, perks)
+-- Accumulates every effect from the selected traits and the gained
+-- feat/spell records into one structure the rest of compute reads from.
+local function AccumulateEffects(traits, records)
     local acc = NewAccumulator()
     for _, trait in ipairs(traits) do
         for _, b in ipairs(trait.bonuses or {}) do ApplyEffect(acc, b, trait.name) end
         for _, p in ipairs(trait.penalties or {}) do ApplyEffect(acc, p, trait.name) end
     end
-    for _, perk in ipairs(perks or {}) do
-        for _, e in ipairs(perk.effects or {}) do ApplyEffect(acc, e, perk.name) end
+    for _, rec in ipairs(records or {}) do
+        for _, e in ipairs(rec.effects or {}) do ApplyEffect(acc, e, rec.name) end
     end
     return acc
 end
@@ -241,31 +243,6 @@ local function ListToSet(list)
     local set = {}
     for _, id in ipairs(list or {}) do set[id] = true end
     return set
-end
-
--- Finds a perk by id across the system's trees. Returns the perk record and
--- its sphere name, or nil.
-local function FindPerkInSystem(system, id)
-    for _, tree in ipairs(system.perk_trees or {}) do
-        for _, perk in ipairs(tree.perks or {}) do
-            if perk.id == id then return perk, tree.name end
-        end
-    end
-end
-
--- Counts occurrences of id in a list.
-local function CountIn(list, id)
-    local c = 0
-    for _, v in ipairs(list or {}) do
-        if v == id then c = c + 1 end
-    end
-    return c
-end
-
--- Resolves a record id to its display name within a system list (skills/weapons).
-local function NameInList(list, id)
-    local rec = ns.FindById(list, id)
-    return rec and rec.name or id
 end
 
 -- Returns x when it is a table, else an empty table. Used for char.inventory
@@ -392,80 +369,16 @@ function CharacterSheet.Compute(char, system, itemLib)
     local level = char.level or 1
     local accomplishment = ns.GetAccomplishmentBonus(level)
 
-    -- Resolve selected standard-sphere perks: a display list (unique, with rank
-    -- and sphere) and a flat per-occurrence list for effect folding.
-    local spherePerks, spherePerkSeen, takenForEffects = {}, {}, {}
-    for _, pid in ipairs(char.perks or {}) do
-        local perk, sphereName = FindPerkInSystem(system, pid)
-        if perk then
-            takenForEffects[#takenForEffects + 1] = perk
-            local entry = spherePerkSeen[pid]
-            if not entry then
-                entry = { name = perk.name, description = perk.description, sphere = sphereName, rank = 0 }
-                spherePerkSeen[pid] = entry
-                spherePerks[#spherePerks + 1] = entry
-            end
-            entry.rank = entry.rank + 1
-        end
-    end
-
-    -- Perk-driven choices: build
-    -- the extra effects/accomplishments they grant and tag the chosen values onto
-    -- the display entry for that perk.
-    local choiceEffects, extraSkills, extraWeapons = {}, {}, {}
-    for pid, chosen in pairs(char.perk_choices or {}) do
-        local perk = FindPerkInSystem(system, pid)
-        local choice = perk and perk.choice
-        if choice and CountIn(char.perks, pid) > 0 then
-            local names = {}
-            for _, cid in ipairs(chosen) do
-                if choice.kind == "skill" then
-                    names[#names + 1] = NameInList(system.skills, cid)
-                    if choice.apply == "accomplished" then
-                        extraSkills[cid] = true
-                    elseif choice.apply == "double_accomplishment" then
-                        choiceEffects[#choiceEffects + 1] =
-                            { { type = "skill", skill = cid, value = accomplishment }, perk.name }
-                    else
-                        local n = tonumber(tostring(choice.apply):match("skill_bonus:(%d+)"))
-                        if n then
-                            choiceEffects[#choiceEffects + 1] =
-                                { { type = "skill", skill = cid, value = n }, perk.name }
-                        end
-                    end
-                elseif choice.kind == "weapon" then
-                    names[#names + 1] = NameInList(system.weapons, cid)
-                    if choice.apply == "accomplished" then extraWeapons[cid] = true end
-                else
-                    names[#names + 1] = cid
-                end
-            end
-            if spherePerkSeen[pid] then spherePerkSeen[pid].choices = names end
-        end
-    end
-
-    -- Homebrew perks: a display entry each (in authored order), but only the
-    -- ones already gained at this level contribute effects - the rest are
-    -- flagged pending, so a whole ability path can be written up front.
-    local customPerks, activeCustom = {}, {}
-    for _, p in ipairs(char.custom_perks or {}) do
-        local entry = { name = p.name, description = p.description, level = p.level }
-        if CharacterSheet.PerkActive(char, p) then
-            activeCustom[#activeCustom + 1] = p
-        else
-            entry.pending = true
-        end
-        customPerks[#customPerks + 1] = entry
-    end
-
     -- Homebrew feats and spells (authored in the pickers) fold their effects
-    -- under the same level gate; their display lives in the pickers and the
+    -- once gained; a record written for a higher level is pending and
+    -- contributes nothing yet. Their display lives in the pickers and the
     -- sheet's quick-reference sections, which read the character directly.
     -- (Field names, not the lists - a nil list would truncate the array
     -- constructor and silently skip the rest.)
+    local activeCustom = {}
     for _, field in ipairs({ "custom_feats", "custom_spells" }) do
         for _, p in ipairs(type(char[field]) == "table" and char[field] or {}) do
-            if CharacterSheet.PerkActive(char, p) then
+            if CharacterSheet.HomebrewActive(char, p) then
                 activeCustom[#activeCustom + 1] = p
             end
         end
@@ -502,13 +415,9 @@ function CharacterSheet.Compute(char, system, itemLib)
         end
     end
 
-    -- Effects come from traits, gained homebrew perks, selected sphere perks
-    -- that carry machine-readable effects, and the choice-derived effects above.
-    local effectPerks = {}
-    for _, p in ipairs(activeCustom) do effectPerks[#effectPerks + 1] = p end
-    for _, p in ipairs(takenForEffects) do effectPerks[#effectPerks + 1] = p end
-    local fx = AccumulateEffects(traits, effectPerks)
-    for _, ce in ipairs(choiceEffects) do ApplyEffect(fx, ce[1], ce[2]) end
+    -- Effects come from traits and everything collected above (homebrew and
+    -- pack feats/spells alike).
+    local fx = AccumulateEffects(traits, activeCustom)
 
     -- Attributes: base + trait bonus + global all-attribute adjustment.
     local modifier = {}
@@ -527,7 +436,6 @@ function CharacterSheet.Compute(char, system, itemLib)
 
     -- Skills grouped under their governing attribute.
     local accomplishedSkills = ListToSet(char.accomplished_skills)
-    for id in pairs(extraSkills) do accomplishedSkills[id] = true end
     for id in pairs(fx.accomplishSkill) do accomplishedSkills[id] = true end
     local skills = {}
     for _, skill in ipairs(system.skills or {}) do
@@ -563,7 +471,6 @@ function CharacterSheet.Compute(char, system, itemLib)
     -- + global attack-roll effects. `weaponAttack` carries those totals to the
     -- inventory below, where each linked item adds its own bonus on top.
     local accomplishedWeapons = ListToSet(char.accomplished_weapons)
-    for id in pairs(extraWeapons) do accomplishedWeapons[id] = true end
     local weapons, weaponAttack = {}, {}
     for _, weapon in ipairs(system.weapons or {}) do
         if accomplishedWeapons[weapon.id] then
@@ -634,7 +541,7 @@ function CharacterSheet.Compute(char, system, itemLib)
     -- modifier. The defaults (base 0, per-level 0, multiplier 2) reproduce the
     -- classic "2 x modifier"; an AIAS-style "3 + half level + cast modifier"
     -- is mana_base 3, mana_per_level 0.5, mana_multiplier 1. This is the
-    -- fx-free base (trait/perk effects are added as `mana.max` in derived).
+    -- fx-free base (trait/homebrew effects are added as `mana.max` in derived).
     local manaBase = char.max_mana or math.max(0,
         cfg.mana_base + math.ceil(level * cfg.mana_per_level) + cfg.mana_multiplier * spellMod)
 
@@ -643,7 +550,7 @@ function CharacterSheet.Compute(char, system, itemLib)
         primary_attribute = primary,
         hit_dice = level .. ns.GetHitDie(hitDieMod),
         hp = { current = char.current_hp, max = (char.max_hp or 0) + fx.maxHP, temp = char.temp_hp },
-        -- `base` is the stored (fx-free) maximum; `max` adds the live trait/perk
+        -- `base` is the stored (fx-free) maximum; `max` adds the live trait/homebrew
         -- effect on top. Creation persists `base`, never `max`, so an effect is
         -- not baked into the stored value and then re-added on every Compute.
         mana = {
@@ -705,8 +612,6 @@ function CharacterSheet.Compute(char, system, itemLib)
         weapons = weapons,
         derived = derived,
         traits = traits,
-        sphere_perks = spherePerks,
-        custom_perks = customPerks,   -- display entries, pending ones flagged
         -- Display entries grouped by kind (see ResolveInventory), or nil when
         -- the character carries nothing - the sheet then renders exactly what
         -- it rendered before inventories existed.

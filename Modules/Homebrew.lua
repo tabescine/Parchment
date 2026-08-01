@@ -8,12 +8,12 @@
 -- machine-readable effects in the shared vocabulary. A record gained at a
 -- level above the character's is pending: it renders dimmed, folds nothing
 -- into the sheet, and costs no pick until the level is reached (the same
--- active/pending test homebrew perks use, ns.CharacterSheet.PerkActive).
+-- active/pending test, ns.CharacterSheet.HomebrewActive).
 --
 -- Commit/Delete are the single seams through which homebrew reaches a
 -- character, mirroring the retired perk-wizard seams.
 --
--- Reads from: ns.CharacterSheet.PerkActive.
+-- Reads from: ns.CharacterSheet.HomebrewActive.
 -- Exposes on ns.Homebrew: List, Field, NextId, Commit, Delete, Active.
 
 local ADDON, ns = ...
@@ -54,7 +54,7 @@ end
 -- True when a homebrew record is gained at the character's current level
 -- (pending records fold nothing and cost no pick).
 function Homebrew.Active(char, record)
-    return ns.CharacterSheet.PerkActive(char, record)
+    return ns.CharacterSheet.HomebrewActive(char, record)
 end
 
 -- Commits a homebrew record onto a character: appended when index is nil,

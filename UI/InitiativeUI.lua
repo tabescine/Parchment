@@ -586,7 +586,7 @@ local function BuildFrame()
     UI.SetPlaceholder(f.nameBox, "name")
     UI.SetPlaceholder(f.modBox, "init")
 
-    -- Debounced, like the sheet body and the perk graph: OnResize fires per
+    -- Debounced, like the sheet body and the pickers: OnResize fires per
     -- pixel of a drag-resize, and the scroll's OnSizeChanged fires too.
     local relayout = UI.Debounce(0.1, function() if f:IsShown() then RenderList(f) end end)
     f.OnResize = relayout

@@ -36,9 +36,9 @@ ac_attribute = "wits"
 init_attribute = "wits"
 cast_attribute = "spirit"
 
-# Resources. max_hp is the rolled total the player tracks; trait/perk max_hp
-# effects are added ON TOP for display (here: 26 + 2 Hardened + 4 Toughness
-# = 32 shown). An explicit max_mana overrides the derived formula (which
+# Resources. max_hp is the rolled total the player tracks; trait/homebrew
+# max_hp effects are added ON TOP for display (here: 26 + 2 Hardened = 28
+# shown). An explicit max_mana overrides the derived formula (which
 # would give 2 x Spirit modifier = 0 here). Wren casts via cast_attribute
 # (Spirit), so the sheet shows a save DC and spell attack derived from it.
 # temp_hp sits above current HP and is spent first.
@@ -59,13 +59,6 @@ origin_traits = ["scholarly", "hardened"]
 accomplished_skills = ["lore", "perception", "persuasion"]
 accomplished_weapons = ["bow"]    # only accomplished weapons appear on the sheet
 accomplished_saves = ["wits"]
-
-# Sphere perks, as a flat list of ids. A repeatable perk appears once PER
-# RANK - Toughness twice = rank 2. The pick budget is shared across perks,
-# feats and spells (see the system's `progression`): 3 at level 1 + 1 per
-# later level = 7 at level 5. Spent: 4 perks + 1 homebrew + 1 feat rank
-# + 1 spell = 7.
-perks = ["keen_eye", "scholar", "toughness", "toughness"]
 
 # Known spells, as a flat id list against the active spells pack
 # (sample.spells.toml). Gated by cast_attribute score per spell rank.
@@ -104,29 +97,26 @@ spirit = 6
 [feats]
 keen_study = 1
 
-# Recorded picks for perks that carry a choice, keyed by perk id.
-[perk_choices]
-scholar = ["lore"]
-
-# custom_perks: homebrew, granted by the DM directly on the character. Same
-# effect vocabulary as the system file (see its footer). `replaces` names a
-# sphere perk whose slot this fills - prerequisites and exclusivity treat the
-# replaced perk as taken, so the tree progresses past a homebrewed alternative
-# (here: Trail Sense stands in for Quick Reflexes, unlocking Pathfinder).
-# Unknown effect types ("damage_reduction") are shown but never folded into
-# totals - they are table rules, applied by people.
-[[custom_perks]]
+# custom_feats: homebrew, authored in game (the feats browser's Homebrew
+# rail) or by hand here. Same effect vocabulary as the system file's footer;
+# `level` is when it is gained (pending and effect-free above the character's
+# level). Unknown effect types ("damage_reduction") are shown but never
+# folded into totals - they are table rules, applied by people.
+# The shared pick budget (system `progression`): 3 at level 1 + 1 per later
+# level = 7 at level 5. Spent: 1 feat rank + 1 spell + 1 homebrew feat = 3.
+[[custom_feats]]
 id = "trail_sense"
 name = "Trail Sense"
+level = 2
+type = "passive"
 description = "Wren reads the land like a ledger. +1 initiative, Lore gains her Wits modifier a second time, and DR 1 while travelling (table rule)."
-replaces = "quick_reflexes"
-[[custom_perks.effects]]
+[[custom_feats.effects]]
 type = "initiative"
 value = 1
-[[custom_perks.effects]]
+[[custom_feats.effects]]
 type = "skill"
 skill = "lore"
 add_modifier = "wits"
-[[custom_perks.effects]]
+[[custom_feats.effects]]
 type = "damage_reduction"   # informational: displayed, not computed
 value = 1

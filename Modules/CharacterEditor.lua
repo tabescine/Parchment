@@ -63,7 +63,6 @@ function CE.NewBlank()
         racial_trait = nil, origin_traits = {},
         primary_attribute = first, ac_attribute = acDefault, init_attribute = initDefault,
         accomplished_skills = {}, accomplished_weapons = {}, accomplished_saves = {},
-        perks = {}, custom_perks = {}, perk_choices = {},
         -- HP/Mana are left unset until the build is finished (InitResources),
         -- so they derive from the final stats rather than a fixed 0.
         hit_dice = nil, notes = "",
@@ -89,7 +88,7 @@ function CE.InitResources(char, system)
     char.max_hp = die + 5
     char.current_hp = char.max_hp
     -- Store the fx-free base, not the effect-inclusive max: Compute re-adds trait
-    -- and perk mana effects on every call, so persisting the max would double-count
+    -- and homebrew mana effects on every call, so persisting the max would double-count
     -- them (a creation-time +5 mana trait would grant +10 forever).
     char.max_mana = sheet.derived.mana.base or 0
     char.current_mana = char.max_mana
@@ -214,7 +213,7 @@ function CE.LevelUp(char, hpGain, system)
     local notes = {}
     if gained > 0 then
         notes[#notes + 1] = "+" .. gained .. " pick" .. (gained == 1 and "" or "s")
-            .. " (perk, feat or spell)"
+            .. " (feat or spell)"
     end
     local b = system.level_bonuses and system.level_bonuses[char.level]
     if b then
@@ -237,7 +236,7 @@ end
 
 -- Returns a list of soft build warnings (never blocking). Combines structural
 -- schema issues with build-rule checks (point-buy, accomplished counts, origin
--- count, perk budget).
+-- count, pick budget).
 function CE.Warnings(char, system)
     local w = {}
     local sheet = ns.CharacterSheet.Compute(char, system, ns.GetItemLibrary())
@@ -253,7 +252,7 @@ function CE.Warnings(char, system)
         w[#w + 1] = string.format("%d of %d attribute points spent (%d unspent).", used, avail, avail - used)
     end
     -- The creation cap applies only at creation; afterwards level points and
-    -- traits can push base attributes higher (toward late perk requirements).
+    -- traits can push base attributes higher (toward late feat requirements).
     -- Only flag values outside the system's floor / modifier-table range.
     local floor = (system.point_buy and system.point_buy.min) or 1
     local cap = #(system.modifier_table or {})
@@ -292,7 +291,7 @@ function CE.Warnings(char, system)
 
     local invested, available = ns.Picks.Points(char)
     if invested > available then
-        w[#w + 1] = string.format("Picks (perks, feats, spells): %d used of %d available",
+        w[#w + 1] = string.format("Picks (feats and spells): %d used of %d available",
             invested, available)
     end
     return w

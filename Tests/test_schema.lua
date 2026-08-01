@@ -31,9 +31,7 @@ sys.attributes[3] = { id = "a", name = "Again" }
 ok, issues = Schema.ValidateSystem(sys)
 assert(not ok and findIssue(issues, "duplicate id"))
 
--- Duplicate ids in the other id-keyed lists: skills, weapons, perk trees, and
--- perks (globally, across trees - perk_choices and prerequisites key by bare
--- perk id, so a cross-tree duplicate is just as ambiguous as a same-tree one).
+-- Duplicate ids in the other id-keyed lists: skills and weapons.
 sys = MinimalSystem()
 sys.skills = { { id = "s", name = "S1", attribute = "a" }, { id = "s", name = "S2", attribute = "a" } }
 ok, issues = Schema.ValidateSystem(sys)
@@ -42,15 +40,6 @@ sys = MinimalSystem()
 sys.weapons = { { id = "w", name = "W1" }, { id = "w", name = "W2" } }
 ok, issues = Schema.ValidateSystem(sys)
 assert(not ok and findIssue(issues, "duplicate id 'w'"), "duplicate weapon id not reported")
-sys = MinimalSystem()
-sys.perk_trees = {
-    { id = "t", name = "T1", perks = { { id = "p1", name = "P1" } } },
-    { id = "t", name = "T2", perks = { { id = "p1", name = "P1 again" } } },
-}
-ok, issues = Schema.ValidateSystem(sys)
-assert(not ok and findIssue(issues, "duplicate id 't'"), "duplicate tree id not reported")
-assert(findIssue(issues, "duplicate perk id 'p1'"), "cross-tree duplicate perk id not reported")
-
 -- Skills and weapons must reference real attributes (lists too).
 sys = MinimalSystem()
 sys.skills = { { id = "s", name = "S", attribute = "ghost" } }
@@ -60,20 +49,6 @@ sys = MinimalSystem()
 sys.weapons = { { id = "w", name = "W", attribute = { "a", "ghost" } } }
 ok, issues = Schema.ValidateSystem(sys)
 assert(not ok and findIssue(issues, "unknown attribute 'ghost'"))
-
--- Perks: prerequisites resolve across trees; choice.kind is constrained.
-sys = MinimalSystem()
-sys.perk_trees = {
-    { id = "t1", name = "T1", perks = { { id = "p1", name = "P1" } } },
-    { id = "t2", name = "T2", perks = { { id = "p2", name = "P2", prerequisites = { "p1" } } } },
-}
-assert(Schema.ValidateSystem(sys), "cross-tree prerequisite should resolve")
-sys.perk_trees[2].perks[1].prerequisites = { "missing" }
-ok, issues = Schema.ValidateSystem(sys)
-assert(not ok and findIssue(issues, "'missing' not found"))
-sys.perk_trees[2].perks[1] = { id = "p2", name = "P2", choice = { kind = "hat" } }
-ok, issues = Schema.ValidateSystem(sys)
-assert(not ok and findIssue(issues, "choice.kind invalid"))
 
 -- derived_stats attribute couplings must resolve (incl. the tiebreaker and
 -- the AC/init candidate lists).
@@ -111,13 +86,11 @@ assert(not ok and findIssue(issues, "unknown race 'orc'"))
 -- Characters: shape plus references into the system.
 local refSys = MinimalSystem()
 refSys.skills = { { id = "s1", name = "S1", attribute = "a" } }
-refSys.perk_trees = { { id = "t", name = "T", perks = { { id = "p", name = "P", choice = { kind = "skill" } } } } }
 local char = {
     name = "C", level = 1, attributes = { a = 1 },
     accomplished_skills = { "s1" }, accomplished_saves = { "a" },
-    perk_choices = { p = { "s1" } },
-    custom_perks = {
-        { id = "h", name = "H", replaces = "p",
+    custom_feats = {
+        { id = "h", name = "H", level = 1,
             effects = { { type = "skill", skill = "s1", add_modifier = "a" } } },
     },
 }
@@ -128,13 +101,10 @@ char.attributes.ghost = 3
 ok, issues = Schema.ValidateCharacter(char, refSys)
 assert(not ok and findIssue(issues, "unknown attribute 'ghost'"))
 char.attributes.ghost = nil
-char.custom_perks[1].replaces = "nope"
-ok, issues = Schema.ValidateCharacter(char, refSys)
-assert(not ok and findIssue(issues, "replaces unknown perk"))
-char.custom_perks[1].replaces = "p"
-char.perk_choices.p = { "ghost_skill" }
+char.custom_feats[1].effects[1].skill = "ghost_skill"
 ok, issues = Schema.ValidateCharacter(char, refSys)
 assert(not ok and findIssue(issues, "unknown skill 'ghost_skill'"))
+char.custom_feats[1].effects[1].skill = "s1"
 
 -- Without a system only the shape is checked.
 assert(Schema.ValidateCharacter({ name = "C", level = 1, attributes = { anything = 1 } }, nil))
@@ -170,11 +140,6 @@ for _, mutate in ipairs({
     function(s) s.skills = 5 end,
     function(s) s.weapons = 5 end,
     function(s) s.spell_schools = 5 end,
-    function(s) s.perk_trees = 5 end,
-    function(s) s.perk_trees = { { id = "t", name = "T", perks = 5 } } end,
-    function(s) s.perk_trees = { { id = "t", name = "T", perks = { 5 } } } end,
-    function(s) s.perk_trees = { { id = "t", name = "T",
-        perks = { { id = "p", name = "P", choice = 5, prerequisites = 5 } } } } end,
     function(s) s.racial_traits = { { id = "t", name = "T", allowed_races = 5 } }; s.races = { "x" } end,
     function(s) s.derived_stats = { spell_attributes = 5 } end,
     function(s) s.accomplish_targets = { skills = { attribute_max = 5 } } end,
@@ -189,32 +154,25 @@ do
     local s = MinimalSystem(); s.attributes = { 1 }
     ok, issues = Schema.ValidateSystem(s)
     assert(not ok and findIssue(issues, "should be a table"), "scalar attribute not reported")
-    s = MinimalSystem()
-    s.perk_trees = { { id = "t", name = "T", perks = { { id = "p", name = "P", choice = 5 } } } }
-    ok, issues = Schema.ValidateSystem(s)
-    assert(not ok and findIssue(issues, "choice should be a table"), "scalar choice not reported")
 end
 
 -- Characters: every optional list/table as a truthy scalar.
 local badCharSys = MinimalSystem()
-badCharSys.perk_trees = { { id = "t", name = "T", perks = { { id = "p", name = "P" } } } }
 for _, mutate in ipairs({
     function(c) c.attributes = 5 end,
     function(c) c.accomplished_skills = 5 end,
     function(c) c.accomplished_saves = 5 end,
-    function(c) c.custom_perks = 5 end,
-    function(c) c.custom_perks = { 5 } end,
-    function(c) c.custom_perks = { { id = "h", name = "H", effects = 5 } } end,
-    function(c) c.custom_perks = { { id = "h", name = "H", effects = { 5 } } } end,
-    function(c) c.perk_choices = 5 end,
-    function(c) c.perk_choices = { p = 5 } end,
+    function(c) c.custom_feats = 5 end,
+    function(c) c.custom_feats = { 5 } end,
+    function(c) c.custom_spells = { { id = "h", name = "H", effects = 5 } } end,
+    function(c) c.custom_spells = { { id = "h", name = "H", effects = { 5 } } } end,
 }) do
     local c = { name = "C", level = 1, attributes = { a = 1 } }
     mutate(c)
     reports(Schema.ValidateCharacter, c, badCharSys)  -- must not throw; verdict is irrelevant
 end
 
--- Homebrew perks (import-authored custom_perks): the shapes such data
+-- Homebrew records (custom_feats/custom_spells): the shapes the wizard
 -- produces must validate clean against the system its pickers were drawn from.
 local wizSys = MinimalSystem()
 wizSys.skills = { { id = "s1", name = "S1", attribute = "a" } }
@@ -222,7 +180,7 @@ wizSys.spell_schools = { { id = "ev", name = "Evocation" } }
 local function wizChar(effects)
     return {
         name = "C", level = 3, attributes = { a = 1 },
-        custom_perks = { { id = "hb-1", name = "Wizard Perk", level = 3,
+        custom_feats = { { id = "hf-1", name = "Wizard Feat", level = 3,
             description = "Written in game.", effects = effects } },
     }
 end
@@ -237,8 +195,8 @@ ok, issues = Schema.ValidateCharacter(wizChar({
     { type = "ac", value = -1 },
     { type = "max_hp", value = 5 },
 }), wizSys)
-assert(ok, "wizard-shaped custom perk should validate: " .. tostring(issues and issues[1]))
--- A perk with no effects at all (text only) is legal.
+assert(ok, "wizard-shaped custom feat should validate: " .. tostring(issues and issues[1]))
+-- A record with no effects at all (text only) is legal.
 assert(Schema.ValidateCharacter(wizChar({}), wizSys))
 
 -- Item library records: id, name and a known kind are required; the per-kind

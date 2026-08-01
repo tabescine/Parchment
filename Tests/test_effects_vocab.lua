@@ -1,7 +1,7 @@
--- The effect vocabulary (CharacterSheet.EFFECT_TYPES) behind homebrew perks
--- and trait bonuses.
+-- The effect vocabulary (CharacterSheet.EFFECT_TYPES) behind trait bonuses,
+-- pack feat/spell effects and homebrew records.
 --
--- Every vocabulary entry is driven end to end: a homebrew perk carrying that
+-- Every vocabulary entry is driven end to end: a homebrew feat carrying that
 -- one effect must move the computed sheet exactly where the entry claims it
 -- points. The expectation table is keyed by effect id and checked for
 -- completeness, so a new effect type without a test fails this file.
@@ -38,14 +38,13 @@ local function BaseChar()
         primary_attribute = "b",
         accomplished_skills = { "s1" }, accomplished_weapons = { "w1" },
         max_hp = 10,
-        perks = {}, custom_perks = {},
     }
 end
 
--- The sheet for a character carrying one wizard-shaped homebrew perk.
+-- The sheet for a character carrying one wizard-shaped homebrew feat.
 local function SheetWith(effect)
     local char = BaseChar()
-    char.custom_perks = { { id = "hb-1", name = "Draft", level = 1,
+    char.custom_feats = { { id = "hf-1", name = "Draft", level = 1,
         description = "From the wizard.", effects = { effect } } }
     return ns.CharacterSheet.Compute(char, system)
 end
@@ -183,13 +182,13 @@ for _, spec in ipairs(CS.EFFECT_TYPES) do EXPECT[spec.id]() end
 T.assert_deepeq(SheetWith({ type = "made_up_informational", value = 9 }).derived,
     base.derived, "informational effect changed the sheet")
 
--- Level gating: a homebrew perk only folds into the totals once the character
--- has reached the level it is gained at. Until then it stays on the sheet,
--- flagged pending, and moves nothing.
+-- Level gating: a homebrew record only folds into the totals once the
+-- character has reached the level it is gained at. Until then it is pending
+-- and moves nothing.
 local function GatedChar(perkLevel, charLevel)
     local c = BaseChar()
     c.level = charLevel or 1
-    c.custom_perks = { { id = "hb-1", name = "Later", level = perkLevel,
+    c.custom_feats = { { id = "hf-1", name = "Later", level = perkLevel,
         description = "Planned.", effects = { { type = "ac", value = 3 } } } }
     return c
 end
@@ -198,17 +197,12 @@ local function GatedSheet(perkLevel, charLevel)
 end
 
 local pending = GatedSheet(3, 1)
-assert(pending.derived.ac == base.derived.ac, "a pending perk must not move the totals")
-assert(#pending.custom_perks == 1, "a pending perk must still be listed")
-local pendingEntry = pending.custom_perks[1]
-assert(pendingEntry.pending == true, "a perk gained later must be flagged pending")
-assert(pendingEntry.name == "Later" and pendingEntry.level == 3
-    and pendingEntry.description == "Planned.",
-    "the display entry must carry name/level/description")
+assert(pending.derived.ac == base.derived.ac, "a pending record must not move the totals")
+assert(not ns.CharacterSheet.HomebrewActive(GatedChar(3, 1), GatedChar(3, 1).custom_feats[1]),
+    "a record gained later must read as pending")
 
 local gained = GatedSheet(1, 1)
-assert(gained.derived.ac == base.derived.ac + 3, "a gained perk must fold into the totals")
-assert(gained.custom_perks[1].pending == nil, "a gained perk must not be flagged pending")
+assert(gained.derived.ac == base.derived.ac + 3, "a gained record must fold into the totals")
 
 -- Absent or unparseable levels mean level 1 (active); a numeric string still gates.
 assert(GatedSheet(nil, 1).derived.ac == base.derived.ac + 3, "no level must count as level 1")
@@ -216,18 +210,13 @@ assert(GatedSheet("garbage", 1).derived.ac == base.derived.ac + 3,
     "a non-numeric level must count as level 1")
 assert(GatedSheet("3", 1).derived.ac == base.derived.ac, "a numeric string level must still gate")
 
--- Levelling up activates the perk, and nothing else about it changes.
+-- Levelling up activates the record, and nothing else about it changes.
 local growing = GatedChar(3, 1)
 local before = ns.CharacterSheet.Compute(growing, system)
 growing.level = 3
 local after = ns.CharacterSheet.Compute(growing, system)
 assert(after.derived.ac == before.derived.ac + 3, "reaching the level must apply the effect")
-assert(after.custom_perks[1].pending == nil and after.custom_perks[1].name == "Later",
-    "reaching the level must clear pending without touching the entry")
+assert(ns.CharacterSheet.HomebrewActive(growing, growing.custom_feats[1]),
+    "reaching the level must activate the record")
 
--- The sheet's list is built, never the character's own table handed out.
-assert(after.custom_perks ~= growing.custom_perks, "Compute must not expose the raw perk table")
-assert(after.custom_perks[1] ~= growing.custom_perks[1], "display entries must be copies")
 
--- (The perk-commit seam these effects used to travel through died with the
--- perk wizard; homebrew perks are import-authored data now.)

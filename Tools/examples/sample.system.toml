@@ -19,8 +19,8 @@ system_name = "Parchment Sample"   # required; also names the entry in /pmt syst
 version = "1.0"                    # free-form, for your own bookkeeping
 max_level = 10                     # level-up cap in the editor (default 30)
 
-# Damage types are only used by perks with a damage_type choice (see
-# elemental_brand below) - the chosen value is recorded and displayed.
+# Damage types: a free-form list for reference (weapon/spell text may name
+# them; nothing folds them into totals).
 damage_types = ["slashing", "piercing", "blunt", "fire", "frost", "arcane"]
 
 # The race list offered by the editor/wizard, in this order. Optional: without
@@ -60,8 +60,8 @@ min = 1
 max = 8
 
 # -----------------------------------------------------------------------------
-# progression: the shared pick budget for perks, feats and spells. Every perk
-# rank, feat rank and known spell spends one pick from the same pool:
+# progression: the shared pick budget for feats and spells. Every feat rank,
+# known spell and gained homebrew record spends one pick from the same pool:
 #   budget = picks_level_1 + picks_per_level x (level - 1)
 # Both default to 1 (one pick per level) when this section is absent.
 # -----------------------------------------------------------------------------
@@ -109,7 +109,7 @@ movement_base = 12              # default 12
 movement_per_step = 0.5         # default 0.5
 ac_base = 10                    # AC = ac_base + AC-attribute modifier + effects
 save_dc_base = 10               # save DC = base + primary modifier + accomplishment
-actions_base = 2                # actions per turn before level/perk bonuses
+actions_base = 2                # actions per turn before level/effect bonuses
 
 # -----------------------------------------------------------------------------
 # accomplishment_table: character level -> accomplishment bonus (the
@@ -264,7 +264,7 @@ name = "Warding"
 # -----------------------------------------------------------------------------
 # racial_traits / origin_traits: a character picks one racial trait and any
 # number of origin traits. Mechanics go in `bonuses` and `penalties` - both
-# are lists of EFFECTS (the same vocabulary perks use, documented at the
+# are lists of EFFECTS (the shared vocabulary, documented at the
 # bottom of this file). Penalties are ordinary effects with NEGATIVE values,
 # kept in their own list so the UI can present them as drawbacks.
 #
@@ -340,224 +340,9 @@ type = "save"           # save effects target an ATTRIBUTE id
 id = "spirit"
 value = 1
 
-# -----------------------------------------------------------------------------
-# perk_trees ("spheres"): each tree has perks plus an optional visual layout.
-#   governing_attribute - default attribute for perks' attribute requirements
-#   layout.rows         - top-to-bottom rows of perk ids for the viewer
-#   layout.connect      - "lattice" draws prerequisite lines between rows
-#
-# Perk fields (all optional except id/name):
-#   description       - hover text
-#   effects           - effect list folded into the sheet (vocabulary below)
-#   attribute_req     - minimum FINAL value of the governing attribute
-#   req_attribute     - check a different attribute than the tree's governing one
-#   level_req         - number (rank 1) or list (one entry per rank)
-#   prerequisites     - ALL of these perk ids must be taken (any tree)
-#   prerequisites_any - at least ONE of these must be taken
-#   exclusive_with    - cannot be taken alongside these (works cross-tree)
-#   max_ranks         - how often the perk can be taken (default 1)
-#   repeatable        - marks a multi-rank perk; rank = times its id appears
-#                       in char.perks; choices scale with rank
-#   color             - "red" or "black": tints the node background in the
-#                       viewer (a tier identity, separate from status colours)
-#   choice            - ask the player to pick targets when taken:
-#       kind   - "skill", "weapon" or "damage_type"
-#       count  - how many to pick (default 1)
-#       prompt - picker title
-#       apply  - what the pick does:
-#                  "accomplished"           target becomes accomplished
-#                  "double_accomplishment"  skill gains the bonus a second time
-#                  "skill_bonus:N"          flat +N on the chosen skill
-#                  (omit for a recorded, display-only choice - the only option
-#                   for kind = "damage_type")
-# -----------------------------------------------------------------------------
-[[perk_trees]]
-id = "wanderer"
-name = "Path of the Wanderer"
-governing_attribute = "wits"
-
-[perk_trees.layout]
-connect = "lattice"          # draw prerequisite connector lines
-[[perk_trees.layout.rows]]
-perks = ["keen_eye", "scholar"]
-[[perk_trees.layout.rows]]
-perks = ["quick_reflexes", "jack_of_all_trades"]
-[[perk_trees.layout.rows]]
-perks = ["pathfinder"]
-
-# The simplest perk: a flat effect, no requirements.
-[[perk_trees.perks]]
-id = "keen_eye"
-name = "Keen Eye"
-description = "Your senses sharpen. +1 Perception."
-[[perk_trees.perks.effects]]
-type = "skill"
-skill = "perception"
-value = 1
-
-# A skill choice that doubles the accomplishment bonus on the chosen skill.
-[[perk_trees.perks]]
-id = "scholar"
-name = "Scholar"
-description = "Choose a skill; it gains the accomplishment bonus a second time."
-[perk_trees.perks.choice]
-kind = "skill"
-count = 1
-apply = "double_accomplishment"
-prompt = "Choose a skill to master."
-
-# attribute_req checks the tree's governing attribute (Wits) by default.
-[[perk_trees.perks]]
-id = "quick_reflexes"
-name = "Quick Reflexes"
-description = "Requires Wits 6 and Keen Eye. +1 initiative."
-attribute_req = 6
-prerequisites = ["keen_eye"]
-[[perk_trees.perks.effects]]
-type = "initiative"
-value = 1
-
-# Cross-tree exclusivity: this perk and Vanguard's "specialist" lock each
-# other out. Also gated by character level.
-[[perk_trees.perks]]
-id = "jack_of_all_trades"
-name = "Jack of All Trades"
-description = "+1 to every skill. A generalist's path - excludes Specialist."
-level_req = 3
-exclusive_with = ["specialist"]
-[[perk_trees.perks.effects]]
-type = "all_skills"
-value = 1
-
-# prerequisites_any: EITHER of the row-2 perks unlocks this. The choice makes
-# two skills accomplished outright.
-[[perk_trees.perks]]
-id = "pathfinder"
-name = "Pathfinder"
-description = "Choose two skills; you become accomplished in them."
-prerequisites_any = ["quick_reflexes", "jack_of_all_trades"]
-[perk_trees.perks.choice]
-kind = "skill"
-count = 2
-apply = "accomplished"
-prompt = "Choose two skills to become accomplished in."
-
-# req_attribute overrides the governing attribute: this Wanderer perk is
-# gated by Spirit instead of Wits. Demos spellcasting effects: a global
-# spell-attack bonus, a SCHOOL-targeted save-DC bonus (only the Evocation
-# row rises - the "diabolism +X" pattern), and max_mana.
-[[perk_trees.perks]]
-id = "arcane_focus"
-name = "Arcane Focus"
-description = "Requires Spirit 7. +1 spell attack, +1 Evocation save DC, +2 max mana."
-req_attribute = "spirit"
-attribute_req = 7
-[[perk_trees.perks.effects]]
-type = "spell_attack"
-value = 1
-[[perk_trees.perks.effects]]
-type = "save_dc"
-school = "evocation"
-value = 1
-[[perk_trees.perks.effects]]
-type = "max_mana"
-value = 2
-
-[[perk_trees]]
-id = "vanguard"
-name = "Path of the Vanguard"
-governing_attribute = "might"
-
-[[perk_trees.layout.rows]]
-perks = ["weapon_training", "toughness"]
-[[perk_trees.layout.rows]]
-perks = ["specialist", "battle_surge"]
-[[perk_trees.layout.rows]]
-perks = ["elemental_brand", "paragon"]
-
-# A perk may carry effects AND a choice: +1 to all attack rolls, plus the
-# chosen weapon becomes accomplished.
-[[perk_trees.perks]]
-id = "weapon_training"
-name = "Weapon Training"
-description = "+1 to attack rolls; choose a weapon to become accomplished with."
-[[perk_trees.perks.effects]]
-type = "attack_rolls"
-value = 1
-[perk_trees.perks.choice]
-kind = "weapon"
-count = 1
-apply = "accomplished"
-prompt = "Choose a weapon."
-
-# A repeatable (multi-rank) perk: its effects apply once PER RANK. level_req
-# as a list gates each rank separately (rank 1 at level 1, rank 2 at 3, ...).
-[[perk_trees.perks]]
-id = "toughness"
-name = "Toughness"
-description = "+2 max HP per rank. Up to three ranks."
-color = "red"            # tier tint in the viewer
-repeatable = true
-max_ranks = 3
-level_req = [1, 3, 5]
-[[perk_trees.perks.effects]]
-type = "max_hp"
-value = 2
-
-# The other half of the cross-tree exclusivity, with a flat skill bonus
-# choice ("skill_bonus:N").
-[[perk_trees.perks]]
-id = "specialist"
-name = "Specialist"
-description = "Choose a skill for a flat +2. A focused path - excludes Jack of All Trades."
-exclusive_with = ["jack_of_all_trades"]
-[perk_trees.perks.choice]
-kind = "skill"
-count = 1
-apply = "skill_bonus:2"
-prompt = "Choose a skill to specialise in."
-
-# ac / actions effects; prerequisites may point at perks in ANY tree.
-[[perk_trees.perks]]
-id = "battle_surge"
-name = "Battle Surge"
-description = "Requires Weapon Training and level 5. +1 AC and +1 action."
-level_req = 5
-prerequisites = ["weapon_training"]
-[[perk_trees.perks.effects]]
-type = "ac"
-value = 1
-[[perk_trees.perks.effects]]
-type = "actions"
-value = 1
-
-# A damage_type choice has no `apply` - the pick is recorded and shown on the
-# perk, for rules the table adjudicates ("your strikes deal fire damage").
-[[perk_trees.perks]]
-id = "elemental_brand"
-name = "Elemental Brand"
-description = "Choose a damage type; your weapon strikes can deal it."
-prerequisites = ["weapon_training"]
-[perk_trees.perks.choice]
-kind = "damage_type"
-count = 1
-prompt = "Choose your brand's damage type."
-
-# all_attributes: +1 to every attribute (and so, potentially, every modifier).
-[[perk_trees.perks]]
-id = "paragon"
-name = "Paragon"
-description = "Requires Battle Surge and level 9. +1 to all attributes."
-color = "black"          # tier tint in the viewer
-level_req = 9
-prerequisites = ["battle_surge"]
-[[perk_trees.perks.effects]]
-type = "all_attributes"
-value = 1
-
 # =============================================================================
-# EFFECT VOCABULARY (for trait bonuses/penalties, perk effects, and a
-# character's custom_perks effects). Every effect is { type, value, ... }:
+# EFFECT VOCABULARY (for trait bonuses/penalties, pack feat/spell effects,
+# and a character's homebrew records). Every effect is { type, value, ... }:
 #
 #   { type = "attribute",  id = <attr>,  value = N }   +N to that attribute
 #   { type = "all_attributes",           value = N }   +N to every attribute
@@ -574,9 +359,10 @@ value = 1
 #   { type = "save_dc",      value = N, school = <school>? }
 #                                  with a school: adjusts only that school's
 #                                  spellcasting row; without: applies broadly
+#   { type = "accomplish_skill", skill = <skill> }   grants accomplishment
 #   { type = "attribute_points", value = N }   extra editor budget (not sheet math)
 #
 # Any OTHER type (e.g. "damage_reduction") is informational: validated,
-# displayed with the perk/trait, but never folded into a total - by design,
+# displayed with its record, but never folded into a total - by design,
 # situational rules stay in the players' hands.
 # =============================================================================

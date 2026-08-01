@@ -63,7 +63,7 @@ local function DetectKind(data)
     -- `{"characters": 5}`) is malformed, not a DB - falling through to a clean
     -- "could not tell" refusal instead of later throwing from pairs(5).
     if type(data.characters) == "table" then return "character_db" end
-    if data.system_name or data.perk_trees or data.modifier_table then return "system" end
+    if data.system_name or data.modifier_table then return "system" end
     -- Pack sniffs for hand-authored files that omit `kind`: pack_name plus the
     -- kind's payload list. Characters have no pack_name, so `spells` is safe.
     if data.pack_name and type(data.lines) == "table" then return "feats" end
