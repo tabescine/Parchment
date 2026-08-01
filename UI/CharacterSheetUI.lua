@@ -112,12 +112,15 @@ local function AcquireBtn(content)
         b = CreateFrame("Button", nil, content)
         b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
         b:SetScript("OnEnter", function(self)
-            if not (self.tip or self.roll) then return end
+            if not (self.tip or self.roll or self.shiftClick) then return end
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             if self.tip then self.tip(GameTooltip) end
             if self.roll then
                 GameTooltip:AddLine(self.roll.hint or ("Click: roll d20 " .. Signed(self.roll.modifier)),
                     0.56, 0.78, 1)
+            end
+            if self.shiftClick then
+                GameTooltip:AddLine(self.shiftClick.hint or "Shift-click: link in chat", 0.56, 0.78, 1)
             end
             GameTooltip:Show()
         end)
@@ -127,6 +130,13 @@ local function AcquireBtn(content)
             -- inventory row drops its item); only rows that wire one react.
             if button == "RightButton" then
                 if self.rightClick then self.rightClick() end
+                return
+            end
+            -- Shift-click posts a chat link where a row offers one; it never
+            -- falls through to the plain click (a shift-clicked skill row
+            -- must not also roll).
+            if self.shiftClick and IsShiftKeyDown and IsShiftKeyDown() then
+                self.shiftClick.click()
                 return
             end
             if not self.roll then return end
@@ -141,10 +151,11 @@ local function AcquireBtn(content)
         content.btnPool[content.btnUsed] = b
     end
     b:ClearAllPoints()
-    -- Clear last render's tip/roll/rightClick: a pooled button reused by a row
-    -- that sets none must not carry a stale tooltip or click from its previous
-    -- use - a leftover rightClick would drop items from a skill row.
-    b.tip, b.roll, b.rightClick = nil, nil, nil
+    -- Clear last render's tip/roll/rightClick/shiftClick: a pooled button
+    -- reused by a row that sets none must not carry a stale tooltip or click
+    -- from its previous use - a leftover rightClick would drop items from a
+    -- skill row.
+    b.tip, b.roll, b.rightClick, b.shiftClick = nil, nil, nil, nil
     b:Show()
     return b
 end
@@ -780,6 +791,9 @@ local function InventoryRow(content, entry, kind, ctx)
         b.roll = roll
     end
     if own then b.rightClick = Drop end
+    if own and not entry.missing then
+        b.shiftClick = { click = function() ns.ChatLinks.PostLink(ns.ChatLinks.Item(entry)) end }
+    end
     content.y = content.y - INV_ROW_H
 end
 
@@ -968,8 +982,9 @@ local function RenderFeatsSpells(content, sheet, ctx)
         for _, r in ipairs(featRows) do
             local title = (r.rank.name or "?") .. "  |cff8ec6ff(" .. (r.line.name or r.line.id)
                 .. " " .. r.index .. ")|r"
+            local line, rank, index = r.line, r.rank, r.index
             Paragraph(content, title .. ":", MetaTag(r.rank) .. (r.rank.description or ""), C_DIM,
-                ctx.postSpec((r.rank.name or "?") .. ": " .. (r.rank.description or "")))
+                ctx.linkSpec(function() return ns.ChatLinks.FeatRank(line, rank, index) end))
         end
         for _, rec in ipairs(homebrewFeats) do
             if type(rec) == "table" then
@@ -980,8 +995,9 @@ local function RenderFeatsSpells(content, sheet, ctx)
                 if pending then
                     Paragraph(content, nil, "|cff9e998c" .. title .. ":|r  " .. body, C_DIM)
                 else
+                    local record = rec
                     Paragraph(content, title .. ":", body, C_DIM,
-                        ctx.postSpec((rec.name or "?") .. ": " .. (rec.description or "")))
+                        ctx.linkSpec(function() return ns.ChatLinks.Homebrew("feat", record) end))
                 end
             end
         end
@@ -1017,8 +1033,9 @@ local function RenderFeatsSpells(content, sheet, ctx)
             local title = (spell.name or "?") .. "  |cff8ec6ff("
                 .. ((school and school.name) or spell.school or "?")
                 .. " " .. tostring(spell.rank or "?") .. ")|r"
+            local record = spell
             Paragraph(content, title .. ":", MetaTag(spell) .. (spell.description or ""), C_DIM,
-                ctx.postSpec((spell.name or "?") .. ": " .. (spell.description or "")))
+                ctx.linkSpec(function() return ns.ChatLinks.Spell(spellPack, record) end))
         end
         for _, rec in ipairs(homebrewSpells) do
             if type(rec) == "table" then
@@ -1032,8 +1049,9 @@ local function RenderFeatsSpells(content, sheet, ctx)
                 if pending then
                     Paragraph(content, nil, "|cff9e998c" .. title .. ":|r  " .. body, C_DIM)
                 else
+                    local record = rec
                     Paragraph(content, title .. ":", body, C_DIM,
-                        ctx.postSpec((rec.name or "?") .. ": " .. (rec.description or "")))
+                        ctx.linkSpec(function() return ns.ChatLinks.Homebrew("spell", record) end))
                 end
             end
         end
@@ -1094,6 +1112,14 @@ local function RenderBody(self)
     function ctx.postSpec(text)
         if ctx.viewChar then return nil end
         return { hint = "Click: post to chat", click = function() PostToChat(text) end }
+    end
+    -- Click-to-link spec (post a clickable chat link; the payload builds at
+    -- click time so it reflects the current data), or nil for a viewed sheet.
+    function ctx.linkSpec(payloadFn)
+        if ctx.viewChar then return nil end
+        return { hint = "Click: link in chat", click = function()
+            ns.ChatLinks.PostLink(payloadFn())
+        end }
     end
 
     RenderOverview(content, sheet, ctx)

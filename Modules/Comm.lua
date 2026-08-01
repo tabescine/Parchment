@@ -64,7 +64,8 @@ local GROUP_DIST = { PARTY = true, RAID = true, INSTANCE_CHAT = true }
 -- given type from one sender. Caps the cost a single peer can impose - SYSTEM
 -- decompresses ~100 KB on the main thread, VITALS arrives at edit frequency.
 -- Types absent here are unlimited (REQ/CHAR are self-throttled by `pending`).
-local MIN_INTERVAL = { SYSTEM = 3, VITALS = 0.5, INIT = 0.25, CHAR = 2, FEATS = 3, SPELLS = 3 }
+local MIN_INTERVAL = { SYSTEM = 3, VITALS = 0.5, INIT = 0.25, CHAR = 2, FEATS = 3, SPELLS = 3,
+    LINKQ = 0.3, LINKA = 0.3 }
 -- [sender][type] = GetTime() of the last accepted message (pruned on roster
 -- change). Nested by sender so a departing member's row drops in one step.
 local recvAt = {}
