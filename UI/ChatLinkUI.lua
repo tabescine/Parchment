@@ -4,9 +4,10 @@
 -- filter rewrites the plain [PMT:Name:N] tokens into clickable links at
 -- display time, a SetItemRef hook catches clicks on them, and this window
 -- shows the linked content - immediately for our own links, after a LINKQ ->
--- LINKA round-trip for someone else's ("Asking <sender>..." in between). An
--- answer renders only while its question is the pending one, so nobody can
--- pop this window unasked.
+-- LINKA round-trip for someone else's ("Asking <sender>..." in between, and a
+-- no-answer notice when nobody replies within ANSWER_TIMEOUT). An answer
+-- renders only while its question is the pending one, so nobody can pop this
+-- window unasked.
 --
 -- Mechanism modeled on Total RP 3's chat links (see Modules/ChatLinks.lua).
 --
@@ -17,6 +18,9 @@ local ADDON, ns = ...
 
 local UI = ns.UI
 local CL = ns.ChatLinks
+
+-- Seconds to wait for a LINKA before telling the user nobody answered.
+local ANSWER_TIMEOUT = 5
 
 local COLORS = {
     gold = UI.HEAD,
@@ -105,8 +109,11 @@ function ChatLinkUI.Show(payload, senderText)
     ChatLinkUI.Render(payload, senderText)
 end
 
--- The identifier we are currently waiting on, and who we asked.
+-- The identifier we are currently waiting on, who we asked, and a serial
+-- stamped on each request: C_Timer.After cannot be cancelled, so a stale
+-- timeout recognizes itself by a serial that no longer matches.
 local pendingId, pendingFrom
+local pendingSerial = 0
 
 -- Renders a LINKA answer, but only the one we are waiting for.
 function ChatLinkUI.OnAnswer(answer, sender)
@@ -142,11 +149,30 @@ local function OnLinkClicked(player, id)
         return
     end
     pendingId, pendingFrom = id, player
+    pendingSerial = pendingSerial + 1
+    local serial = pendingSerial
+    local title = id:match("^(.*):%d+$") or id
     CL.Request(player, id)
     ChatLinkUI.Render({
-        title = id:match("^(.*):%d+$") or id,
+        title = title,
         lines = { { text = "Asking " .. player .. "...", color = "dim" } },
     })
+
+    -- An offline player (or one without the addon) never answers, and the
+    -- "Asking..." line would sit there forever. The request is left pending on
+    -- purpose: a late answer still renders over this notice.
+    if C_Timer and C_Timer.After then
+        C_Timer.After(ANSWER_TIMEOUT, function()
+            if serial ~= pendingSerial or pendingId ~= id then return end
+            if not (ChatLinkUI.frame and ChatLinkUI.frame:IsShown()) then return end
+            ChatLinkUI.Render({
+                title = title,
+                lines = { { text = "No answer from " .. player
+                    .. " - they may be offline or not running Parchment.",
+                    color = "dim", wrap = true } },
+            })
+        end)
+    end
 end
 
 -- Display-time rewrite of [PMT:...] tokens on every chat channel players

@@ -6,7 +6,9 @@
 -- whole party sees the raw die, and the result is read back off
 -- CHAT_MSG_SYSTEM: requests queue FIFO and match results in order, filtered
 -- to our own 1-20 rolls, with a 3s local fallback for throttled/dropped
--- roller calls. Extracted from InitiativeTracker so the character sheet's
+-- roller calls - a fallback roll is flagged to the caller and tagged in chat,
+-- since nobody saw it happen. Natural 20s and 1s are marked on the result
+-- line. Extracted from InitiativeTracker so the character sheet's
 -- click-to-roll checks share one implementation.
 --
 -- Reads from: ns.Addon.db.profile.publicRolls, ns.Print.
@@ -44,9 +46,11 @@ local function PublicEnabled()
         and type(RandomRoll) == "function"
 end
 
--- Requests a d20 roll, calling onComplete(total, raw) when it resolves. With
--- public rolls off it resolves immediately and locally; with them on it fires
--- a RandomRoll and resolves when the system message arrives (3s fallback).
+-- Requests a d20 roll, calling onComplete(total, raw, fellBack) when it
+-- resolves. With public rolls off it resolves immediately and locally; with
+-- them on it fires a RandomRoll and resolves when the system message arrives
+-- (3s fallback). `fellBack` is true only for that fallback roll - the group
+-- never saw a system line for it, so callers must not pass it off as public.
 function Dice.Request(modifier, onComplete)
     modifier = modifier or 0
     if not PublicEnabled() then
@@ -62,7 +66,7 @@ function Dice.Request(modifier, onComplete)
                 if r == req then
                     table.remove(rollQueue, i)
                     local raw = math.random(1, 20)
-                    req.onComplete(raw + req.modifier, raw)
+                    req.onComplete(raw + req.modifier, raw, true)
                     return
                 end
             end
@@ -103,14 +107,32 @@ end
 -- chat filters that rewrite it for everyone else).
 function Dice.Check(label, modifier, linkToken)
     modifier = modifier or 0
-    Dice.Request(modifier, function(total, raw)
+    Dice.Request(modifier, function(total, raw, fellBack)
         local line = string.format("%s: %d (d20) %s %d = %d", linkToken or label, raw,
             modifier >= 0 and "+" or "-", math.abs(modifier), total)
         local localLine = line
         if linkToken and ns.ChatLinks then
             localLine = ns.ChatLinks.Rewrite(line, (UnitName and UnitName("player")) or "?")
         end
+
+        -- Natural 20/1 marker. SendChatMessage rejects colour escapes, so the
+        -- chat copy gets a plain-text suffix instead of the coloured one.
+        if raw == 20 then
+            localLine = localLine .. "  |cff8cd98cNatural 20!|r"
+            line = line .. " - Natural 20!"
+        elseif raw == 1 then
+            localLine = localLine .. "  |cffe67373Natural 1|r"
+            line = line .. " - Natural 1"
+        end
+
+        -- The fallback roll was never witnessed: the group saw no system line
+        -- for it, so the breakdown must not read as one.
+        if fellBack then line = line .. " (local roll)" end
+
         ns.Print(localLine)
+        if fellBack then
+            ns.Print("the in-game dice roller did not answer in time - rolled locally instead.")
+        end
         if PublicEnabled() and IsInGroup() then
             SendChatMessage("(" .. line .. ")", IsInRaid() and "RAID" or "PARTY")
         end

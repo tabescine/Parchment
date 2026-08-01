@@ -7,9 +7,12 @@
 -- unfolds the line's rank cards (name, type, cost, range, save, description).
 -- The next rank's card carries a Learn button, gated by Modules/Feats.lua
 -- (previous rank via ladder order, attribute score, and a free pick in the
--- shared ledger - learning is enforced, not advisory). Right-clicking the
--- highest taken card removes that rank. A search box filters lines across all
--- attributes by name and rank text.
+-- shared ledger - learning is enforced, not advisory). Cards that cannot be
+-- learned keep a disabled Learn button carrying the reason, and every card
+-- explains its status on hover. Right-clicking the highest taken card unlearns
+-- that rank after a confirm popup. A search box filters lines across all
+-- attributes by name and rank text; while a query is active it bypasses the
+-- rail filter.
 --
 -- The rail ends in a Homebrew section: the character's custom feats
 -- (char.custom_feats) as cards - "+ New feat" opens the homebrew wizard,
@@ -31,6 +34,9 @@ local ADDON, ns = ...
 local UI = ns.UI
 
 local ROW_H = 30
+local LEGEND = "Click a line to unfold it - Learn takes the next rank, right-click the top rank"
+    .. " unlearns it, shift-click a card puts its link in chat"
+local SEARCH_LEGEND = "Searching all attributes - the rail filter is off until the search clears."
 local STATUS_COLOR = {
     taken = { 0.55, 0.85, 0.55 },
     next = UI.GOLD,
@@ -60,6 +66,36 @@ end
 local function Query(self)
     return tostring(self.query or ""):gsub("^%s+", ""):gsub("%s+$", "")
 end
+
+-- Applies a confirmed unlearn of a line's top rank, or reports why it cannot
+-- happen. The ladder position is re-checked here: another pick between the
+-- popup opening and its accept would move the top rank.
+local function DoUnlearn(f, line, rankIndex, rankName)
+    if not (f and f.char and line) then return end
+    if ns.Feats.Rank(f.char, line.id) ~= rankIndex then
+        SetMsg(f, "That is no longer the highest rank taken.", true)
+        return
+    end
+    local ok, reason = ns.Feats.Unlearn(f.char, line)
+    if ok then
+        SetMsg(f, "Unlearned " .. (rankName or "?") .. ".", false)
+        if ns.CharacterSheetUI then ns.CharacterSheetUI.RefreshIfShown() end
+        Refresh(f)
+    else
+        SetMsg(f, reason or "Cannot unlearn.", true)
+    end
+end
+
+-- Confirm dialog for a right-click unlearn. Data carries the window, line and
+-- rank so nothing is captured in an upvalue that a redraw could stale out.
+StaticPopupDialogs["PARCHMENT_FEAT_UNLEARN"] = {
+    text = "Unlearn '%s'?\n\nThis refunds 1 pick.",
+    button1 = "Unlearn", button2 = CANCEL,
+    OnAccept = function(_, data)
+        if data then DoUnlearn(data.window, data.line, data.rankIndex, data.rankName) end
+    end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
 
 -- Pool helpers: acquire the nth widget of a pool, creating it on first use.
 local function AcquireRow(self)
@@ -121,6 +157,18 @@ local function AcquireCard(self)
                 SetMsg(f, reason or "Cannot learn.", true)
             end
         end)
+        -- A disabled button gets no mouse events unless motion scripts are
+        -- kept alive, and its tooltip is the only place the refusal shows
+        -- before the click.
+        card.learn:SetMotionScriptsWhileDisabled(true)
+        card.learn:SetScript("OnEnter", function(btn)
+            if not btn.reason then return end
+            GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Cannot learn", 1, 1, 1)
+            GameTooltip:AddLine(btn.reason, UI.RED[1], UI.RED[2], UI.RED[3], true)
+            GameTooltip:Show()
+        end)
+        card.learn:SetScript("OnLeave", GameTooltip_Hide)
         card.title:SetPoint("RIGHT", card.learn, "LEFT", -8, 0)
         card.meta = card:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
         card.meta:SetPoint("TOPLEFT", 14, -24)
@@ -162,15 +210,18 @@ local function AcquireCard(self)
             if mouseButton ~= "RightButton" then return end
             -- Only the highest taken rank can come off (ladder order).
             if ns.Feats.Rank(f.char, c.line.id) ~= c.rankIndex then return end
-            local ok, reason = ns.Feats.Unlearn(f.char, c.line)
-            if ok then
-                SetMsg(f, "Removed " .. (c.rankName or "?") .. ".", false)
-                if ns.CharacterSheetUI then ns.CharacterSheetUI.RefreshIfShown() end
-                Refresh(f)
-            else
-                SetMsg(f, reason or "Cannot remove.", true)
-            end
+            StaticPopup_Show("PARCHMENT_FEAT_UNLEARN", c.rankName or "?", nil,
+                { window = f, line = c.line, rankIndex = c.rankIndex, rankName = c.rankName })
         end)
+        -- Status tooltip: the card colours say taken/next/locked, this says why.
+        card:SetScript("OnEnter", function(c)
+            if not c.tip then return end
+            GameTooltip:SetOwner(c, "ANCHOR_RIGHT")
+            GameTooltip:SetText(c.tipTitle or " ", 1, 1, 1)
+            GameTooltip:AddLine(c.tip, UI.TEXT[1], UI.TEXT[2], UI.TEXT[3], true)
+            GameTooltip:Show()
+        end)
+        card:SetScript("OnLeave", GameTooltip_Hide)
         content.cardPool[content.usedCards] = card
     end
     card:Show()
@@ -213,16 +264,38 @@ local function MetaText(pack, line, rank, rankIndex)
     return table.concat(parts, "  -  ")
 end
 
+-- The tooltip for a rank card: its status plus the cause. Takes the refusal
+-- reason CanLearn already produced for the next rank (nil when it is
+-- learnable). Returns title, body.
+local function RankTip(self, line, rankIndex, status, reason)
+    if status == "taken" then
+        local top = ns.Feats.Rank(self.char, line.id) == rankIndex
+        return "Learned", top and "Right-click to unlearn it and refund its pick."
+            or "Unlearn the ranks above it first."
+    end
+    if status == "locked" then
+        local prev = (line.ranks or {})[rankIndex - 1]
+        local req = ns.Feats.RankReq(self.pack, line, rankIndex)
+        return "Locked", "Learn " .. ((prev and prev.name) or "the rank below") .. " first."
+            .. (req and ("\nNeeds " .. ns.AttrName(line.attribute) .. " " .. req .. ".") or "")
+    end
+    if reason then return "Cannot learn", reason end
+    return "Next rank", "Learn takes it for 1 pick."
+end
+
 -- Lays out the left rail: "All" plus one button per attribute owning lines,
 -- and the character's Homebrew section at the bottom.
 local function RenderRail(self)
     self.usedRail = 0
     local pack = self.pack
     local y = -70
+    -- A search spans every attribute, so no rail entry is the active filter
+    -- while a query stands - drop the marker rather than lie about it.
+    local searching = Query(self) ~= ""
     local function add(label, attrId, count)
         local btn = AcquireRail(self)
         btn.window, btn.attrId = self, attrId
-        local selected = self.attrFilter == attrId
+        local selected = self.attrFilter == attrId and not searching
         btn:SetText((selected and "|cffc8a868> |r" or "") .. label
             .. (count and (" (" .. count .. ")") or ""))
         btn:SetPoint("TOPLEFT", 14, y)
@@ -277,6 +350,12 @@ local function RenderHomebrew(self)
             card.meta:SetText(HomebrewMeta(rec))
             card.desc:SetText(rec.description or "")
             card.learn:Hide()
+            card.learn.reason = nil
+            -- Pending records render dimmed; the tooltip says what they wait on.
+            card.tipTitle = (not active) and "Pending" or nil
+            card.tip = (not active)
+                and ("Gained at level " .. (rec.level or 1) .. "; this character is not there yet.")
+                or nil
             local descH = (rec.description and rec.description ~= "")
                 and (card.desc:GetStringHeight() + 6) or 0
             card:SetHeight(24 + 14 + descH + 6)
@@ -293,8 +372,12 @@ end
 -- Lays out the list: line rows, and rank cards under expanded lines.
 local function RenderList(self)
     local content = self.content
+    local query = Query(self)
     self.newBtn:Hide()
-    if self.attrFilter == "__homebrew" and Query(self) == "" then
+    -- The legend doubles as the search's status line: it is the one text that
+    -- transient feedback in self.msg never overwrites.
+    self.legend:SetText((query ~= "") and SEARCH_LEGEND or LEGEND)
+    if self.attrFilter == "__homebrew" and query == "" then
         RenderHomebrew(self)
         return
     end
@@ -302,7 +385,6 @@ local function RenderList(self)
     local width = content:GetWidth()
     local y = -4
 
-    local query = Query(self)
     local lines = (query ~= "") and ns.Feats.Search(self.pack, query)
         or ns.Feats.Lines(self.pack, self.attrFilter)
 
@@ -336,6 +418,16 @@ local function RenderList(self)
                 card.desc:SetText(rank.description or "")
                 card.learn:SetShown(status == "next")
                 card.learn.window, card.learn.line = self, line
+                -- Affordability shows before the click, not after it: an
+                -- unlearnable next rank keeps a disabled button plus reason.
+                local reason
+                if status == "next" then
+                    local canLearn, why = ns.Feats.CanLearn(self.char, self.sheet, self.pack, line)
+                    reason = (not canLearn) and (why or "Cannot learn.") or nil
+                    card.learn:SetEnabled(canLearn)
+                end
+                card.learn.reason = reason
+                card.tipTitle, card.tip = RankTip(self, line, i, status, reason)
                 -- Natural height: title (24) + meta line (14) + measured
                 -- description + bottom padding.
                 local descH = (rank.description and rank.description ~= "")
@@ -394,8 +486,12 @@ Refresh = function(self)
 
     self.sheet = ns.CharacterSheet.Compute(char, ns.GetSystem(), ns.GetItemLibrary())
     self.packLabel:SetText(pack.pack_name or "")
+    -- The shared budget reads as what is left to spend, green until it is gone.
     local spent, budget = ns.Picks.Points(char)
-    self.points:SetText("Picks: " .. spent .. " / " .. budget)
+    local left = budget - spent
+    self.points:SetText(left .. ((left == 1) and " pick left" or " picks left"))
+    local pc = (left > 0) and UI.GREEN or UI.RED
+    self.points:SetTextColor(pc[1], pc[2], pc[3])
     RenderRail(self)
     RenderList(self)
 end
@@ -412,9 +508,10 @@ local function BuildFrame()
     f.packLabel:SetPoint("TOPLEFT", 16, -44)
     f.packLabel:SetTextColor(UI.GOLD[1], UI.GOLD[2], UI.GOLD[3])
 
-    f.points = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    -- The picks budget is the number that decides every Learn click, so it
+    -- carries the full-size font; Refresh colours it green/red.
+    f.points = f:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     f.points:SetPoint("TOPRIGHT", -16, -46)
-    f.points:SetTextColor(UI.HEAD[1], UI.HEAD[2], UI.HEAD[3])
 
     -- Search box: filters lines across every attribute (name + rank text).
     f.searchBox = CreateFrame("EditBox", nil, f, "InputBoxTemplate")
@@ -440,14 +537,17 @@ local function BuildFrame()
     f.legend:SetPoint("RIGHT", f.points, "LEFT", -12, 0)
     f.legend:SetJustifyH("LEFT")
     f.legend:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
-    f.legend:SetText("Click a line to unfold it - Learn takes the next rank, right-click the top rank"
-        .. " removes it, shift-click a card puts its link in chat")
+    f.legend:SetText(LEGEND)
 
+    -- Both anchors fix the same top edge, so the explicit height stands: two
+    -- wrapped lines, enough for a refusal reason at the narrowest window.
     f.msg = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     f.msg:SetPoint("TOPLEFT", 130, -72)
-    f.msg:SetPoint("RIGHT", f.searchBox, "LEFT", -12, 0)
+    f.msg:SetPoint("TOPRIGHT", f.searchBox, "TOPLEFT", -12, -4)
+    f.msg:SetHeight(24)
     f.msg:SetJustifyH("LEFT")
-    f.msg:SetWordWrap(false)
+    f.msg:SetJustifyV("TOP")
+    f.msg:SetWordWrap(true)
 
     -- Scrolling ladder list, right of the attribute rail.
     local scroll = CreateFrame("ScrollFrame", "ParchmentFeatsScroll", f, "UIPanelScrollFrameTemplate")

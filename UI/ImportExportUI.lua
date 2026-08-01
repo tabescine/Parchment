@@ -7,9 +7,11 @@
 -- Import results (success or the reason for failure) show in a status line; a
 -- successful import refreshes every data-driven window. The status line is
 -- deliberately NOT cleared on show - an import's outcome survives hub
--- refreshes triggered by the import itself.
+-- refreshes triggered by the import itself. A system import that lands on an
+-- empty roster also offers the next step (create a character).
 --
--- Reads from: ns.ImportExport, ns.UI, ns.HubUI, ns.Systems, ns.CharacterSheetUI.
+-- Reads from: ns.ImportExport, ns.UI, ns.HubUI, ns.Systems, ns.CharacterSheetUI,
+--   ns.GetCharacters, ns.OpenModule.
 -- Exposes on ns.ImportExportUI: Open, Toggle (thin wrappers over the hub's
 --   import panel).
 -- Registers the "import" module opener with Core.
@@ -29,6 +31,10 @@ local IE = ns.ImportExport
 local PASTE_CAP = 2500   -- bytes the edit box itself may hold in paste mode
 local PASTE_BURST = 32   -- chars arriving in one frame that count as a paste
 
+-- How IE.Import opens the success message of a system import (SetStatus reads
+-- it to offer the next step; IE.Import reports no kind of its own).
+local SYSTEM_MSG = "imported system "
+
 local ImportExportUI = {}
 ns.ImportExportUI = ImportExportUI
 
@@ -41,7 +47,10 @@ local function MakeButton(parent, text, width, onClick)
     return b
 end
 
--- Sets the status line text and colour (red on error, green on success).
+-- Sets the status line text and colour (red on error, green on success), and
+-- decides the "what now" nudge with it - every status change (a failed import,
+-- an export, Clear) takes the button away again, so the nudge cannot outlive
+-- the moment it belongs to.
 local function SetStatus(self, msg, isError)
     local c = isError and UI.RED or UI.GREEN
     self.status:SetTextColor(c[1], c[2], c[3])
@@ -49,6 +58,15 @@ local function SetStatus(self, msg, isError)
     -- the status now wraps, but cap the length so a giant paste cannot fill it.
     msg = msg or ""
     if #msg > 400 then msg = msg:sub(1, 400) .. " ..." end
+
+    -- A ruleset landing on a fresh install leaves nothing to use it on, so say
+    -- what comes next. The kind is read off IE.Import's own success message -
+    -- the only kind that reaches this state is a system import.
+    local fresh = not isError and msg:sub(1, #SYSTEM_MSG) == SYSTEM_MSG
+        and next(ns.GetCharacters()) == nil
+    if fresh then msg = msg .. " Next: create a character." end
+    if self.nextStepBtn then self.nextStepBtn:SetShown(fresh) end
+
     self.status:SetText(msg)
 end
 
@@ -214,6 +232,13 @@ local function BuildContent(f)
     local expSpells = MakeButton(f, "Export Spells", 96, function() DoExportPack(f, "spells") end)
     expSpells:SetPoint("BOTTOMLEFT", 96, 34)
 
+    -- The next-step nudge (hidden until SetStatus asks for it). It shares the
+    -- export row rather than sitting beside the status line, which spans the
+    -- panel's full width and wraps into anything anchored next to it.
+    f.nextStepBtn = MakeButton(f, "Create a character", 130, function() ns.OpenModule("new") end)
+    f.nextStepBtn:SetPoint("BOTTOMLEFT", 196, 34)
+    f.nextStepBtn:Hide()
+
     -- Bottom button row: import, clear and the format toggle.
     local importBtn = MakeButton(f, "Import", 64, function() DoImport(f) end)
     importBtn:SetPoint("BOTTOMLEFT", 0, 6)
@@ -232,7 +257,7 @@ end
 -- status on show would wipe an import's own outcome (the import triggers a
 -- RefreshAll that re-shows this very panel).
 ns.HubUI.RegisterPanel({
-    id = "import", label = "Import / Export", order = 50,
+    id = "import", label = "Import / export", order = 50,
     Build = BuildContent,
 })
 

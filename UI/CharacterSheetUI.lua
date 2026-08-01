@@ -1303,8 +1303,10 @@ end
 -- Commits a focused, typed-but-not-entered vitals box to the character it was
 -- typed FOR. Refresh leaves focused boxes alone but re-points self.charKey, so
 -- without this a character switch mid-typing would land the old character's
--- typed HP on the new one when Enter finally commits. The editor's
+-- typed HP on the new one when the box finally commits. The editor's
 -- CommitPending solves the same problem for its max HP/Mana boxes.
+-- skipVitalsCommit suppresses the boxes' focus-lost commit while this runs: the
+-- ClearFocus below fires it, and it would re-enter Refresh (which called us).
 local function CommitPendingVitals(self)
     local char = self.charKey and ns.GetCharacter(self.charKey)
     if not char then return end
@@ -1314,9 +1316,11 @@ local function CommitPendingVitals(self)
         if n then char[field] = math.max(0, math.min(99999, math.floor(n))) end
         box:ClearFocus()
     end
+    self.skipVitalsCommit = true
     commit(self.hpBox, "current_hp")
     commit(self.manaBox, "current_mana")
     commit(self.tempBox, "temp_hp")
+    self.skipVitalsCommit = false
 end
 
 -- Recomputes the sheet and redraws. Shows the active character normally, or a
@@ -1372,14 +1376,19 @@ local function Refresh(self)
     RenderBody(self)
 end
 
--- Commits an edited resource value back to the active character.
+-- Commits an edited resource value back to the character it was typed for
+-- (self.charKey; CommitPendingVitals re-points nothing until it has run).
 local function CommitResource(self, field, box)
     local char = ns.GetCharacter(self.charKey)
     if not char then return end
     -- Bound the typed value: integral, non-negative, and not absurdly large.
     local n = tonumber(box:GetText())
     if n then char[field] = math.max(0, math.min(99999, math.floor(n))) end
+    -- Guarded: ClearFocus fires the box's focus-lost commit, which lands here
+    -- again for a value already committed (and re-enters Refresh below).
+    self.skipVitalsCommit = true
     box:ClearFocus()
+    self.skipVitalsCommit = false
     Refresh(self)
     if ns.Party then ns.Party.OnVitalsChanged() end
 end
@@ -1428,15 +1437,29 @@ local function BuildFrame()
     f.manaBox, f.manaMax = MakeResource("Mana", 150)
     f.tempBox, f.tempMax = MakeResource("Temp HP", 290)
 
+    -- Commit on Enter and on focus loss - clicking away from a typed value must
+    -- not silently revert it on the next refresh. Escape still reverts: it
+    -- clears focus (which fires the focus-lost handler) with skipVitalsCommit
+    -- raised, so the in-progress value is dropped rather than committed.
     local function wireResource(box, field)
         box:SetScript("OnEnterPressed", function(b) CommitResource(f, field, b) end)
-        box:SetScript("OnEscapePressed", function(b) b:ClearFocus(); Refresh(f) end)
+        box:SetScript("OnEscapePressed", function(b)
+            f.skipVitalsCommit = true
+            b:ClearFocus()
+            f.skipVitalsCommit = false
+            Refresh(f)
+        end)
+        box:SetScript("OnEditFocusLost", function(b)
+            if f.skipVitalsCommit then return end
+            CommitResource(f, field, b)
+        end)
     end
     wireResource(f.hpBox, "current_hp")
     wireResource(f.manaBox, "current_mana")
     wireResource(f.tempBox, "temp_hp")
 
-    -- Footer: Edit (opens the editor) and Save to Disk.
+    -- Footer: Edit (opens the editor) and the save button, whose label states the
+    -- reload up front - it is not a detail to leave to the tooltip.
     f.editBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     f.editBtn:SetSize(60, 22)
     f.editBtn:SetText("Edit")
@@ -1444,8 +1467,8 @@ local function BuildFrame()
     f.editBtn:SetScript("OnClick", function() ns.OpenModule("edit") end)
 
     local saveBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    saveBtn:SetSize(96, 22)
-    saveBtn:SetText("Save to Disk")
+    saveBtn:SetSize(130, 22)
+    saveBtn:SetText("Save (reloads UI)")
     saveBtn:SetPoint("BOTTOMLEFT", PAD + 64, 10)
     saveBtn:SetScript("OnClick", ns.SaveToDisk)
     saveBtn:SetScript("OnEnter", function(self)

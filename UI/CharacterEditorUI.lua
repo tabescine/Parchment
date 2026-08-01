@@ -3,8 +3,9 @@
 -- A scrolling form that edits the active character live: identity, attributes
 -- (with point-buy budget), traits, primary/AC/init attributes, accomplished
 -- skills/weapons/saves, a guided Level Up, and notes. A warnings area shows soft
--- validation. New / Characters / Delete / Close manage the roster. Selection
--- inputs reuse ns.Dialogs.Pick; numeric inputs use ns.Widgets.Stepper.
+-- validation. Characters / Delete / Close manage the roster and New hands off to
+-- the guided wizard ("new"). Selection inputs reuse ns.Dialogs.Pick; numeric
+-- inputs use ns.Widgets.Stepper.
 --
 -- Edits mutate the live character (and refresh the sheet and pickers); there is
 -- no per-field undo, but import/export provides backup.
@@ -214,11 +215,17 @@ local function BuildFrame()
         return b
     end
     bar("Characters", 84, PAD, function() EditorUI.PickCharacter(f) end)
-    bar("New", 50, PAD + 88, function() EditorUI.NewCharacter(f) end)
+    -- New hands off to the guided wizard rather than dropping a blank character
+    -- into the roster: creation has steps (traits before attributes), and the
+    -- editor is where you tweak what the wizard produced.
+    bar("New", 50, PAD + 88, function() ns.OpenModule("new") end)
     bar("Delete", 60, PAD + 142, function() EditorUI.DeleteCharacter(f) end)
 
+    -- The save button's label states the reload up front - it is not a detail to
+    -- leave to the tooltip.
     local saveBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    saveBtn:SetSize(96, 22); saveBtn:SetText("Save to Disk"); saveBtn:SetPoint("BOTTOMRIGHT", -PAD, 12)
+    saveBtn:SetSize(130, 22); saveBtn:SetText("Save (reloads UI)")
+    saveBtn:SetPoint("BOTTOMRIGHT", -PAD, 12)
     saveBtn:SetScript("OnClick", ns.SaveToDisk)
     saveBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
@@ -343,13 +350,31 @@ local function BuildFrame()
     f.addHpBtn:SetScript("OnClick", function() EditorUI.AddHP(f) end)
     f.levelUpBtn:SetScript("OnClick", function() EditorUI.DoLevelUp(f) end)
     f.levelDownBtn:SetScript("OnClick", function() EditorUI.DoLevelDown(f) end)
+    -- Commit on Enter and on focus loss - clicking away from a typed value must
+    -- not silently revert it on the next refresh. Escape still reverts: it
+    -- clears focus (which fires the focus-lost handler) with skipMaxCommit
+    -- raised, the same guard the commit uses for its own ClearFocus.
     local function maxCommit(box, field)
-        box:SetScript("OnEnterPressed", function(self)
+        local function commit(self)
             if f.char then
                 local n = tonumber(self:GetText())
                 if n then f.char[field] = math.max(0, math.min(99999, math.floor(n))) end
             end
-            self:ClearFocus(); Changed(f)
+            f.skipMaxCommit = true
+            self:ClearFocus()
+            f.skipMaxCommit = false
+            Changed(f)
+        end
+        box:SetScript("OnEnterPressed", commit)
+        box:SetScript("OnEditFocusLost", function(self)
+            if f.skipMaxCommit then return end
+            commit(self)
+        end)
+        box:SetScript("OnEscapePressed", function(self)
+            f.skipMaxCommit = true
+            self:ClearFocus()
+            f.skipMaxCommit = false
+            Refresh(f)
         end)
     end
     maxCommit(f.maxHpBox, "max_hp"); maxCommit(f.maxManaBox, "max_mana")
@@ -415,29 +440,29 @@ function EditorUI.DoLevelDown(self)
     Changed(self)
 end
 
-function EditorUI.NewCharacter(self)
-    local char = CE.NewBlank()
-    CE.SaveNew(ns.NextCharacterKey(), char)
-    Changed(self)
-end
-
 function EditorUI.DeleteCharacter(self)
     local char, key = ns.GetActiveCharacter()
     if key then StaticPopup_Show("PARCHMENT_DELETE_CHAR", char.name or key, nil, key) end
 end
 
--- Commits any uncommitted resource-box edits to the current character. The max
--- HP/Mana boxes only commit on Enter, so without this a character switch would
--- silently discard a typed-but-not-entered value.
+-- Commits any uncommitted resource-box edits to the character they were typed
+-- FOR, before a switch re-points self.char. The boxes commit on focus loss, but
+-- a switch made from another window leaves them focused (and Refresh skips
+-- focused boxes), so their value would otherwise land on the new character.
+-- Focus is cleared here - guarded, since that fires the focus-lost commit - so
+-- the next Refresh refills them from the character now being edited.
 local function CommitPending(self)
     if not self.char then return end
     local function commit(box, field)
         if not box then return end
         local n = tonumber(box:GetText())
         if n then self.char[field] = math.max(0, math.min(99999, math.floor(n))) end
+        box:ClearFocus()
     end
+    self.skipMaxCommit = true
     commit(self.maxHpBox, "max_hp")
     commit(self.maxManaBox, "max_mana")
+    self.skipMaxCommit = false
 end
 
 function EditorUI.PickCharacter(self)

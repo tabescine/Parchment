@@ -7,8 +7,11 @@
 -- Learn button gated by Modules/Spells.lua (school lock, cast-attribute
 -- score, and a free pick in the shared ledger - enforced, not advisory).
 -- Learning the FIRST spell of a school with an opposed partner confirms via
--- popup, because it locks that partner out for the character. Right-clicking
--- a known card forgets the spell. A search box filters across all schools.
+-- popup, because it locks that partner out for the character. Cards that
+-- cannot be learned keep a disabled Learn button carrying the reason, and
+-- every card explains its status on hover. Right-clicking a known card
+-- unlearns the spell after a confirm popup. A search box filters across all
+-- schools; while a query is active it bypasses the rail filter.
 --
 -- The rail ends in a Homebrew section: the character's custom spells
 -- (char.custom_spells) as cards - "+ New spell" opens the homebrew wizard,
@@ -28,6 +31,9 @@ local ADDON, ns = ...
 
 local UI = ns.UI
 
+local LEGEND = "Learn adds a spell - right-click a known one unlearns it, shift-click puts its"
+    .. " link in chat"
+local SEARCH_LEGEND = "Searching all schools - the rail filter is off until the search clears."
 local STATUS_COLOR = {
     known = { 0.55, 0.85, 0.55 },
     open = UI.GOLD,
@@ -68,6 +74,32 @@ local function DoLearn(f, spell)
         SetMsg(f, reason or "Cannot learn.", true)
     end
 end
+
+-- Applies a confirmed unlearn, or reports why it cannot happen. The spell is
+-- re-checked by Modules/Spells.lua, so a state change while the popup stood
+-- (another window unlearning it, a pack switch) is caught rather than trusted.
+local function DoUnlearn(f, spell)
+    if not (f and f.char and spell) then return end
+    local ok, reason = ns.Spells.Unlearn(f.char, spell.id)
+    if ok then
+        SetMsg(f, "Unlearned " .. (spell.name or "?") .. ".", false)
+        if ns.CharacterSheetUI then ns.CharacterSheetUI.RefreshIfShown() end
+        Refresh(f)
+    else
+        SetMsg(f, reason or "Cannot unlearn.", true)
+    end
+end
+
+-- Confirm dialog for a right-click unlearn. Data carries the window and spell
+-- so nothing is captured in an upvalue that a redraw could stale out.
+StaticPopupDialogs["PARCHMENT_SPELL_UNLEARN"] = {
+    text = "Unlearn '%s'?\n\nThis refunds 1 pick.",
+    button1 = "Unlearn", button2 = CANCEL,
+    OnAccept = function(_, data)
+        if data then DoUnlearn(data.window, data.spell) end
+    end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
 
 -- Confirm dialog for a school-locking first pick. Data carries the window and
 -- spell; the learn re-validates at accept time, so a state change in between
@@ -123,6 +155,18 @@ local function AcquireCard(self)
         card.learn:SetScript("OnClick", function(btn)
             LearnClicked(btn.window, btn.spell)
         end)
+        -- A disabled button gets no mouse events unless motion scripts are
+        -- kept alive, and its tooltip is the only place the refusal shows
+        -- before the click.
+        card.learn:SetMotionScriptsWhileDisabled(true)
+        card.learn:SetScript("OnEnter", function(btn)
+            if not btn.reason then return end
+            GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Cannot learn", 1, 1, 1)
+            GameTooltip:AddLine(btn.reason, UI.RED[1], UI.RED[2], UI.RED[3], true)
+            GameTooltip:Show()
+        end)
+        card.learn:SetScript("OnLeave", GameTooltip_Hide)
         card.title:SetPoint("RIGHT", card.learn, "LEFT", -8, 0)
         card.meta = card:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
         card.meta:SetPoint("TOPLEFT", 10, -24)
@@ -162,13 +206,18 @@ local function AcquireCard(self)
             end
             if mouseButton ~= "RightButton" then return end
             if not ns.Spells.Knows(f.char, c.spell.id) then return end
-            local ok = ns.Spells.Unlearn(f.char, c.spell.id)
-            if ok then
-                SetMsg(f, "Forgot " .. (c.spell.name or "?") .. ".", false)
-                if ns.CharacterSheetUI then ns.CharacterSheetUI.RefreshIfShown() end
-                Refresh(f)
-            end
+            StaticPopup_Show("PARCHMENT_SPELL_UNLEARN", c.spell.name or "?", nil,
+                { window = f, spell = c.spell })
         end)
+        -- Status tooltip: the card colours say known/open/locked, this says why.
+        card:SetScript("OnEnter", function(c)
+            if not c.tip then return end
+            GameTooltip:SetOwner(c, "ANCHOR_RIGHT")
+            GameTooltip:SetText(c.tipTitle or " ", 1, 1, 1)
+            GameTooltip:AddLine(c.tip, UI.TEXT[1], UI.TEXT[2], UI.TEXT[3], true)
+            GameTooltip:Show()
+        end)
+        card:SetScript("OnLeave", GameTooltip_Hide)
         content.cardPool[content.usedCards] = card
     end
     card:Show()
@@ -215,14 +264,39 @@ local function MetaText(self, spell)
     return table.concat(parts, "  -  ")
 end
 
+-- The tooltip for a spell card: its status plus the cause. Takes the refusal
+-- reason CanLearn already produced (nil when learnable). Returns title, body.
+local function SpellTip(self, spell, status, reason)
+    if status == "known" then
+        return "Known", "Right-click to unlearn it and refund its pick."
+    end
+    if status == "locked" then
+        local lockedBy = ns.Spells.LockedBy(self.char, self.pack, spell.school)
+        local locker = lockedBy and ns.Spells.School(self.pack, lockedBy)
+        local school = ns.Spells.School(self.pack, spell.school)
+        return "School locked", "You know " .. ((locker and locker.name) or lockedBy or "opposed")
+            .. " spells, which closes "
+            .. ((school and school.name) or spell.school or "this school") .. "."
+    end
+    if reason then return "Cannot learn", reason end
+    local wouldLock = ns.Spells.WouldLock(self.char, self.pack, spell)
+    return "Open", wouldLock
+        and ("Learn takes it for 1 pick and locks out "
+            .. (wouldLock.name or wouldLock.id or "its opposed school") .. ".")
+        or "Learn takes it for 1 pick."
+end
+
 -- Lays out the left rail: "All" plus one button per school, with lock marks.
 local function RenderRail(self)
     self.usedRail = 0
     local y = -70
+    -- A search spans every school, so no rail entry is the active filter while
+    -- a query stands - drop the marker rather than lie about it.
+    local searching = Query(self) ~= ""
     local function add(label, schoolId, count, locked)
         local btn = AcquireRail(self)
         btn.window, btn.schoolId = self, schoolId
-        local selected = self.schoolFilter == schoolId
+        local selected = self.schoolFilter == schoolId and not searching
         btn:SetText((selected and "|cffc8a868> |r" or "") .. (locked and "|cff999999" or "")
             .. label .. (count and (" (" .. count .. ")") or "") .. (locked and " x|r" or ""))
         btn:SetPoint("TOPLEFT", 14, y)
@@ -283,6 +357,12 @@ local function RenderHomebrew(self)
             card.meta:SetText(HomebrewMeta(self, rec))
             card.desc:SetText(rec.description or "")
             card.learn:Hide()
+            card.learn.reason = nil
+            -- Pending records render dimmed; the tooltip says what they wait on.
+            card.tipTitle = (not active) and "Pending" or nil
+            card.tip = (not active)
+                and ("Gained at level " .. (rec.level or 1) .. "; this character is not there yet.")
+                or nil
             local descH = (rec.description and rec.description ~= "")
                 and (card.desc:GetStringHeight() + 6) or 0
             card:SetHeight(24 + 14 + descH + 6)
@@ -299,8 +379,12 @@ end
 -- Lays out the spell cards for the current filter or search.
 local function RenderList(self)
     local content = self.content
+    local query = Query(self)
     self.newBtn:Hide()
-    if self.schoolFilter == "__homebrew" and Query(self) == "" then
+    -- The legend doubles as the search's status line: it is the one text that
+    -- transient feedback in self.msg never overwrites.
+    self.legend:SetText((query ~= "") and SEARCH_LEGEND or LEGEND)
+    if self.schoolFilter == "__homebrew" and query == "" then
         RenderHomebrew(self)
         return
     end
@@ -308,7 +392,6 @@ local function RenderList(self)
     local width = content:GetWidth()
     local y = -4
 
-    local query = Query(self)
     local spells = (query ~= "") and ns.Spells.Search(self.pack, query)
         or ns.Spells.SpellsOf(self.pack, self.schoolFilter)
 
@@ -328,6 +411,16 @@ local function RenderList(self)
         card.desc:SetText(spell.description or "")
         card.learn:SetShown(not known and not locked)
         card.learn.window, card.learn.spell = self, spell
+        -- Affordability shows before the click, not after it: an unlearnable
+        -- open spell keeps a disabled button plus reason.
+        local reason
+        if status == "open" then
+            local canLearn, why = ns.Spells.CanLearn(self.char, self.sheet, self.pack, spell)
+            reason = (not canLearn) and (why or "Cannot learn.") or nil
+            card.learn:SetEnabled(canLearn)
+        end
+        card.learn.reason = reason
+        card.tipTitle, card.tip = SpellTip(self, spell, status, reason)
         local descH = (spell.description and spell.description ~= "")
             and (card.desc:GetStringHeight() + 6) or 0
         card:SetHeight(24 + 14 + descH + 6)
@@ -350,6 +443,7 @@ Refresh = function(self)
         for _, b in ipairs(self.railPool) do b:Hide() end
         self.newBtn:Hide()
         self.points:SetText("")
+        self.castInfo:SetText("")
         self.packLabel:SetText("")
     end
 
@@ -379,10 +473,15 @@ Refresh = function(self)
 
     self.sheet = ns.CharacterSheet.Compute(char, ns.GetSystem(), ns.GetItemLibrary())
     self.packLabel:SetText(pack.pack_name or "")
+    -- The shared budget reads as what is left to spend, green until it is gone;
+    -- the cast attribute is reference, so it keeps its own dim string.
     local spent, budget = ns.Picks.Points(char)
-    local cast = char.cast_attribute
-        and (ns.AttrName(char.cast_attribute) .. "  -  ") or ""
-    self.points:SetText(cast .. "Picks: " .. spent .. " / " .. budget)
+    local left = budget - spent
+    self.points:SetText(left .. ((left == 1) and " pick left" or " picks left"))
+    local pc = (left > 0) and UI.GREEN or UI.RED
+    self.points:SetTextColor(pc[1], pc[2], pc[3])
+    self.castInfo:SetText(char.cast_attribute
+        and ("Casts with " .. ns.AttrName(char.cast_attribute)) or "")
     RenderRail(self)
     RenderList(self)
 end
@@ -398,9 +497,16 @@ local function BuildFrame()
     f.packLabel:SetPoint("TOPLEFT", 16, -44)
     f.packLabel:SetTextColor(UI.GOLD[1], UI.GOLD[2], UI.GOLD[3])
 
-    f.points = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    -- The picks budget is the number that decides every Learn click, so it
+    -- carries the full-size font; Refresh colours it green/red.
+    f.points = f:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     f.points:SetPoint("TOPRIGHT", -16, -46)
-    f.points:SetTextColor(UI.HEAD[1], UI.HEAD[2], UI.HEAD[3])
+
+    -- The cast attribute sits on the same header row, dim and small, so the
+    -- budget reads as the only number that changes with a pick.
+    f.castInfo = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    f.castInfo:SetPoint("RIGHT", f.points, "LEFT", -10, 0)
+    f.castInfo:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
 
     f.searchBox = CreateFrame("EditBox", nil, f, "InputBoxTemplate")
     f.searchBox:SetSize(140, 18)
@@ -422,16 +528,20 @@ local function BuildFrame()
 
     f.legend = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     f.legend:SetPoint("TOPLEFT", 130, -50)
-    f.legend:SetPoint("RIGHT", f.points, "LEFT", -12, 0)
+    f.legend:SetPoint("RIGHT", f.castInfo, "LEFT", -12, 0)
     f.legend:SetJustifyH("LEFT")
     f.legend:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
-    f.legend:SetText("Learn adds a spell - right-click a known one forgets it, shift-click puts its link in chat")
+    f.legend:SetText(LEGEND)
 
+    -- Both anchors fix the same top edge, so the explicit height stands: two
+    -- wrapped lines, enough for a refusal reason at the narrowest window.
     f.msg = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     f.msg:SetPoint("TOPLEFT", 130, -72)
-    f.msg:SetPoint("RIGHT", f.searchBox, "LEFT", -12, 0)
+    f.msg:SetPoint("TOPRIGHT", f.searchBox, "TOPLEFT", -12, -4)
+    f.msg:SetHeight(24)
     f.msg:SetJustifyH("LEFT")
-    f.msg:SetWordWrap(false)
+    f.msg:SetJustifyV("TOP")
+    f.msg:SetWordWrap(true)
 
     local scroll = CreateFrame("ScrollFrame", "ParchmentSpellbookScroll", f, "UIPanelScrollFrameTemplate")
     scroll:SetPoint("TOPLEFT", 126, -92)

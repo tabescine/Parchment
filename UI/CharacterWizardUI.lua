@@ -3,8 +3,10 @@
 -- A guided, stepped creator for a brand-new character: Identity -> Traits ->
 -- Attributes -> Proficiencies -> Review. It edits a draft (not the active
 -- character); Finish saves the draft, makes it active, and opens the editor for
--- any further tweaks. Reuses ns.Widgets.Stepper, ns.Dialogs.Pick and the
--- ns.CharacterEditor budgets/warnings; validation is soft (shown, never blocks).
+-- any further tweaks. Closing the window keeps the draft - a non-blank one is
+-- offered for resume the next time the wizard opens. Reuses ns.Widgets.Stepper,
+-- ns.Dialogs.Pick and the ns.CharacterEditor budgets/warnings; validation is
+-- soft (shown, never blocks).
 --
 -- Reads from: ns.CharacterEditor, ns.CharacterSheet.Compute, ns.GetSystem,
 --   ns.GetItemLibrary, ns.Widgets, ns.Dialogs, ns.UI, ns.CharacterEditorUI.
@@ -146,10 +148,13 @@ local function BuildFrame()
     return f
 end
 
--- Saves the draft, makes it active, and opens the editor.
+-- Saves the draft, makes it active, and opens the editor. The draft is dropped
+-- once it is a character - a kept one would offer itself for resume on the next
+-- Open (see WizardUI.Open).
 local function Commit(self)
     CE.InitResources(self.draft, ns.GetSystem())
     CE.SaveNew(ns.NextCharacterKey(), self.draft)
+    self.draft = nil
     self:Hide()
     if ns.CharacterEditorUI then ns.CharacterEditorUI.Open() end
     if ns.CharacterSheetUI then ns.CharacterSheetUI.RefreshIfShown() end
@@ -221,7 +226,55 @@ local function GetFrame()
     return ns.UI.RebuildableFrame(WizardUI, BuildFrame, Form.AttrSignature)
 end
 
--- Opens the wizard with a fresh draft.
+-- Shows the wizard with the draft (and step) it already holds.
+local function ShowDraft(f)
+    Refresh(f)
+    f:Show()
+end
+
+-- Discards any draft and shows step 1 of a fresh one.
+local function FreshDraft(f)
+    f.draft = CE.NewBlank()
+    f.step = 1
+    ShowDraft(f)
+end
+
+-- True when a draft holds work worth keeping. Compared field by field against a
+-- fresh blank rather than against hardcoded defaults, so it stays right for
+-- whatever system is loaded (CE.NewBlank seeds attributes from its point buy).
+local function DraftDirty(d)
+    if not d then return false end
+    local blank = CE.NewBlank()
+    local fields = { "name", "player", "race", "quote", "racial_trait",
+        "primary_attribute", "ac_attribute", "init_attribute", "cast_attribute" }
+    for _, k in ipairs(fields) do
+        if d[k] ~= blank[k] then return true end
+    end
+    for id, v in pairs(blank.attributes) do
+        if (d.attributes or {})[id] ~= v then return true end
+    end
+    local lists = { "origin_traits", "accomplished_skills", "accomplished_weapons",
+        "accomplished_saves" }
+    for _, k in ipairs(lists) do
+        if #(d[k] or {}) > 0 then return true end
+    end
+    return false
+end
+
+-- Closing the wizard keeps the draft, so a mistaken Escape four steps in costs
+-- nothing: the next Open offers it back. Escaping this popup keeps the draft too
+-- (noCancelOnEscape) - only "Start Over" throws work away.
+StaticPopupDialogs["PARCHMENT_WIZARD_RESUME"] = {
+    text = "Resume the character you were creating?",
+    button1 = "Resume", button2 = "Start Over",
+    OnAccept = function(_, f) ShowDraft(f) end,
+    OnCancel = function(_, f) FreshDraft(f) end,
+    timeout = 0, whileDead = true, hideOnEscape = true, noCancelOnEscape = true,
+    preferredIndex = 3,
+}
+
+-- Opens the wizard, asking first when a draft from an earlier session is still
+-- unfinished. A blank draft (or none) is replaced without asking.
 function WizardUI.Open()
     local f = GetFrame()
     if not ns.HasSystem() then
@@ -229,10 +282,11 @@ function WizardUI.Open()
         f:Show()
         return
     end
-    f.draft = CE.NewBlank()
-    f.step = 1
-    Refresh(f)
-    f:Show()
+    if DraftDirty(f.draft) then
+        StaticPopup_Show("PARCHMENT_WIZARD_RESUME", nil, nil, f)
+        return
+    end
+    FreshDraft(f)
 end
 
 -- Refreshes the wizard when it is open. If the system changed mid-creation the
