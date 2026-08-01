@@ -97,7 +97,7 @@ end
 
 -- Deletes a pack from its library. Deleting the active pack deactivates it
 -- (the pointer self-heals to nil); characters are untouched - their picks
--- simply stop resolving, exactly like perks after a system switch.
+-- simply stop resolving until it returns.
 function Packs.Delete(kind, name)
     local lib = ns.GetPackLibrary(kind)
     if not lib[name] then return end

@@ -142,7 +142,7 @@ def detect_type(data):
         return data["kind"]
     if "characters" in data:
         return "character"
-    if "system_name" in data or "perk_trees" in data or "modifier_table" in data:
+    if "system_name" in data or "modifier_table" in data:
         return "system"
     if "pack_name" in data and "lines" in data:
         return "feats"

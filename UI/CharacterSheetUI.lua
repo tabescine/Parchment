@@ -3,12 +3,12 @@
 -- Builds and drives the character sheet window. Owns one reusable frame: a
 -- draggable, Escape-closable panel with a fixed vitals header (editable current
 -- HP/Mana) and a scrolling body that renders the computed sheet - attributes,
--- derived stats, skills and saves, weapons, traits, the homebrew ability path
+-- derived stats, skills and saves, weapons, traits, feats and spells
 -- and notes.
 --
 -- All layout is data-driven from ns.CharacterSheet.Compute; nothing here knows
 -- any specific ruleset, so whatever system the user imports renders too. The
--- ability path renders Compute's entries as they come: a homebrew perk it flags
+-- quick-reference sections render homebrew as it comes: a record flagged
 -- pending (gained at a level the character has not reached) is dimmed and
 -- labelled instead of hidden.
 --
@@ -79,7 +79,7 @@ local function Num(n)
     return tostring(n)
 end
 
--- Soft-blue inline tag naming the trait/perk(s) that modified a stat, so it is
+-- Soft-blue inline tag naming the trait(s)/record(s) that modified a stat, so it is
 -- obvious why a total differs from the raw modifier. Returns "" when none.
 local function SourceTag(sources)
     if not sources or #sources == 0 then return "" end
@@ -101,7 +101,7 @@ end
 
 -- Returns the next pooled hover button (transparent, spans a row or paragraph)
 -- used to show a breakdown tooltip and/or handle a click (roll a check, post a
--- perk, drop an item). Scripts read btn.tip(GameTooltip), btn.roll =
+-- entry, drop an item). Scripts read btn.tip(GameTooltip), btn.roll =
 -- { label, modifier } or { hint, click } for the left button, and btn.rightClick
 -- for the right one (all set fresh on every render). A row that sets no
 -- rightClick ignores right clicks entirely.
@@ -403,14 +403,14 @@ local function RenderOverview(content, sheet, ctx)
             "Spellcasting is driven by " .. aName(d.cast_attribute) .. " (modifier "
             .. Signed(aMod(d.cast_attribute)) .. "). It gates spell ranks in the spellbook."))
     end
-    -- The shared pick ledger (perks, feats, spells), own sheet only: a viewed
+    -- The shared pick ledger (feats, spells, homebrew), own sheet only: a viewed
     -- character counts against the VIEWER's system and packs, which may not be
     -- the ones it was built with.
     if not ctx.viewChar and ctx.char then
         local spent, budget = ns.Picks.Points(ctx.char)
         Row(content, "Picks", spent .. " / " .. budget,
             0, spent > budget and ns.UI.RED or nil, Tip("Picks",
-            "One shared pool buys perk ranks, feat ranks and spells: "
+            "One shared pool buys feat ranks, spells and homebrew: "
             .. spent .. " spent of " .. budget .. " at level " .. sheet.level .. "."))
     end
     if d.attack_modifier ~= 0 then
@@ -973,7 +973,7 @@ local function RenderFeatsSpells(content, sheet, ctx)
         end
         for _, rec in ipairs(homebrewFeats) do
             if type(rec) == "table" then
-                local pending = not ns.CharacterSheet.PerkActive(char, rec)
+                local pending = not ns.CharacterSheet.HomebrewActive(char, rec)
                 local title = (rec.name or "?") .. "  |cff8ec6ff(homebrew"
                     .. (pending and (", pending until level " .. (rec.level or 1)) or "") .. ")|r"
                 local body = MetaTag(rec) .. (rec.description or "")
@@ -1022,7 +1022,7 @@ local function RenderFeatsSpells(content, sheet, ctx)
         end
         for _, rec in ipairs(homebrewSpells) do
             if type(rec) == "table" then
-                local pending = not ns.CharacterSheet.PerkActive(char, rec)
+                local pending = not ns.CharacterSheet.HomebrewActive(char, rec)
                 local school = rec.school and spellPack and ns.Spells.School(spellPack, rec.school)
                 local title = (rec.name or "?") .. "  |cff8ec6ff(homebrew"
                     .. (rec.school and (", " .. ((school and school.name) or rec.school)
@@ -1044,10 +1044,10 @@ local function RenderFeatsSpells(content, sheet, ctx)
     end
 end
 
--- Prose blocks: traits, selected sphere perks, the homebrew ability path, and
--- notes. Each is a titled list of wrapped paragraphs, shown only when non-empty.
--- On the own sheet, trait/perk/ability paragraphs are clickable to post their
--- text to group chat (ctx.postSpec, nil on viewed sheets); notes stay private.
+-- Prose blocks: traits and notes. Traits are a titled list of wrapped
+-- paragraphs, shown only when non-empty; on the own sheet they are clickable
+-- to post their text to group chat (ctx.postSpec, nil on viewed sheets).
+-- Notes stay private.
 local function RenderProse(content, sheet, ctx)
     -- Traits.
     if #sheet.traits > 0 then
@@ -1055,36 +1055,6 @@ local function RenderProse(content, sheet, ctx)
         for _, t in ipairs(sheet.traits) do
             Paragraph(content, t.name .. ":", t.description, C_DIM,
                 ctx.postSpec(t.name .. ": " .. (t.description or "")))
-        end
-    end
-
-    -- Selected sphere perks.
-    if #sheet.sphere_perks > 0 then
-        Header(content, "PERKS")
-        for _, p in ipairs(sheet.sphere_perks) do
-            local title = p.name .. (p.rank > 1 and (" x" .. p.rank) or "")
-                .. (p.choices and #p.choices > 0 and ("  |cff8ec6ff[" .. table.concat(p.choices, ", ") .. "]|r") or "")
-                .. (p.sphere and ("  |cff8ec6ff(" .. p.sphere .. ")|r") or "")
-            Paragraph(content, title .. ":", p.description, C_DIM,
-                ctx.postSpec(title .. ": " .. (p.description or "")))
-        end
-    end
-
-    -- Homebrew ability path (custom_perks: import-authored homebrew grants).
-    -- Perks written for a level the character has not reached are marked pending
-    -- and dimmed title and all: the plan stays readable without looking active.
-    if #sheet.custom_perks > 0 then
-        Header(content, "ABILITY PATH")
-        for _, p in ipairs(sheet.custom_perks) do
-            local title = "Lv" .. (p.level or "?") .. " " .. p.name
-                .. (p.pending and " (pending)" or "")
-            local post = ctx.postSpec(title .. ": " .. (p.description or ""))
-            if p.pending then
-                Paragraph(content, nil,
-                    "|cff9e998c" .. title .. ":|r  " .. (p.description or ""), C_DIM, post)
-            else
-                Paragraph(content, title .. ":", p.description, C_DIM, post)
-            end
         end
     end
 

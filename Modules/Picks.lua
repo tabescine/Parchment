@@ -1,14 +1,14 @@
 -- Parchment - Picks (logic)
 --
--- The shared pick ledger. Sphere perk ranks, homebrew perks, feat ranks and
--- known spells all spend from ONE per-level pool, so the budget and the spend
--- count live here rather than in any single picker. The budget comes from the
+-- The shared pick ledger. Feat ranks, known spells and homebrew records all
+-- spend from ONE per-level pool, so the budget and the spend count live here
+-- rather than in any single picker. The budget comes from the
 -- system's optional `progression` block:
 --   budget = picks_level_1 + picks_per_level x (level - 1)
 -- with both knobs defaulting to 1 - the classic one pick per level.
 --
 -- Reads from: ns.GetSystem, ns.GetFeatPack, ns.GetSpellPack, ns.FindById,
---   ns.CharacterSheet.PerkActive (the shared homebrew active/pending test).
+--   ns.CharacterSheet.HomebrewActive (the shared active/pending test).
 -- Exposes on ns.Picks: Budget, Spent, Points.
 
 local ADDON, ns = ...
@@ -27,32 +27,21 @@ function Picks.Budget(char)
 end
 
 -- How many picks a character has spent. Only entries that resolve in the
--- ACTIVE system and packs count: after a system or pack switch, char.perks/
--- feats/spells can hold stale ids the player can neither see nor deselect in
--- any picker, and counting those would warn about an overspend the player
--- cannot fix (the sheet already skips them for effects and display).
+-- ACTIVE packs count: after a pack switch, char.feats/spells can hold stale
+-- ids the player can neither see nor deselect in any picker, and counting
+-- those would warn about an overspend the player cannot fix (the sheet
+-- already skips them for effects and display).
 function Picks.Spent(char)
     if type(char) ~= "table" then return 0 end
     local spent = 0
 
-    -- Sphere perks: each list entry (= one rank) resolving in any tree.
-    local perkIds = {}
-    for _, tree in ipairs(ns.GetSystem().perk_trees or {}) do
-        for _, perk in ipairs(type(tree) == "table" and tree.perks or {}) do
-            if type(perk) == "table" and perk.id then perkIds[perk.id] = true end
-        end
-    end
-    for _, id in ipairs(char.perks or {}) do
-        if perkIds[id] then spent = spent + 1 end
-    end
-
-    -- Homebrew (perks, feats and spells alike), once gained: one planned for
-    -- a higher level has not been paid for yet, so it must not read as an
-    -- overspend today. (Field names, not the lists themselves - a nil list
-    -- would truncate an array constructor and silently skip the rest.)
-    for _, field in ipairs({ "custom_perks", "custom_feats", "custom_spells" }) do
+    -- Homebrew (feats and spells), once gained: one planned for a higher
+    -- level has not been paid for yet, so it must not read as an overspend
+    -- today. (Field names, not the lists themselves - a nil list would
+    -- truncate an array constructor and silently skip the rest.)
+    for _, field in ipairs({ "custom_feats", "custom_spells" }) do
         for _, rec in ipairs(type(char[field]) == "table" and char[field] or {}) do
-            if ns.CharacterSheet.PerkActive(char, rec) then spent = spent + 1 end
+            if ns.CharacterSheet.HomebrewActive(char, rec) then spent = spent + 1 end
         end
     end
 

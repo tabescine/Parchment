@@ -36,15 +36,6 @@ ParchmentSystemDB = {
           bonuses = { { type = "attribute", id = "a", value = 1 } },
           penalties = { { type = "skill", skill = "s2", value = -1 } } },
     },
-    perk_trees = { {
-        id = "t1", name = "Tree One",
-        perks = {
-            { id = "p_eff", name = "Effective", effects = { { type = "skill", skill = "s1", value = 2 } } },
-            { id = "p_choice", name = "Chooser", choice = { kind = "skill", apply = "double_accomplishment" } },
-            { id = "p_rep", name = "Sturdy", repeatable = true, max_ranks = 2,
-              effects = { { type = "max_hp", value = 1 } } },
-        },
-    } },
 }
 local system = ParchmentSystemDB
 
@@ -58,10 +49,8 @@ local char = {
     accomplished_skills = { "s1" },
     accomplished_saves = { "a" },
     accomplished_weapons = { "w1", "w2" },
-    perks = { "p_eff", "p_choice", "p_rep", "p_rep" },   -- p_rep at rank 2
-    perk_choices = { p_choice = { "s1" } },
-    custom_perks = { {
-        id = "hb", name = "Homebrew",
+    custom_feats = { {
+        id = "hb", name = "Homebrew", level = 1,
         effects = {
             { type = "skill", skill = "s1", add_modifier = "c" },  -- +copy of c's mod (2)
             { type = "save", id = "b", value = 1 },
@@ -85,11 +74,11 @@ assert(byId.a.sources[1] == "+1 Race One")
 assert(byId.b.final == 3 and byId.b.modifier == 1)
 assert(byId.c.final == 4 and byId.c.modifier == 2)
 
--- Skills. s1 = mod a (0) + accomplishment (3) + perk +2 + add_modifier copy of
--- c (2) + doubled accomplishment (3) = 10. s2 = mod b (1) + race penalty -1 = 0.
+-- Skills. s1 = mod a (0) + accomplishment (3) + homebrew add_modifier copy
+-- of c (2) = 5. s2 = mod b (1) + race penalty -1 = 0.
 local skills = {}
 for _, s in ipairs(sheet.skills) do skills[s.id] = s end
-assert(skills.s1.total == 10, "s1 expected 10, got " .. skills.s1.total)
+assert(skills.s1.total == 5, "s1 expected 5, got " .. skills.s1.total)
 assert(skills.s1.accomplished and not skills.s2.accomplished)
 assert(skills.s2.total == 0, "s2 expected 0, got " .. skills.s2.total)
 
@@ -109,7 +98,7 @@ assert(weapons.w2.attack_total == 4 and weapons.w2.attack_attribute == "b")  -- 
 local d = sheet.derived
 assert(d.accomplishment == 3)
 assert(d.hit_dice == "2d6")                                 -- a's mod 0 -> d6, level 2
-assert(d.hp.max == 12 and d.hp.current == 7 and d.hp.temp == 1)  -- 10 + 2x Sturdy
+assert(d.hp.max == 10 and d.hp.current == 7 and d.hp.temp == 1)
 assert(d.mana.max == 6)                                     -- caster: 3 x c's mod 2
 assert(d.ac == 13)                                          -- 12 + b's mod 1
 -- The explicit init pick "b" is in the candidate list, so it is honored even
@@ -118,12 +107,6 @@ assert(d.initiative == 1 and d.init_attribute == "b")
 assert(d.movement == 11)                                    -- 10 + max(0,1) x 1
 assert(d.actions == 3)                                      -- 2 + level-2 bonus
 assert(d.save_dc == 13)                                     -- 8 + c's mod 2 + 3
-
--- Perk display: rank counting and recorded choice names.
-local perks = {}
-for _, p in ipairs(sheet.sphere_perks) do perks[p.name] = p end
-assert(perks.Sturdy.rank == 2)
-assert(perks.Chooser.choices and perks.Chooser.choices[1] == "Skill One")
 
 -- Spellcasting (the char's primary c IS a spell attribute): spell attack =
 -- c's mod (2) + accomplishment (3) + global effect (1) = 6; the targeted
@@ -140,7 +123,7 @@ assert(spell.schools[2].id == "wd" and spell.schools[2].attack == 6 and spell.sc
 -- re-add the effect - the fix for creation-time mana being double-counted forever.
 local charM = {
     name = "M", level = 1, attributes = { a = 1, b = 3, c = 4 }, primary_attribute = "c",
-    custom_perks = { { id = "hb", name = "HB", effects = { { type = "max_mana", value = 5 } } } },
+    custom_feats = { { id = "hb", name = "HB", level = 1, effects = { { type = "max_mana", value = 5 } } } },
 }
 local sm = ns.CharacterSheet.Compute(charM, system).derived.mana
 assert(sm.base == 6, "base must be the fx-free mana (3 x c's mod 2), got " .. tostring(sm.base))

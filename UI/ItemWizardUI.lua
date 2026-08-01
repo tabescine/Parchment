@@ -452,7 +452,7 @@ local function BuildDetailsPage(f)
     Label(p, "Description", PAD, y)
     y = y - 18
 
-    -- Bordered multi-line box (the perk wizard's pattern: a plain EditBox, not
+    -- Bordered multi-line box (the homebrew wizard's pattern: a plain EditBox, not
     -- InputScrollFrameTemplate, whose cursor tracking makes typed input jump).
     local descFrame = CreateFrame("Frame", nil, p, "BackdropTemplate")
     descFrame:SetPoint("TOPLEFT", PAD, y)

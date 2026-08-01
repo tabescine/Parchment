@@ -251,7 +251,7 @@ local function BuildFrame()
             -- System config is read at event time (not captured at build) so a
             -- reimported system's modifier table / derived config is honored.
             -- Base attributes may exceed the creation cap of 10 post-creation
-            -- (level milestone points and traits push toward the 11/12 perk
+            -- (level milestone points and traits push toward the 11/12 feat
             -- requirements), so the stepper allows the modifier table's range.
             -- Only fall back to a default cap when the system has NO modifier
             -- table; a short one is its real range (a system with an 8-entry

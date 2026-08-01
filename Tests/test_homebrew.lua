@@ -1,6 +1,6 @@
--- Homebrew feats and spells: the Commit/Delete seams, the level gate shared
--- with homebrew perks, pick counting, effect folding into the computed sheet,
--- and the schema shape checks.
+-- Homebrew feats and spells: the Commit/Delete seams, the level gate, pick
+-- counting, effect folding into the computed sheet, and the schema shape
+-- checks.
 local T = dofile((TEST_ROOT or "") .. "Tests/wow_stubs.lua")
 T.InstallLifecycleStubs({})
 local ns = T.load({}, "Core.lua")
@@ -38,7 +38,7 @@ assert(char.custom_feats[2].name == "Second (edited)" and #char.custom_feats == 
 assert(HB.Commit(nil, "feat", feat) == nil and HB.Commit(char, "nope", feat) == nil)
 assert(HB.Commit(char, "feat", "nope") == nil)
 
--- Active/pending: the level gate matches homebrew perks.
+-- Active/pending: the level gate.
 assert(HB.Active(char, char.custom_feats[1]) == true)
 assert(HB.Active(char, char.custom_feats[2]) == false, "level 4 record pending at level 2")
 assert(HB.Active(char, char.custom_spells[1]) == true)
@@ -59,7 +59,6 @@ assert(s1 and s1.total == 3, "homebrew feat effect must fold into the skill, got
     .. tostring(s1 and s1.total))
 assert(sheet.derived.mana.max == 8, "homebrew spell effect must fold into mana, got "
     .. tostring(sheet.derived.mana.max))
-assert(#sheet.custom_perks == 0, "homebrew feats/spells must not masquerade as perks")
 
 -- Pending record's effects stay out until the level is reached.
 char.custom_feats[2].effects = { { type = "ac", value = 5 } }

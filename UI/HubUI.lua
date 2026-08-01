@@ -3,7 +3,7 @@
 -- The management window (/pmt hub, minimap left-click): one window with a
 -- left sidebar of panels and a content pane, TRP3-style. Panels are the
 -- visit-and-close screens (characters, settings, ...); the play windows
--- (sheet, combat, perks, party) stay independent on purpose, so they can be
+-- (sheet, combat, feats, party) stay independent on purpose, so they can be
 -- open side by side during a session.
 --
 -- Panels self-register at load via ns.HubUI.RegisterPanel{ id, label, order,

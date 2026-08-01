@@ -18,7 +18,6 @@ local ADDON, ns = ...
 local SYSTEM_REQUIRED = { system_name = "string", attributes = "table" }
 local ATTRIBUTE_REQUIRED = { id = "string", name = "string" }
 local SKILL_REQUIRED = { id = "string", name = "string", attribute = "string" }
-local PERK_REQUIRED = { id = "string", name = "string" }
 local WEAPON_REQUIRED = { id = "string", name = "string" }
 local CHAR_REQUIRED = { name = "string", level = "number", attributes = "table" }
 local ITEM_REQUIRED = { id = "string", name = "string", kind = "string" }
@@ -136,7 +135,7 @@ end
 
 -- Checks an optional string field for type only. Pack text (descriptions,
 -- ranges, types) carries rules prose of arbitrary length, so unlike item text
--- it is not capped - matching how system perk text is treated.
+-- it is not capped - matching how the rest of the rules prose is treated.
 local function CheckString(value, ctx, field, issues)
     if value ~= nil and type(value) ~= "string" then
         Report(issues, ctx, "field '" .. field .. "' should be string, got " .. type(value))
@@ -280,8 +279,7 @@ end
 --   issues - list of human-readable problem strings (empty when ok)
 --
 -- Beyond shape checks this resolves cross-references: every skill, saving
--- throw, perk tree and trait must name attributes that actually exist, and
--- perk prerequisites/exclusions must name perks that exist in the same tree.
+-- throw and trait must name attributes that actually exist.
 function Schema.ValidateSystem(system)
     local issues = {}
     if type(system) ~= "table" then
@@ -302,7 +300,7 @@ function Schema.ValidateSystem(system)
     end
 
     -- Skills must point at a real attribute and carry a unique id (everything
-    -- downstream - accomplished lists, perk choices - keys skills by id, so a
+    -- downstream - accomplished lists, effect targets - keys skills by id, so a
     -- duplicate resolves last-one-wins with no warning).
     local skillSeen = {}
     for i, skill in ipairs(AsTable(system.skills)) do
@@ -423,74 +421,6 @@ function Schema.ValidateSystem(system)
         end
     end
 
-    -- Global perk id set: prerequisites and exclusions may reference perks in
-    -- other spheres (the ruleset interconnects them), so validate against all.
-    local allPerkIds = {}
-    for _, tree in ipairs(AsTable(system.perk_trees)) do
-        if type(tree) == "table" then
-            for id in pairs(IdSet(tree.perks)) do allPerkIds[id] = true end
-        end
-    end
-
-    -- Perk trees: governing attribute must exist; prereqs/exclusions must
-    -- resolve to some perk (in any tree). Tree and perk ids must be unique -
-    -- perk ids GLOBALLY, across trees, because char.perks, perk_choices kind
-    -- resolution and prerequisite sets all key perks by bare id, so a duplicate
-    -- resolves last-one-wins with no warning.
-    local treeSeen, perkSeen = {}, {}
-    for i, tree in ipairs(AsTable(system.perk_trees)) do
-        local ctx = "perk_tree[" .. i .. "]"
-        if type(tree) ~= "table" then
-            Report(issues, ctx, "tree is not a table")
-        else
-            if tree.id ~= nil then
-                if treeSeen[tree.id] then
-                    Report(issues, ctx, "duplicate id '" .. tostring(tree.id) .. "'")
-                end
-                treeSeen[tree.id] = true
-            end
-            if tree.governing_attribute and not attrIds[tree.governing_attribute] then
-                Report(issues, ctx, "unknown governing_attribute '" ..
-                    tostring(tree.governing_attribute) .. "'")
-            end
-            for j, perk in ipairs(AsTable(tree.perks)) do
-                local pctx = ctx .. ".perk[" .. j .. "]"
-                if CheckRequired(perk, PERK_REQUIRED, pctx, issues) then
-                    if perkSeen[perk.id] then
-                        Report(issues, pctx, "duplicate perk id '" .. perk.id .. "'")
-                    end
-                    perkSeen[perk.id] = true
-                    if perk.req_attribute and not attrIds[perk.req_attribute] then
-                        Report(issues, pctx, "unknown req_attribute '" .. tostring(perk.req_attribute) .. "'")
-                    end
-                    if type(perk.choice) == "table" then
-                        local k = perk.choice.kind
-                        if k ~= "skill" and k ~= "weapon" and k ~= "damage_type" then
-                            Report(issues, pctx, "choice.kind invalid '" .. tostring(k) .. "'")
-                        end
-                    elseif perk.choice ~= nil then
-                        Report(issues, pctx, "choice should be a table, got " .. type(perk.choice))
-                    end
-                    for _, req in ipairs(AsTable(perk.prerequisites)) do
-                        if not allPerkIds[req] then
-                            Report(issues, pctx, "prerequisite '" .. tostring(req) .. "' not found in any tree")
-                        end
-                    end
-                    for _, req in ipairs(AsTable(perk.prerequisites_any)) do
-                        if not allPerkIds[req] then
-                            Report(issues, pctx, "prerequisites_any '" .. tostring(req) .. "' not found in any tree")
-                        end
-                    end
-                    for _, exc in ipairs(AsTable(perk.exclusive_with)) do
-                        if not allPerkIds[exc] then
-                            Report(issues, pctx, "exclusive_with '" .. tostring(exc) .. "' not found in any tree")
-                        end
-                    end
-                end
-            end
-        end
-    end
-
     return #issues == 0, issues
 end
 
@@ -501,9 +431,9 @@ end
 --   ok     - true when no issues were found
 --   issues - list of human-readable problem strings (empty when ok)
 --
--- When `system` is supplied, attribute keys, the primary/ac attributes,
--- accomplished skills/saves and selected perks are checked against it. When
--- `system` is nil only the character's own shape is validated.
+-- When `system` is supplied, attribute keys, the primary/ac/cast attributes
+-- and accomplished skills/saves are checked against it. When `system` is nil
+-- only the character's own shape is validated.
 --
 -- `packs` is an optional { feats = featPack, spells = spellPack } table (the
 -- active packs, see ns.GetFeatPack/GetSpellPack). Pack membership resolves
@@ -622,10 +552,6 @@ function Schema.ValidateCharacter(char, system, packs)
     -- Sets of valid ids drawn from the system definition.
     local attrIds = IdSet(system.attributes)
     local skillIds = IdSet(system.skills)
-    local perkIds = {}
-    for _, tree in ipairs(AsTable(system.perk_trees)) do
-        for id in pairs(IdSet(tree.perks)) do perkIds[id] = true end
-    end
 
     -- Base attribute keys must be known attributes, and a numeric value must be
     -- finite (the JSON/TOML decoders reject NaN/inf, but the Lua-literal import
@@ -685,27 +611,21 @@ function Schema.ValidateCharacter(char, system, packs)
         end
     end
 
-    -- Homebrew lists (perks, feats, spells): effects must reference real
-    -- skills/attributes; a perk's `replaces` target must be a real sphere
-    -- perk; feats/spells additionally carry picker metadata (cost, save)
-    -- whose shape is bounded like the pack equivalents.
-    for _, listName in ipairs({ "custom_perks", "custom_feats", "custom_spells" }) do
+    -- Homebrew lists (feats and spells): effects must reference real
+    -- skills/attributes, and the picker metadata (cost, save) is bounded
+    -- like the pack equivalents.
+    for _, listName in ipairs({ "custom_feats", "custom_spells" }) do
         for i, rec in ipairs(AsTable(char[listName])) do
             local pctx = listName .. "[" .. i .. "]"
             if type(rec) ~= "table" then
                 Report(issues, pctx, "should be a table, got " .. type(rec))
             else
-                if listName == "custom_perks" and rec.replaces and not perkIds[rec.replaces] then
-                    Report(issues, pctx, "replaces unknown perk '" .. tostring(rec.replaces) .. "'")
-                end
-                if listName ~= "custom_perks" then
-                    CheckNumeric(rec.level, pctx, "level", nil, issues)
-                    CheckCost(rec.cost, pctx, issues)
-                    CheckString(rec.type, pctx, "type", issues)
-                    CheckString(rec.range, pctx, "range", issues)
-                    if rec.save ~= nil and type(rec.save) == "string" and not attrIds[rec.save] then
-                        Report(issues, pctx, "unknown save attribute '" .. rec.save .. "'")
-                    end
+                CheckNumeric(rec.level, pctx, "level", nil, issues)
+                CheckCost(rec.cost, pctx, issues)
+                CheckString(rec.type, pctx, "type", issues)
+                CheckString(rec.range, pctx, "range", issues)
+                if rec.save ~= nil and type(rec.save) == "string" and not attrIds[rec.save] then
+                    Report(issues, pctx, "unknown save attribute '" .. rec.save .. "'")
                 end
                 for j, e in ipairs(AsTable(rec.effects)) do
                     local ctx = pctx .. ".effects[" .. j .. "]"
@@ -723,31 +643,6 @@ function Schema.ValidateCharacter(char, system, packs)
                             Report(issues, ctx, "unknown add_modifier attribute '" .. tostring(e.add_modifier) .. "'")
                         end
                     end
-                end
-            end
-        end
-    end
-
-    -- Perk choices must key real perks and pick ids valid for the choice kind.
-    local dmgTypes = {}
-    for _, d in ipairs(AsTable(system.damage_types)) do dmgTypes[d] = true end
-    for pid, chosen in pairs(AsTable(char.perk_choices)) do
-        if not perkIds[pid] then
-            Report(issues, "perk_choices", "unknown perk '" .. tostring(pid) .. "'")
-        else
-            local kind
-            for _, tree in ipairs(AsTable(system.perk_trees)) do
-                for _, p in ipairs(AsTable(tree.perks)) do
-                    if p.id == pid and type(p.choice) == "table" then kind = p.choice.kind end
-                end
-            end
-            for _, cid in ipairs(AsTable(chosen)) do
-                if kind == "skill" and not skillIds[cid] then
-                    Report(issues, "perk_choices[" .. pid .. "]", "unknown skill '" .. tostring(cid) .. "'")
-                elseif kind == "weapon" and not weaponIds[cid] then
-                    Report(issues, "perk_choices[" .. pid .. "]", "unknown weapon '" .. tostring(cid) .. "'")
-                elseif kind == "damage_type" and next(dmgTypes) and not dmgTypes[cid] then
-                    Report(issues, "perk_choices[" .. pid .. "]", "unknown damage type '" .. tostring(cid) .. "'")
                 end
             end
         end

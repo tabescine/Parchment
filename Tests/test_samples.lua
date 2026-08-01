@@ -57,12 +57,13 @@ for _, a in ipairs(sheet.attributes) do attrs[a.id] = a end
 for _, s in ipairs(sheet.skills) do skills[s.id] = s end
 assert(attrs.wits.final == 9 and attrs.wits.modifier == 1)   -- 8 + Human's +1
 assert(attrs.might.final == 5 and attrs.might.modifier == -1)
--- Lore: wits +1 mod, accomplished +3... plus the Fieldnotes feat's +1 skill
--- effect from the sample feats pack (owned pack feat ranks fold effects).
-assert(skills.lore.total == 9, "lore expected +9, got " .. skills.lore.total)
+-- Lore: wits +1 mod + accomplished +3 + the Fieldnotes feat's +1 skill
+-- effect (owned pack feat ranks fold effects) + Trail Sense's add_modifier
+-- copy of the Wits modifier (+1) = 6.
+assert(skills.lore.total == 6, "lore expected +6, got " .. skills.lore.total)
 assert(skills.endurance.total == 0)                          -- might -1 + Hardened +1
 local d = sheet.derived
-assert(d.hp.max == 32 and d.hp.current == 24 and d.hp.temp == 2)  -- 26 +2 Hardened +4 Toughness
+assert(d.hp.max == 28 and d.hp.current == 24 and d.hp.temp == 2)  -- 26 +2 Hardened
 assert(d.mana.max == 8 and d.hit_dice == "5d6")
 assert(d.ac == 11 and d.initiative == 2 and d.movement == 12.5)
 assert(d.actions == 3 and d.accomplishment == 3)
@@ -71,10 +72,6 @@ assert(d.save_dc == 13, "cast_attribute must make Wren a caster (DC 13)")
 assert(d.cast_attribute == "spirit")
 assert(d.spell and d.spell.attack == 3, "spell attack = spirit mod 0 + acc 3")
 assert(d.init_attribute == "wits", "explicit in-list init pick must be honored")
-local sphere = {}
-for _, p in ipairs(sheet.sphere_perks) do sphere[p.name] = p end
-assert(sphere.Toughness.rank == 2)
-assert(sphere.Scholar.choices[1] == "Lore")
 assert(#sheet.weapons == 1 and sheet.weapons[1].attack_total == 4)  -- Bow: wits 1 + acc 3
 
 -- The sample's inventory survives the import as references. Nothing seeds the

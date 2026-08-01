@@ -299,7 +299,7 @@ function ns.GetSpellPack()
 end
 
 -- Finds a record by its `id` field in a list of records. Returns nil when
--- absent. The system data is full of such lists (attributes, skills, perks,
+-- absent. The system data is full of such lists (attributes, skills,
 -- traits); modules share this instead of re-rolling the loop.
 function ns.FindById(list, id)
     for _, record in ipairs(list or {}) do

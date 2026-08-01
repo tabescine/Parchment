@@ -1,7 +1,7 @@
 -- Parchment - Dialogs
 --
 -- Reusable modal-style dialogs. Currently a single checklist picker used to
--- collect perk-driven choices (skills, weapons, damage types) and reusable by
+-- collect selection picks (skills, weapons, attributes) and reusable by
 -- the editor/wizard. One pooled frame is reused across calls.
 --
 -- Reads from: ns.UI (shared window + palette), ns.Comm (DM recognition).
