@@ -94,12 +94,23 @@ end
 -- also sent to party/raid chat, where the preceding RandomRoll system line
 -- lets everyone verify the raw die. The chat copy is parenthesized, the
 -- usual convention for out-of-character lines in an RP channel.
-function Dice.Check(label, modifier)
+--
+-- `linkToken` (optional) is a chat-link token ("[PMT:Name:N]") referencing
+-- what was rolled - it rides inside the parentheses, so the group can click
+-- through to the ability/spell/item behind the roll. The local print is
+-- rewritten through ns.ChatLinks so our own copy is clickable too (printed
+-- lines bypass the chat filters that rewrite it for everyone else).
+function Dice.Check(label, modifier, linkToken)
     modifier = modifier or 0
     Dice.Request(modifier, function(total, raw)
         local line = string.format("%s: %d (d20) %s %d = %d", label, raw,
             modifier >= 0 and "+" or "-", math.abs(modifier), total)
-        ns.Print(line)
+        if linkToken then line = line .. " " .. linkToken end
+        local localLine = line
+        if linkToken and ns.ChatLinks then
+            localLine = ns.ChatLinks.Rewrite(line, (UnitName and UnitName("player")) or "?")
+        end
+        ns.Print(localLine)
         if PublicEnabled() and IsInGroup() then
             SendChatMessage("(" .. line .. ")", IsInRaid() and "RAID" or "PARTY")
         end

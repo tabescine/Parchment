@@ -141,11 +141,15 @@ local function AcquireBtn(content)
             end
             if not self.roll then return end
             -- A spec may carry a custom click (e.g. the Initiative row joins
-            -- combat) instead of the default d20 check.
+            -- combat) instead of the default d20 check. A `linkPayload`
+            -- builder makes the roll announce what was rolled as a clickable
+            -- chat link (built at click time, so it carries current data).
             if self.roll.click then
                 self.roll.click()
             else
-                ns.Dice.Check(self.roll.label, self.roll.modifier)
+                local token = self.roll.linkPayload
+                    and ns.ChatLinks.MakeToken(self.roll.linkPayload()) or nil
+                ns.Dice.Check(self.roll.label, self.roll.modifier, token)
             end
         end)
         content.btnPool[content.btnUsed] = b
@@ -316,8 +320,10 @@ end
 
 -- Adds a full-width wrapped paragraph (descriptions, notes). title is bolded
 -- gold inline; body wraps beneath the available width. When `roll` ({ hint,
--- click }) is given, a hover button over the paragraph handles the click.
-local function Paragraph(content, title, body, color, roll)
+-- click } or { label, modifier, linkPayload }) and/or `shiftClick`
+-- ({ hint, click }) are given, a hover button over the paragraph handles
+-- the clicks.
+local function Paragraph(content, title, body, color, roll, shiftClick)
     local width = content:GetWidth() - PAD * 2
     local fs = Acquire(content, "GameFontHighlightSmall")
     fs:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, content.y)
@@ -328,12 +334,13 @@ local function Paragraph(content, title, body, color, roll)
     local text = title and ("|cffc8a868" .. title .. "|r  " .. (body or "")) or (body or "")
     fs:SetText(text)
     local h = fs:GetStringHeight()
-    if roll then
+    if roll or shiftClick then
         local b = AcquireBtn(content)
         b:SetPoint("TOPLEFT", content, "TOPLEFT", 4, content.y + 2)
         b:SetPoint("TOPRIGHT", content, "TOPRIGHT", -4, content.y + 2)
         b:SetHeight(h + 4)
         b.roll = roll
+        b.shiftClick = shiftClick
     end
     content.y = content.y - h - 6
 end
@@ -744,7 +751,10 @@ local function WeaponAttackValue(content, entry, kind, ctx, y)
     atk:SetJustifyH("RIGHT")
     atk:SetTextColor(C_GOLD[1], C_GOLD[2], C_GOLD[3])
     atk:SetText(Signed(entry.attack_total))
-    return ctx.rollSpec((entry.name or "Weapon") .. " attack", entry.attack_total)
+    local spec = ctx.rollSpec((entry.name or "Weapon") .. " attack", entry.attack_total)
+    -- The roll announces the item behind it as a clickable chat link.
+    if spec then spec.linkPayload = function() return ns.ChatLinks.Item(entry) end end
+    return spec
 end
 
 -- One inventory row: the state icon, the headline, and (gear) the counter or
@@ -940,6 +950,22 @@ local function RenderFeatsSpells(content, sheet, ctx)
     local char = ctx.char
     if not char then return end
 
+    -- A click-to-roll spec for an attack-type spell: d20 + the character's
+    -- spell attack (the school-adjusted row when the pack school has one),
+    -- announcing the spell as a clickable link. nil for non-attack spells,
+    -- non-casters and viewed sheets - the row then just shift-click links.
+    local function SpellAttackRoll(rec, payloadFn)
+        if ctx.viewChar then return nil end
+        local spell = sheet.derived.spell
+        if not spell then return nil end
+        if not tostring(rec.type or ""):lower():find("attack", 1, true) then return nil end
+        local mod = spell.attack
+        for _, row in ipairs(spell.schools or {}) do
+            if row.id == rec.school then mod = row.attack end
+        end
+        return { label = (rec.name or "?") .. " attack", modifier = mod, linkPayload = payloadFn }
+    end
+
     -- Joins the mechanics of a feat rank or spell into one bracket tag.
     local function MetaTag(entry, extra)
         local parts = {}
@@ -984,7 +1010,7 @@ local function RenderFeatsSpells(content, sheet, ctx)
                 .. " " .. r.index .. ")|r"
             local line, rank, index = r.line, r.rank, r.index
             Paragraph(content, title .. ":", MetaTag(r.rank) .. (r.rank.description or ""), C_DIM,
-                ctx.linkSpec(function() return ns.ChatLinks.FeatRank(line, rank, index) end))
+                nil, ctx.linkSpec(function() return ns.ChatLinks.FeatRank(line, rank, index) end))
         end
         for _, rec in ipairs(homebrewFeats) do
             if type(rec) == "table" then
@@ -997,7 +1023,7 @@ local function RenderFeatsSpells(content, sheet, ctx)
                 else
                     local record = rec
                     Paragraph(content, title .. ":", body, C_DIM,
-                        ctx.linkSpec(function() return ns.ChatLinks.Homebrew("feat", record) end))
+                        nil, ctx.linkSpec(function() return ns.ChatLinks.Homebrew("feat", record) end))
                 end
             end
         end
@@ -1034,8 +1060,9 @@ local function RenderFeatsSpells(content, sheet, ctx)
                 .. ((school and school.name) or spell.school or "?")
                 .. " " .. tostring(spell.rank or "?") .. ")|r"
             local record = spell
+            local payloadFn = function() return ns.ChatLinks.Spell(spellPack, record) end
             Paragraph(content, title .. ":", MetaTag(spell) .. (spell.description or ""), C_DIM,
-                ctx.linkSpec(function() return ns.ChatLinks.Spell(spellPack, record) end))
+                SpellAttackRoll(record, payloadFn), ctx.linkSpec(payloadFn))
         end
         for _, rec in ipairs(homebrewSpells) do
             if type(rec) == "table" then
@@ -1050,8 +1077,9 @@ local function RenderFeatsSpells(content, sheet, ctx)
                     Paragraph(content, nil, "|cff9e998c" .. title .. ":|r  " .. body, C_DIM)
                 else
                     local record = rec
+                    local payloadFn = function() return ns.ChatLinks.Homebrew("spell", record) end
                     Paragraph(content, title .. ":", body, C_DIM,
-                        ctx.linkSpec(function() return ns.ChatLinks.Homebrew("spell", record) end))
+                        SpellAttackRoll(record, payloadFn), ctx.linkSpec(payloadFn))
                 end
             end
         end
@@ -1113,11 +1141,12 @@ local function RenderBody(self)
         if ctx.viewChar then return nil end
         return { hint = "Click: post to chat", click = function() PostToChat(text) end }
     end
-    -- Click-to-link spec (post a clickable chat link; the payload builds at
-    -- click time so it reflects the current data), or nil for a viewed sheet.
+    -- Shift-click-to-link spec (insert a clickable chat link; the payload
+    -- builds at click time so it reflects the current data), or nil for a
+    -- viewed sheet.
     function ctx.linkSpec(payloadFn)
         if ctx.viewChar then return nil end
-        return { hint = "Click: insert a chat link", click = function()
+        return { hint = "Shift-click: insert a chat link", click = function()
             ns.ChatLinks.PostLink(payloadFn())
         end }
     end
