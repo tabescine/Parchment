@@ -186,7 +186,11 @@ local CHANNELS = {
 
 local function Filter(_, _, message, playerName, ...)
     if message:find("[PMT:", 1, true) then
-        message = CL.Rewrite(message, playerName)
+        -- A filter that throws makes the client drop the message for that
+        -- frame with no visible error - a swallowed message is strictly worse
+        -- than an unrewritten token, so the raw text is the failure mode.
+        local ok, rewritten = pcall(CL.Rewrite, message, playerName)
+        if ok then message = rewritten end
     end
     return false, message, playerName, ...
 end
