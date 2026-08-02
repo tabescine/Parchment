@@ -45,6 +45,7 @@ local function CreateListRow(content, onDelete)
     hl:SetTexCoord(0.25, 1, 0, 1)
     hl:SetBlendMode("ADD")
     hl:SetAlpha(0.6)
+    UI.WireRowTip(row)
 
     row.name = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     row.name:SetPoint("TOPLEFT", 6, -2)
@@ -195,6 +196,10 @@ local function RefreshSystems(panel)
         local c = active and UI.GOLD or UI.TEXT
         row.name:SetTextColor(c[1], c[2], c[3])
         row.meta:SetText(item.entry.from and ("from " .. item.entry.from) or "imported")
+        row.tipTitle = item.name
+        row.tipLines = { { "Source", item.entry.from or "imported locally" } }
+        row.tipHints = active and { "This is the active system." }
+            or { "Click: make it the active system", "X: delete (asks first)" }
         row:SetScript("OnClick", function()
             if active then return end
             -- A fresh install has nothing to disturb, so the swap stays one
@@ -273,6 +278,16 @@ local function RefreshPacks(panel)
         local pack = item.entry.pack or {}
         row.meta:SetText((pack.for_system and ("for " .. pack.for_system) or "any system")
             .. (item.entry.from and ("  -  from " .. item.entry.from) or ""))
+        row.tipTitle = item.name
+        local lines = {
+            { "Kind", PACK_KIND_LABEL[item.kind] },
+            { "For system", pack.for_system or "any" },
+        }
+        if item.entry.from then lines[#lines + 1] = { "From", item.entry.from } end
+        if pack.version then lines[#lines + 1] = { "Version", pack.version } end
+        row.tipLines = lines
+        row.tipHints = active and { "This is the active " .. item.kind .. " pack." }
+            or { "Click: activate it (one active per kind)", "X: delete (asks first)" }
         row:SetScript("OnClick", function()
             if ns.Packs.Activate(item.kind, item.name) then
                 ns.Print("now using " .. ns.Packs.Label(item.kind) .. " '" .. item.name .. "'.")
@@ -345,6 +360,15 @@ local function RefreshItems(panel)
         row.name:SetText(entry.item.name or entry.id)
         row.name:SetTextColor(UI.TEXT[1], UI.TEXT[2], UI.TEXT[3])
         row.meta:SetText((entry.item.kind or "?") .. "  -  [" .. entry.id .. "]")
+        row.tipTitle = entry.item.name or entry.id
+        local lines = { { "Kind", entry.item.kind or "?" }, { "ID", entry.id } }
+        local desc = tostring(entry.item.description or "")
+        if desc ~= "" then
+            if #desc > 120 then desc = desc:sub(1, 120) .. "..." end
+            lines[#lines + 1] = desc
+        end
+        row.tipLines = lines
+        row.tipHints = { "Click: edit (every carrier follows)", "X: delete (asks first)" }
         row:SetScript("OnClick", function()
             if ns.ItemWizardUI then ns.ItemWizardUI.Open(entry.id) end
         end)
@@ -450,6 +474,14 @@ local function RefreshCached(panel)
         local age = AgeText(item.entry.time)
         local suffix = age ~= "" and ("   |cff8a857a" .. age .. "|r") or ""
         row.meta:SetText("played by " .. item.key .. suffix)
+        row.tipTitle = item.entry.name or "?"
+        local lines = { { "Player", item.key } }
+        local lvl = type(item.entry.char) == "table" and item.entry.char.level
+        if lvl then lines[#lines + 1] = { "Level", lvl } end
+        lines[#lines + 1] = { "Cached", age ~= "" and age:gsub("^cached ", "") or "unknown" }
+        row.tipLines = lines
+        row.tipHints = { "Click: view (read-only)",
+            "Refresh: re-request a live copy", "X: remove (asks first)" }
         row:SetScript("OnClick", function()
             if ns.CharacterSheetUI then
                 ns.CharacterSheetUI.ShowCharacter(item.entry.char, item.key .. " (cached)")

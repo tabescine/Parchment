@@ -175,15 +175,35 @@ function UI.CreateWindow(globalName, opts)
     f.titleFS:SetTextColor(UI.GOLD[1], UI.GOLD[2], UI.GOLD[3])
     f.titleFS:SetText(opts.title or "Parchment")
 
-    -- Bottom-right resize grip.
+    -- Bottom-right resize grip. Right-click resets to the window's default
+    -- size (TRP3's grip convention); the tooltip is the only place either
+    -- gesture is discoverable, so it documents both.
     local grip = CreateFrame("Button", nil, f)
     grip:SetSize(16, 16)
     grip:SetPoint("BOTTOMRIGHT", -6, 6)
+    grip:RegisterForClicks("RightButtonUp")
     grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
     grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
     grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
-    grip:SetScript("OnMouseDown", function() f:StartSizing("BOTTOMRIGHT") end)
-    grip:SetScript("OnMouseUp", function() f:StopMovingOrSizing(); SaveGeometry(f, opts.dbKey) end)
+    grip:SetScript("OnMouseDown", function(_, button)
+        if button == "LeftButton" then f:StartSizing("BOTTOMRIGHT") end
+    end)
+    grip:SetScript("OnMouseUp", function(_, button)
+        if button == "LeftButton" then f:StopMovingOrSizing(); SaveGeometry(f, opts.dbKey) end
+    end)
+    grip:SetScript("OnClick", function(_, button)
+        if button ~= "RightButton" then return end
+        f:SetSize(opts.width, opts.height)
+        SaveGeometry(f, opts.dbKey)
+    end)
+    grip:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
+        GameTooltip:SetText("Resize", 1, 1, 1)
+        GameTooltip:AddLine("|cff8cd98cDrag:|r resize the window", 0.9, 0.9, 0.9)
+        GameTooltip:AddLine("|cff8cd98cRight-click:|r reset to the default size", 0.9, 0.9, 0.9)
+        GameTooltip:Show()
+    end)
+    grip:SetScript("OnLeave", GameTooltip_Hide)
 
     -- Re-layout hook while resizing.
     f:SetScript("OnSizeChanged", function(self)
@@ -193,6 +213,36 @@ function UI.CreateWindow(globalName, opts)
     RestoreGeometry(f, opts.dbKey)
     f:Hide()
     return f
+end
+
+-- Attaches the shared row tooltip to a pooled list row (idempotent). Fills
+-- set row.tipTitle (nil = no tooltip), row.tipLines (a list of {label, value}
+-- pairs, or plain strings for wrapped prose) and row.tipHints (gesture hints,
+-- rendered green) fresh on every render, so a reused row never shows stale
+-- data. The label/value + green-shortcut shape follows TRP3 Extended's
+-- database rows: it is what lets a row carry several gestures with no
+-- visible chrome.
+function UI.WireRowTip(row)
+    if row.tipWired then return end
+    row.tipWired = true
+    row:SetScript("OnEnter", function(self)
+        if not self.tipTitle then return end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(self.tipTitle, 1, 1, 1)
+        for _, l in ipairs(self.tipLines or {}) do
+            if type(l) == "table" then
+                GameTooltip:AddLine(l[1] .. ": |cffffd100" .. tostring(l[2]) .. "|r", 0.9, 0.9, 0.9)
+            else
+                GameTooltip:AddLine(l, 0.85, 0.82, 0.75, true)
+            end
+        end
+        for i, h in ipairs(self.tipHints or {}) do
+            if i == 1 then GameTooltip:AddLine(" ") end
+            GameTooltip:AddLine(h, UI.GREEN[1], UI.GREEN[2], UI.GREEN[3])
+        end
+        GameTooltip:Show()
+    end)
+    row:SetScript("OnLeave", GameTooltip_Hide)
 end
 
 -- Shows a centered empty-state message with up to two action buttons over a
