@@ -121,9 +121,9 @@ local function BuildContent(f)
         end)
     y = y - 36
 
+    -- No navigation shortcuts here: Systems and Import / export are one
+    -- sidebar click away, so this section keeps only real actions.
     Header(f, y, "SYSTEMS"); y = y - 26
-    ActionButton(f, y, "Manage systems", function() ns.HubUI.Open("systems") end); y = y - 26
-    ActionButton(f, y, "Import / Export", function() ns.HubUI.Open("import") end); y = y - 26
     local share = ActionButton(f, y, "Share system with group", ns.ShareSystem); y = y - 36
     share:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")

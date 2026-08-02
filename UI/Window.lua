@@ -215,6 +215,26 @@ function UI.CreateWindow(globalName, opts)
     return f
 end
 
+-- Gives a pooled list row the shared visuals: an always-on engraved band
+-- (the achievement-title gradient sliced out of its sheet) and an additive
+-- hover bar - both Blizzard textures, the TRP3 Extended database-row
+-- treatment. Call once at row creation.
+function UI.RowVisuals(row)
+    local band = row:CreateTexture(nil, "BACKGROUND")
+    band:SetPoint("TOPLEFT", 0, -1)
+    band:SetPoint("BOTTOMRIGHT", 0, 1)
+    band:SetTexture("Interface\\ACHIEVEMENTFRAME\\UI-Achievement-Title")
+    band:SetTexCoord(0, 1, 0.40625, 0.60125)
+    band:SetAlpha(0.35)
+    local hl = row:CreateTexture(nil, "HIGHLIGHT")
+    hl:SetAllPoints(row)
+    hl:SetTexture("Interface\\FriendsFrame\\UI-FriendsFrame-HighlightBar")
+    hl:SetTexCoord(0.25, 1, 0, 1)
+    hl:SetBlendMode("ADD")
+    hl:SetAlpha(0.6)
+    return band, hl
+end
+
 -- Attaches the shared row tooltip to a pooled list row (idempotent). Fills
 -- set row.tipTitle (nil = no tooltip), row.tipLines (a list of {label, value}
 -- pairs, or plain strings for wrapped prose) and row.tipHints (gesture hints,
