@@ -659,6 +659,35 @@ local function StepCount(index, delta)
     end)
 end
 
+-- The free-dice popup ("/pmt roll" behind the sheet's Roll dice button). The
+-- last notation is kept and pre-selected, so rolling the same dice again is
+-- Enter twice; a notation that does not parse keeps the box open (RollToChat
+-- already printed the usage line).
+local lastDiceNotation = "1d6"
+StaticPopupDialogs["PARCHMENT_ROLL_DICE"] = {
+    text = "Roll dice - XdY, with an optional +Z/-Z (6d6, 2d8+3):",
+    button1 = "Roll", button2 = CANCEL,
+    hasEditBox = true,
+    OnShow = function(self)
+        self.editBox:SetText(lastDiceNotation)
+        self.editBox:HighlightText()
+    end,
+    OnAccept = function(self)
+        local notation = self.editBox:GetText()
+        if ns.Dice.RollToChat(notation) then lastDiceNotation = notation end
+    end,
+    EditBoxOnEnterPressed = function(self)
+        local parent = self:GetParent()
+        local notation = parent.editBox:GetText()
+        if ns.Dice.RollToChat(notation) then
+            lastDiceNotation = notation
+            parent:Hide()
+        end
+    end,
+    EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
 -- Dropping an item is destructive (the entry, not the library item), so it is
 -- confirmed. The data is the inventory index the row was rendered from.
 StaticPopupDialogs["PARCHMENT_ITEM_REMOVE"] = {
@@ -1466,10 +1495,25 @@ local function BuildFrame()
     f.editBtn:SetPoint("BOTTOMLEFT", PAD, 10)
     f.editBtn:SetScript("OnClick", function() ns.OpenModule("edit") end)
 
+    -- Free dice ("/pmt roll" behind a button): a popup takes the notation and
+    -- remembers the last one rolled, so repeat rolls are two clicks.
+    local rollBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    rollBtn:SetSize(70, 22)
+    rollBtn:SetText("Roll dice")
+    rollBtn:SetPoint("BOTTOMLEFT", PAD + 64, 10)
+    rollBtn:SetScript("OnClick", function() StaticPopup_Show("PARCHMENT_ROLL_DICE") end)
+    rollBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Roll free dice (XdY, optional +Z) and post the result to group chat.",
+            1, 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    rollBtn:SetScript("OnLeave", GameTooltip_Hide)
+
     local saveBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     saveBtn:SetSize(130, 22)
     saveBtn:SetText("Save (reloads UI)")
-    saveBtn:SetPoint("BOTTOMLEFT", PAD + 64, 10)
+    saveBtn:SetPoint("BOTTOMLEFT", PAD + 138, 10)
     saveBtn:SetScript("OnClick", ns.SaveToDisk)
     saveBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")

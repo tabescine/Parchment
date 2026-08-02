@@ -9,10 +9,11 @@
 -- roller calls - a fallback roll is flagged to the caller and tagged in chat,
 -- since nobody saw it happen. Natural 20s and 1s are marked on the result
 -- line. Extracted from InitiativeTracker so the character sheet's
--- click-to-roll checks share one implementation.
+-- click-to-roll checks share one implementation. Free-notation rolls
+-- ("6d6", "2d8+3") are local-only and post as plain OOC lines.
 --
 -- Reads from: ns.Addon.db.profile.publicRolls, ns.Print.
--- Exposes on ns.Dice: Request, Check.
+-- Exposes on ns.Dice: Request, Check, Parse, Roll, RollToChat.
 
 local ADDON, ns = ...
 
@@ -137,4 +138,64 @@ function Dice.Check(label, modifier, linkToken)
             SendChatMessage("(" .. line .. ")", IsInRaid() and "RAID" or "PARTY")
         end
     end)
+end
+
+-- Free-notation rolls ("/pmt roll 6d6", the sheet's Roll dice button). These
+-- are LOCAL rolls: RandomRoll is d20-shaped, so arbitrary dice have no
+-- witnessed system path - the result posts as a plain OOC line the table
+-- takes on trust, like any hand-typed number.
+
+-- Caps on parsed notation: a typo must not hang the client rolling.
+local MAX_DICE, MAX_SIDES, MAX_MOD = 100, 1000, 999
+
+-- Parses "XdY" with an optional "+Z"/"-Z" ("6d6", "d20", "2d8+3", "4d6-1").
+-- Returns count, sides, modifier - or nil for anything else (including
+-- notation past the caps).
+function Dice.Parse(notation)
+    -- Trim the ends only: collapsing interior whitespace would quietly turn
+    -- "1d6 7" into 1d67 - dice the user never asked for.
+    local s = tostring(notation or ""):lower():match("^%s*(.-)%s*$")
+    local count, sides, rest = s:match("^(%d*)d(%d+)(.-)$")
+    if not sides then return nil end
+    local mod = 0
+    if rest ~= "" then
+        mod = tonumber(rest:match("^([%+%-]%d+)$"))
+        if not mod then return nil end
+    end
+    count = (count == "") and 1 or tonumber(count)
+    sides = tonumber(sides)
+    if count < 1 or count > MAX_DICE then return nil end
+    if sides < 2 or sides > MAX_SIDES then return nil end
+    if mod < -MAX_MOD or mod > MAX_MOD then return nil end
+    return count, sides, mod
+end
+
+-- Rolls parsed notation. Returns total and the canonical notation ("2d8+3"),
+-- or nil when the notation does not parse.
+function Dice.Roll(notation)
+    local count, sides, mod = Dice.Parse(notation)
+    if not count then return nil end
+    local total = mod
+    for _ = 1, count do total = total + math.random(1, sides) end
+    local canon = count .. "d" .. sides
+        .. (mod > 0 and ("+" .. mod) or (mod < 0 and tostring(mod)) or "")
+    return total, canon
+end
+
+-- Rolls and announces: "(rolled 6d6: 23)" to the group channel, the same
+-- line as a plain print when solo. Returns false (with a usage note) when
+-- the notation does not parse, so callers can keep an input box open.
+function Dice.RollToChat(notation)
+    local total, canon = Dice.Roll(notation)
+    if not total then
+        ns.Print("usage: roll XdY with an optional +Z/-Z - e.g. 6d6 or 2d8+3.")
+        return false
+    end
+    local line = "rolled " .. canon .. ": " .. total
+    if IsInGroup and IsInGroup() then
+        SendChatMessage("(" .. line .. ")", (IsInRaid and IsInRaid()) and "RAID" or "PARTY")
+    else
+        ns.Print(line)
+    end
+    return true
 end
