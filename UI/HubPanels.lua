@@ -8,7 +8,8 @@
 -- feat and spell packs in one list: click a pack to activate it (one active
 -- slot per kind), X deletes via that module's confirm, footer buttons share a
 -- pack or jump to Import / Export. The Cached sheets panel
--- lists received character sheets: click to view one read-only, a search box
+-- lists received character sheets: click to view one read-only, right-click
+-- for the same verbs as a context menu, a search box
 -- filters by character/player name, each row has a refresh button (re-request
 -- a live copy) and an X (remove via the shared confirm) and shows its
 -- staleness, and Clear all drops the whole cache (asks first).
@@ -330,11 +331,14 @@ local function AgeText(t)
 end
 
 -- A cached-sheet row: the shared list row plus a per-row refresh button (left of
--- the delete X) that re-requests a live copy.
+-- the delete X) that re-requests a live copy. Unlike the system/pack rows this
+-- one also answers to right-click (the manage menu in RefreshCached), so it
+-- registers both buttons.
 local function MakeCacheRow(content)
     local row = CreateListRow(content, function(r)
         if r.cacheKey then ns.Sharing.ConfirmRemoveCached(r.cacheKey, r.cacheName) end
     end)
+    row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     local refresh = CreateFrame("Button", nil, row)
     refresh:SetSize(16, 16)
     refresh:SetPoint("RIGHT", -28, 0)
@@ -386,12 +390,36 @@ local function RefreshCached(panel)
         if lvl then lines[#lines + 1] = { "Level", lvl } end
         lines[#lines + 1] = { "Cached", age ~= "" and age:gsub("^cached ", "") or "unknown" }
         row.tipLines = lines
-        row.tipHints = { "Click: view (read-only)",
+        row.tipHints = { "Click: view (read-only)", "Right-click: actions",
             "Refresh: re-request a live copy", "X: remove (asks first)" }
-        row:SetScript("OnClick", function()
+
+        local name = item.entry.name or "?"
+        local function View()
             if ns.CharacterSheetUI then
                 ns.CharacterSheetUI.ShowCharacter(item.entry.char, item.key .. " (cached)")
             end
+        end
+        -- Left-click views; right-click gathers the row's buttons as a context
+        -- menu (modern Menu API; without it right-click just views too).
+        row:SetScript("OnClick", function(self, mouseButton)
+            if mouseButton == "RightButton" and MenuUtil then
+                MenuUtil.CreateContextMenu(self, function(_, root)
+                    root:CreateTitle(name)
+                    local tip = MenuUtil.SetElementTooltip
+                    local e = root:CreateButton("View", View)
+                    if tip then tip(e, "Opens this cached copy, read-only.") end
+                    e = root:CreateButton("Request a live copy", function()
+                        ns.Sharing.Request(item.key)
+                    end)
+                    if tip then tip(e, "Asks " .. item.key .. " for a fresh sheet.") end
+                    e = root:CreateButton("Remove", function()
+                        ns.Sharing.ConfirmRemoveCached(item.key, item.entry.name)
+                    end)
+                    if tip then tip(e, "Drops the cached copy. Asks first.") end
+                end)
+                return
+            end
+            View()
         end)
     end, MakeCacheRow)
 end

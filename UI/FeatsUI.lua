@@ -26,11 +26,14 @@
 -- The file also registers the hub's Feats panel: a read-only list of what the
 -- active character has picked (owned ranks then homebrew records, in the
 -- sheet's quick-ref order) with the shared pick budget and a button into the
--- browser. Picks are made in the browser; the panel only says what they are.
+-- browser. A row reads its record in the link viewer on click and links it in
+-- chat on shift-click; picks are made in the browser, which the footer button
+-- opens.
 --
 -- Reads from: ns.GetSystem, ns.GetFeatPack, ns.GetActiveCharacter,
 --   ns.GetItemLibrary, ns.CharacterSheet.Compute, ns.Feats, ns.Homebrew,
---   ns.HomebrewUI, ns.HubUI, ns.Picks, ns.FormatCost, ns.AttrName, ns.UI.
+--   ns.HomebrewUI, ns.HubUI, ns.Picks, ns.FormatCost, ns.AttrName, ns.UI,
+--   ns.ChatLinks, ns.ChatLinkUI.
 -- Exposes on ns.FeatsUI: Open, Toggle, RefreshIfShown, and .frame.
 -- Registers the "feats" module opener with Core and the "feats" hub panel.
 
@@ -738,7 +741,15 @@ local function FillRowTip(row, entry)
     local excerpt = Excerpt(rec.description)
     if excerpt then lines[#lines + 1] = excerpt end
     row.tipLines = lines
-    row.tipHints = { "Click: open the feats browser" }
+    row.tipHints = { "Click: read it in its own window", "Shift-click: link it in chat" }
+end
+
+-- The chat-link payload for the record a row carries, built at click time so
+-- it reflects the current data. Returns nil for a row with no record yet.
+local function RowPayload(row)
+    if not row.rec then return nil end
+    if row.line then return ns.ChatLinks.FeatRank(row.line, row.rec, row.index) end
+    return ns.ChatLinks.Homebrew("feat", row.rec)
 end
 
 local function CreatePanelRow(content)
@@ -760,14 +771,27 @@ local function CreatePanelRow(content)
     row.meta:SetWordWrap(false)
     row.meta:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
 
-    row:SetScript("OnClick", function() FeatsUI.Open() end)
+    -- Left reads the record in the link viewer, shift links it in chat; the
+    -- footer button is the way into the browser where picks are made.
+    row:SetScript("OnClick", function(self)
+        local payload = RowPayload(self)
+        if not payload then return end
+        if IsShiftKeyDown and IsShiftKeyDown() then
+            ns.ChatLinks.PostLink(payload)
+            return
+        end
+        if ns.ChatLinkUI then ns.ChatLinkUI.Show(payload) end
+    end)
     return row
 end
 
 -- Fills one row: the rank (or record) name with its line/homebrew tag, the
 -- compressed mechanics line, and the tooltip. Pending records render dim.
+-- The link context is set on every fill - a pooled row must never carry the
+-- previous render's record.
 local function FillPanelRow(row, entry)
     local rec = entry.rec
+    row.rec, row.line, row.index = rec, entry.line, entry.index
     local tag
     if entry.line then
         tag = TAG_BLUE .. "(" .. (entry.line.name or entry.line.id) .. " " .. entry.index .. ")|r"
