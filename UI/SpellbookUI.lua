@@ -37,8 +37,8 @@ local ADDON, ns = ...
 
 local UI = ns.UI
 
-local LEGEND = "Learn adds a spell - right-click a known one unlearns it, shift-click puts its"
-    .. " link in chat"
+local LEGEND = "Click a spell to read it big - Learn adds it, right-click a known one unlearns"
+    .. " it, shift-click links it in chat"
 local SEARCH_LEGEND = "Searching all schools - the rail filter is off until the search clears."
 local STATUS_COLOR = {
     known = { 0.55, 0.85, 0.55 },
@@ -226,7 +226,14 @@ local function AcquireCard(self)
                 end
                 return
             end
-            if mouseButton ~= "RightButton" then return end
+            if mouseButton ~= "RightButton" then
+                -- Plain click: open the spell in the link viewer (the pop-out
+                -- reader; same rendering a clicked chat link gets).
+                if c.spell and ns.ChatLinkUI then
+                    ns.ChatLinkUI.Show(ns.ChatLinks.Spell(f.pack, c.spell))
+                end
+                return
+            end
             if not ns.Spells.Knows(f.char, c.spell.id) then return end
             StaticPopup_Show("PARCHMENT_SPELL_UNLEARN", c.spell.name or "?", nil,
                 { window = f, spell = c.spell })
@@ -237,6 +244,10 @@ local function AcquireCard(self)
             GameTooltip:SetOwner(c, "ANCHOR_RIGHT")
             GameTooltip:SetText(c.tipTitle or " ", 1, 1, 1)
             GameTooltip:AddLine(c.tip, UI.TEXT[1], UI.TEXT[2], UI.TEXT[3], true)
+            if c.spell then
+                GameTooltip:AddLine("Click: read it in its own window",
+                    UI.GREEN[1], UI.GREEN[2], UI.GREEN[3])
+            end
             GameTooltip:Show()
         end)
         card:SetScript("OnLeave", GameTooltip_Hide)

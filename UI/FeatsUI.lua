@@ -39,8 +39,8 @@ local ADDON, ns = ...
 local UI = ns.UI
 
 local ROW_H = 30
-local LEGEND = "Click a line to unfold it - Learn takes the next rank, right-click the top rank"
-    .. " unlearns it, shift-click a card puts its link in chat"
+local LEGEND = "Click a line to unfold it, a card to read it big - Learn takes the next rank,"
+    .. " right-click the top rank unlearns it, shift-click links it in chat"
 local SEARCH_LEGEND = "Searching all attributes - the rail filter is off until the search clears."
 local STATUS_COLOR = {
     taken = { 0.55, 0.85, 0.55 },
@@ -223,7 +223,16 @@ local function AcquireCard(self)
                 end
                 return
             end
-            if mouseButton ~= "RightButton" then return end
+            if mouseButton ~= "RightButton" then
+                -- Plain click: open the rank in the link viewer - a pop-out
+                -- reader for text that makes heavy going as a card in the
+                -- scroll (same rendering a clicked chat link gets).
+                if c.line and ns.ChatLinkUI then
+                    ns.ChatLinkUI.Show(ns.ChatLinks.FeatRank(
+                        c.line, c.line.ranks[c.rankIndex], c.rankIndex))
+                end
+                return
+            end
             -- Only the highest taken rank can come off (ladder order).
             if ns.Feats.Rank(f.char, c.line.id) ~= c.rankIndex then return end
             StaticPopup_Show("PARCHMENT_FEAT_UNLEARN", c.rankName or "?", nil,
@@ -235,6 +244,10 @@ local function AcquireCard(self)
             GameTooltip:SetOwner(c, "ANCHOR_RIGHT")
             GameTooltip:SetText(c.tipTitle or " ", 1, 1, 1)
             GameTooltip:AddLine(c.tip, UI.TEXT[1], UI.TEXT[2], UI.TEXT[3], true)
+            if c.line then
+                GameTooltip:AddLine("Click: read it in its own window",
+                    UI.GREEN[1], UI.GREEN[2], UI.GREEN[3])
+            end
             GameTooltip:Show()
         end)
         card:SetScript("OnLeave", GameTooltip_Hide)
