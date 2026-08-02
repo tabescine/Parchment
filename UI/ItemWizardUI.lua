@@ -3,7 +3,9 @@
 -- The two windows of the item library: a stepped creator (Kind -> Details ->
 -- Review) that writes one library item, and a browser listing what the library
 -- holds with per-row edit, duplicate, delete and hand-to-character actions.
--- Both are singletons built on ns.UI.CreateWindow.
+-- Both are singletons built on ns.UI.CreateWindow. The browser's New item
+-- button toggles a type picker (one card per kind) that opens the wizard
+-- already on the chosen kind.
 --
 -- The library is global and system-independent, so equipment and gear can be
 -- authored with no system loaded at all; only a weapon item's optional link to
@@ -73,6 +75,27 @@ local FILTERS = {
     { label = "Equipment", kind = "equipment" },
     { label = "Gear", kind = "gear" },
 }
+
+-- Every gesture a browser row carries, one green line in its tooltip: the row
+-- has no visible chrome saying which button does what.
+local ROW_HINTS = {
+    "Click: edit (every carrier follows)",
+    "Give: hand it to a character",
+    "Copy: duplicate it",
+    "X: delete (asks first)",
+}
+local DESC_CAP = 120
+
+-- The browser's "New item" type picker: a panel of one card per kind, opening
+-- upwards from the button it hangs off.
+local PICK_W, PICK_PAD, CARD_H, CARD_GAP, CARD_ICON = 320, 12, 54, 4, 36
+local PICK_BACKDROP = {
+    bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+    edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+    tile = true, tileSize = 32, edgeSize = 24,
+    insets = { left = 6, right = 6, top = 6, bottom = 6 },
+}
+local TEX_HOVER = "Interface\\FriendsFrame\\UI-FriendsFrame-HighlightBar"
 
 local ItemWizardUI = {}
 ns.ItemWizardUI = ItemWizardUI
@@ -694,29 +717,38 @@ local function LibraryList(kind, query)
     return out
 end
 
-local function RowTooltip(row)
-    local item = row.item
-    if not item then return end
-    GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
-    GameTooltip:AddLine(item.name or row.itemId, UI.GOLD[1], UI.GOLD[2], UI.GOLD[3])
-    GameTooltip:AddLine(KIND_LABEL[item.kind] or "?", 0.9, 0.9, 0.9)
-    if item.description and item.description ~= "" then
-        GameTooltip:AddLine(item.description, 0.85, 0.82, 0.75, true)
+-- Fills the shared row tooltip for one library entry. The lines are appended
+-- one by one: an array constructor holding a conditional field truncates the
+-- list at the first nil in Lua 5.1.
+local function FillRowTip(row, id, item)
+    row.tipTitle = item.name or id
+    local lines = {}
+    lines[#lines + 1] = { "Kind", KIND_LABEL[item.kind] or "?" }
+    lines[#lines + 1] = { "ID", id }
+    lines[#lines + 1] = { "Version", tonumber(item.version) or 1 }
+    if item.kind == "weapon" then
+        lines[#lines + 1] = { "Attack bonus", UI.Signed(tonumber(item.bonus) or 0) }
+        if item.weapon_id then
+            lines[#lines + 1] = { "Linked weapon", WeaponName(item.weapon_id) }
+        end
+    elseif item.kind == "equipment" then
+        lines[#lines + 1] = { "AC bonus", UI.Signed(tonumber(item.ac_bonus) or 0) }
     end
-    GameTooltip:AddLine(MechanicsText(item), 0.9, 0.9, 0.9, true)
-    GameTooltip:AddLine("version " .. (tonumber(item.version) or 1) .. "   -   " .. row.itemId,
-        0.62, 0.60, 0.55)
-    GameTooltip:AddLine("Click: edit it (every character carrying it follows)", 0.56, 0.78, 1)
-    GameTooltip:Show()
+    local desc = tostring(item.description or "")
+    if desc ~= "" then
+        if #desc > DESC_CAP then desc = desc:sub(1, DESC_CAP) .. "..." end
+        lines[#lines + 1] = desc
+    end
+    row.tipLines = lines
+    row.tipHints = ROW_HINTS
 end
 
 local function CreateItemRow(content)
     local row = CreateFrame("Button", nil, content)
     row:SetHeight(ROW_BROWSE_H)
 
-    local hl = row:CreateTexture(nil, "HIGHLIGHT")
-    hl:SetAllPoints(row)
-    hl:SetColorTexture(UI.HILITE[1], UI.HILITE[2], UI.HILITE[3], UI.HILITE[4])
+    UI.RowVisuals(row)
+    UI.WireRowTip(row)
 
     row.icon = row:CreateTexture(nil, "ARTWORK")
     row.icon:SetSize(20, 20)
@@ -771,8 +803,6 @@ local function CreateItemRow(content)
     row:SetScript("OnClick", function()
         if row.itemId then ItemWizardUI.Open(row.itemId) end
     end)
-    row:SetScript("OnEnter", function() RowTooltip(row) end)
-    row:SetScript("OnLeave", GameTooltip_Hide)
     return row
 end
 
@@ -810,10 +840,86 @@ RefreshBrowser = function(f)
         row.name:SetText(entry.item.name or entry.id)
         row.name:SetTextColor(UI.TEXT[1], UI.TEXT[2], UI.TEXT[3])
         row.meta:SetText((KIND_LABEL[entry.item.kind] or "?") .. "  -  " .. MechanicsText(entry.item))
+        FillRowTip(row, entry.id, entry.item)
         row:Show()
         y = y - ROW_BROWSE_H
     end
     content:SetHeight(math.max(10, -y + 2))
+end
+
+-- One option card in the type picker: kind icon, kind name, and the same hint
+-- the wizard's first step gives that kind. Clicking it drafts an item of it.
+local function KindCard(panel, kind, y)
+    local card = CreateFrame("Button", nil, panel)
+    card:SetHeight(CARD_H)
+    card:SetPoint("TOPLEFT", PICK_PAD, y)
+    card:SetPoint("TOPRIGHT", -PICK_PAD, y)
+
+    local hl = card:CreateTexture(nil, "HIGHLIGHT")
+    hl:SetAllPoints()
+    hl:SetTexture(TEX_HOVER)
+    hl:SetTexCoord(0.25, 1, 0, 1)
+    hl:SetBlendMode("ADD")
+    hl:SetAlpha(0.6)
+
+    local icon = card:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(CARD_ICON, CARD_ICON)
+    icon:SetPoint("LEFT", 6, 0)
+    local suggested = (ICON_SUGGESTIONS[kind.id] or {})[1]
+    icon:SetTexture(suggested and (ICON_PATH .. suggested) or ICON_UNKNOWN)
+
+    local title = card:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", CARD_ICON + 14, -4)
+    title:SetJustifyH("LEFT")
+    title:SetText(kind.label)
+
+    -- Two lines, whatever the kind writes: the card grid stays even.
+    local hint = card:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    hint:SetPoint("TOPLEFT", CARD_ICON + 14, -24)
+    hint:SetPoint("RIGHT", card, "RIGHT", -6, 0)
+    hint:SetHeight(26)
+    hint:SetJustifyH("LEFT")
+    hint:SetJustifyV("TOP")
+    hint:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
+    if hint.SetMaxLines then hint:SetMaxLines(2) end
+    hint:SetText(kind.hint)
+
+    card:SetScript("OnClick", function()
+        panel:Hide()
+        ItemWizardUI.Open(nil, kind.id)
+    end)
+    return card
+end
+
+-- The browser's type picker, built once and parented to the browser so it
+-- travels with the window. Cards are permanent (KINDS is static), so there is
+-- nothing to pool per render.
+local function GetKindPicker(f)
+    if f.kindPicker then return f.kindPicker end
+
+    local p = CreateFrame("Frame", nil, f, "BackdropTemplate")
+    p:SetSize(PICK_W, PICK_PAD * 2 + 22 + #KINDS * (CARD_H + CARD_GAP) - CARD_GAP)
+    p:SetPoint("BOTTOMLEFT", f.newBtn, "TOPLEFT", 0, 6)
+    p:SetFrameLevel(f:GetFrameLevel() + 10)
+    p:SetBackdrop(PICK_BACKDROP)
+    p:EnableMouse(true)     -- swallows clicks that would otherwise drag the window
+    p:Hide()
+
+    local head = p:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    head:SetPoint("TOPLEFT", PICK_PAD, -PICK_PAD)
+    head:SetTextColor(UI.GOLD[1], UI.GOLD[2], UI.GOLD[3])
+    head:SetText("What kind of item?")
+
+    local y = -PICK_PAD - 22
+    for _, kind in ipairs(KINDS) do
+        KindCard(p, kind, y)
+        y = y - CARD_H - CARD_GAP
+    end
+
+    -- Closing the browser must not leave the panel armed to reappear with it.
+    f:HookScript("OnHide", function() p:Hide() end)
+    f.kindPicker = p
+    return p
 end
 
 local function BuildBrowser()
@@ -869,11 +975,16 @@ local function BuildBrowser()
     scroll:SetScript("OnSizeChanged", function(_, w) content:SetWidth(w) end)
     f.content = content
 
-    local newBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    newBtn:SetSize(100, 22)
-    newBtn:SetText("New item")
-    newBtn:SetPoint("BOTTOMLEFT", PAD, 14)
-    newBtn:SetScript("OnClick", function() ItemWizardUI.Open() end)
+    -- New item opens the type picker rather than the wizard: the kind decides
+    -- what the item does, so it is the one choice worth making up front.
+    f.newBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    f.newBtn:SetSize(100, 22)
+    f.newBtn:SetText("New item")
+    f.newBtn:SetPoint("BOTTOMLEFT", PAD, 14)
+    f.newBtn:SetScript("OnClick", function()
+        local p = GetKindPicker(f)
+        if p:IsShown() then p:Hide() else p:Show() end
+    end)
 
     return f
 end

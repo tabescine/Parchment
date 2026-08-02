@@ -43,6 +43,12 @@ local STATUS_COLOR = {
     locked = { 0.55, 0.53, 0.50 },
 }
 
+-- Blizzard textures for the rail entries (the hub's flat-nav treatment;
+-- Parchment ships no art). The friends-list bar is cropped past its rounded
+-- left cap; the quest-title gradient marks the selected entry.
+local TEX_HOVER = "Interface\\FriendsFrame\\UI-FriendsFrame-HighlightBar"
+local TEX_SELECTED = "Interface\\QuestFrame\\UI-QuestTitleHighlight"
+
 local FeatsUI = {}
 ns.FeatsUI = FeatsUI
 
@@ -106,12 +112,7 @@ local function AcquireRow(self)
         row = CreateFrame("Button", nil, content)
         row:SetHeight(ROW_H)
         row:RegisterForClicks("LeftButtonUp")
-        local bg = row:CreateTexture(nil, "BACKGROUND")
-        bg:SetAllPoints()
-        bg:SetColorTexture(0.12, 0.11, 0.09, 0.9)
-        row.hl = row:CreateTexture(nil, "HIGHLIGHT")
-        row.hl:SetAllPoints()
-        row.hl:SetColorTexture(UI.HILITE[1], UI.HILITE[2], UI.HILITE[3], UI.HILITE[4])
+        UI.RowVisuals(row)
         row.name = row:CreateFontString(nil, "ARTWORK", "GameFontNormal")
         row.name:SetPoint("LEFT", 8, 0)
         row.name:SetJustifyH("LEFT")
@@ -232,8 +233,28 @@ local function AcquireRail(self)
     self.usedRail = self.usedRail + 1
     local btn = self.railPool[self.usedRail]
     if not btn then
-        btn = CreateFrame("Button", nil, self, "UIPanelButtonTemplate")
+        btn = CreateFrame("Button", nil, self)
         btn:SetSize(104, 20)
+        -- The selected entry is disabled (it is "where you are", not an
+        -- unavailable filter); a disabled button sees no mouse at all unless
+        -- motion scripts stay alive.
+        btn:SetMotionScriptsWhileDisabled(true)
+        local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetAllPoints()
+        hl:SetTexture(TEX_HOVER)
+        hl:SetTexCoord(0.25, 1, 0, 1)
+        hl:SetBlendMode("ADD")
+        hl:SetAlpha(0.6)
+        btn.sel = btn:CreateTexture(nil, "BACKGROUND")
+        btn.sel:SetAllPoints()
+        btn.sel:SetTexture(TEX_SELECTED)
+        btn.sel:SetAlpha(0.7)
+        btn.sel:Hide()
+        btn.label = btn:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+        btn.label:SetPoint("LEFT", 6, 0)
+        btn.label:SetPoint("RIGHT", -2, 0)
+        btn.label:SetJustifyH("LEFT")
+        btn.label:SetWordWrap(false)
         btn:SetScript("OnClick", function(b)
             local f = b.window
             f.attrFilter = b.attrId
@@ -290,14 +311,19 @@ local function RenderRail(self)
     local pack = self.pack
     local y = -70
     -- A search spans every attribute, so no rail entry is the active filter
-    -- while a query stands - drop the marker rather than lie about it.
+    -- while a query stands - drop the band rather than lie about it.
     local searching = Query(self) ~= ""
     local function add(label, attrId, count)
         local btn = AcquireRail(self)
         btn.window, btn.attrId = self, attrId
         local selected = self.attrFilter == attrId and not searching
-        btn:SetText((selected and "|cffc8a868> |r" or "") .. label
-            .. (count and (" (" .. count .. ")") or ""))
+        btn.label:SetText(label .. (count and (" (" .. count .. ")") or ""))
+        -- Rail buttons are pooled: band, font and enabled state are set on
+        -- every entry every render, or a reused button keeps the selection it
+        -- carried under the previous filter.
+        btn.label:SetFontObject(selected and _G.GameFontNormal or _G.GameFontHighlight)
+        btn.sel:SetShown(selected)
+        btn:SetEnabled(not selected)
         btn:SetPoint("TOPLEFT", 14, y)
         y = y - 22
     end
