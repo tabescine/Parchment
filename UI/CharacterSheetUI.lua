@@ -672,7 +672,7 @@ end
 -- already printed the usage line).
 local lastDiceNotation = "1d6"
 StaticPopupDialogs["PARCHMENT_ROLL_DICE"] = {
-    text = "Roll dice - XdY, with an optional +Z/-Z (6d6, 2d8+3):",
+    text = "Roll dice - terms joined by + or - (6d6, 2d8+3, 1d10+1d6):",
     button1 = "Roll", button2 = CANCEL,
     hasEditBox = true,
     OnShow = function(self)
@@ -1512,7 +1512,7 @@ local function BuildFrame()
     rollBtn:SetScript("OnClick", function() StaticPopup_Show("PARCHMENT_ROLL_DICE") end)
     rollBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
-        GameTooltip:SetText("Roll free dice (XdY, optional +Z) and post the result to group chat.",
+        GameTooltip:SetText("Roll free dice (2d8+3, 1d10+1d6) and post the result to group chat.",
             1, 1, 1, 1, true)
         GameTooltip:Show()
     end)
