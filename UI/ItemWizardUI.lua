@@ -1,11 +1,12 @@
--- Parchment - Item Wizard and Library Browser (UI)
+-- Parchment - Item Wizard and Library panel (UI)
 --
--- The two windows of the item library: a stepped creator (Kind -> Details ->
--- Review) that writes one library item, and a browser listing what the library
--- holds with per-row edit, duplicate, delete and hand-to-character actions.
--- Both are singletons built on ns.UI.CreateWindow. The browser's New item
--- button toggles a type picker (one card per kind) that opens the wizard
--- already on the chosen kind.
+-- The two faces of the item library: a stepped creator window (Kind -> Details
+-- -> Review) that writes one library item, and the hub's Items panel listing
+-- what the library holds with per-row edit, duplicate, delete and
+-- hand-to-character actions. The wizard is a singleton built on
+-- ns.UI.CreateWindow; the browser is a panel registered with ns.HubUI and has
+-- no window of its own. The panel's New item button toggles a type picker (one
+-- card per kind) that opens the wizard already on the chosen kind.
 --
 -- The library is global and system-independent, so equipment and gear can be
 -- authored with no system loaded at all; only a weapon item's optional link to
@@ -19,15 +20,16 @@
 -- carrying it on the next render, and deleting one leaves those rows showing as
 -- missing. The confirmations say so - it is the feature, not a caveat.
 --
--- Reads from: ns.UI, ns.Widgets, ns.CharacterForm, ns.Dialogs, ns.Items,
---   ns.Schema.ValidateItem, the item library API (ns.GetItemLibrary, ns.GetItem,
---   ns.SetItem, ns.DeleteItem, ns.NextItemKey), ns.GetSystem, ns.FindById,
---   ns.GetActiveCharacter, ns.GetCharacter, ns.SetCharacter, ns.DeepCopy,
---   ns.Systems.RefreshAll, ns.Print.
+-- Reads from: ns.UI, ns.HubUI, ns.Widgets, ns.CharacterForm, ns.Dialogs,
+--   ns.Items, ns.Schema.ValidateItem, the item library API (ns.GetItemLibrary,
+--   ns.GetItem, ns.SetItem, ns.DeleteItem, ns.NextItemKey), ns.GetSystem,
+--   ns.FindById, ns.GetActiveCharacter, ns.GetCharacter, ns.SetCharacter,
+--   ns.DeepCopy, ns.Systems.RefreshAll, ns.Print.
 -- Exposes on ns.ItemWizardUI: Open(id, kind, charKey), AddFlow(kind),
 --   AddToCharacter(item, charKey), ConfirmDelete(id), Duplicate(id),
---   OpenBrowser, ToggleBrowser, RefreshIfShown, and .frame / .browser.
--- Registers the "items" module opener (the browser) with Core.
+--   OpenBrowser, ToggleBrowser (both route to the hub's Items panel),
+--   RefreshIfShown, and .frame (the wizard).
+-- Registers the hub's "items" panel and the "items" module opener with Core.
 
 local ADDON, ns = ...
 
@@ -68,7 +70,7 @@ local ICON_SUGGESTIONS = {
     gear = { "INV_Misc_Bag_08", "INV_Misc_Rope_01", "INV_Drink_05" },
 }
 
--- The browser's kind filter, cycled by one button.
+-- The panel's kind filter, cycled by one button.
 local FILTERS = {
     { label = "All" },
     { label = "Weapons", kind = "weapon" },
@@ -76,7 +78,13 @@ local FILTERS = {
     { label = "Gear", kind = "gear" },
 }
 
--- Every gesture a browser row carries, one green line in its tooltip: the row
+-- The panel keeps one header line: the row gestures normally, a filter warning
+-- while nothing matches. The two never apply at once, and the hub body is too
+-- narrow to spend a second line on.
+local BROWSE_HINT = "Click an item to edit it. Give hands it to the active character;"
+    .. " X deletes (asks first)."
+
+-- Every gesture a library row carries, one green line in its tooltip: the row
 -- has no visible chrome saying which button does what.
 local ROW_HINTS = {
     "Click: edit (every carrier follows)",
@@ -86,8 +94,8 @@ local ROW_HINTS = {
 }
 local DESC_CAP = 120
 
--- The browser's "New item" type picker: a panel of one card per kind, opening
--- upwards from the button it hangs off.
+-- The "New item" type picker: a panel of one card per kind, opening upwards
+-- from the button it hangs off.
 local PICK_W, PICK_PAD, CARD_H, CARD_GAP, CARD_ICON = 320, 12, 54, 4, 36
 local PICK_BACKDROP = {
     bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
@@ -100,7 +108,7 @@ local TEX_HOVER = "Interface\\FriendsFrame\\UI-FriendsFrame-HighlightBar"
 local ItemWizardUI = {}
 ns.ItemWizardUI = ItemWizardUI
 
-local Refresh, RefreshBrowser
+local Refresh
 
 local Label = Form.Label
 local FieldButton = Form.FieldButton
@@ -122,7 +130,7 @@ local function WeaponName(id)
     return weapon and weapon.name or id
 end
 
--- One line describing what an item does, shared by the review step, the browser
+-- One line describing what an item does, shared by the review step, the panel
 -- rows and their tooltips.
 local function MechanicsText(item)
     if item.kind == "weapon" then
@@ -317,8 +325,8 @@ local function Commit(self)
 
     ns.Print((editing and "updated item '" or "saved item '")
         .. ((item and item.name) or "?") .. "' in your library.")
-    -- Handing it over refreshes on its own; otherwise the browser and any open
-    -- sheet still need to see the new record.
+    -- Handing it over refreshes on its own; otherwise the Items panel and any
+    -- open sheet still need to see the new record.
     if item and charKey then
         ItemWizardUI.AddToCharacter(item, charKey)
     else
@@ -631,7 +639,7 @@ function ItemWizardUI.Open(id, kind, charKey)
     f:Raise()
 end
 
--- Asks to delete a library item (used by the browser and the hub panel).
+-- Asks to delete a library item (used by the panel's rows).
 function ItemWizardUI.ConfirmDelete(id)
     local item = ns.GetItemLibrary()[id]
     if type(item) ~= "table" then return end
@@ -696,7 +704,7 @@ function ItemWizardUI.AddFlow(kind)
     })
 end
 
--- Library browser.
+-- Library panel (the hub's Items screen).
 
 -- The library as a sorted list, filtered by kind and a name/id substring.
 local function LibraryList(kind, query)
@@ -806,27 +814,38 @@ local function CreateItemRow(content)
     return row
 end
 
-RefreshBrowser = function(f)
-    local content = f.content
+-- The empty state masks the panel body but not its header row, so the controls
+-- it makes pointless (a filter and a search over nothing) are hidden with it -
+-- HideEmpty only drops the overlay, it cannot know what went with it.
+local function SetControlsShown(panel, shown)
+    panel.kindBtn:SetShown(shown)
+    panel.searchBox:SetShown(shown)
+    panel.newBtn:SetShown(shown)
+end
+
+local function RefreshPanel(panel)
+    local content = panel.content
     content.rows = content.rows or {}
     for _, r in ipairs(content.rows) do r:Hide() end
 
-    local filter = FILTERS[f.filterIndex or 1]
-    f.kindBtn:SetText("Kind: " .. filter.label)
-    local list = LibraryList(filter.kind, tostring(f.query or ""):lower())
+    local filter = FILTERS[panel.filterIndex or 1]
+    panel.kindBtn:SetText("Kind: " .. filter.label)
+    local list = LibraryList(filter.kind, tostring(panel.query or ""):lower())
 
     -- An empty library gets the full empty state; a filter that matches nothing
     -- only gets a line, because the search box it would cover is the way out.
     if next(ns.GetItemLibrary()) == nil then
-        ns.UI.Empty(f, "Your item library is empty.\n\nItems live here, not on a character:"
+        ns.UI.Empty(panel, "Your item library is empty.\n\nItems live here, not on a character:"
             .. " write one and hand it to whoever carries it.",
             "Create your first item", function() ItemWizardUI.Open() end)
-        f.msg:SetText("")
+        SetControlsShown(panel, false)
+        panel.msg:SetText("")
         content:SetHeight(10)
         return
     end
-    ns.UI.HideEmpty(f)
-    f.msg:SetText(#list == 0 and "|cffffcc00Nothing matches that filter.|r" or "")
+    ns.UI.HideEmpty(panel)
+    SetControlsShown(panel, true)
+    panel.msg:SetText(#list == 0 and "|cffffcc00Nothing matches that filter.|r" or BROWSE_HINT)
 
     local y = -2
     for i, entry in ipairs(list) do
@@ -849,8 +868,8 @@ end
 
 -- One option card in the type picker: kind icon, kind name, and the same hint
 -- the wizard's first step gives that kind. Clicking it drafts an item of it.
-local function KindCard(panel, kind, y)
-    local card = CreateFrame("Button", nil, panel)
+local function KindCard(picker, kind, y)
+    local card = CreateFrame("Button", nil, picker)
     card:SetHeight(CARD_H)
     card:SetPoint("TOPLEFT", PICK_PAD, y)
     card:SetPoint("TOPRIGHT", -PICK_PAD, y)
@@ -885,133 +904,130 @@ local function KindCard(panel, kind, y)
     hint:SetText(kind.hint)
 
     card:SetScript("OnClick", function()
-        panel:Hide()
+        picker:Hide()
         ItemWizardUI.Open(nil, kind.id)
     end)
     return card
 end
 
--- The browser's type picker, built once and parented to the browser so it
--- travels with the window. Cards are permanent (KINDS is static), so there is
--- nothing to pool per render.
-local function GetKindPicker(f)
-    if f.kindPicker then return f.kindPicker end
+-- The panel's type picker, built once and parented to the panel so it travels
+-- with it. Cards are permanent (KINDS is static), so there is nothing to pool
+-- per render.
+local function GetKindPicker(panel)
+    if panel.kindPicker then return panel.kindPicker end
 
-    local p = CreateFrame("Frame", nil, f, "BackdropTemplate")
-    p:SetSize(PICK_W, PICK_PAD * 2 + 22 + #KINDS * (CARD_H + CARD_GAP) - CARD_GAP)
-    p:SetPoint("BOTTOMLEFT", f.newBtn, "TOPLEFT", 0, 6)
-    p:SetFrameLevel(f:GetFrameLevel() + 10)
-    p:SetBackdrop(PICK_BACKDROP)
-    p:EnableMouse(true)     -- swallows clicks that would otherwise drag the window
-    p:Hide()
+    local picker = CreateFrame("Frame", nil, panel, "BackdropTemplate")
+    picker:SetSize(PICK_W, PICK_PAD * 2 + 22 + #KINDS * (CARD_H + CARD_GAP) - CARD_GAP)
+    picker:SetPoint("BOTTOMLEFT", panel.newBtn, "TOPLEFT", 0, 6)
+    picker:SetFrameLevel(panel:GetFrameLevel() + 10)
+    picker:SetBackdrop(PICK_BACKDROP)
+    picker:EnableMouse(true)     -- swallows clicks that would otherwise drag the window
+    picker:Hide()
 
-    local head = p:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    local head = picker:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     head:SetPoint("TOPLEFT", PICK_PAD, -PICK_PAD)
     head:SetTextColor(UI.GOLD[1], UI.GOLD[2], UI.GOLD[3])
     head:SetText("What kind of item?")
 
     local y = -PICK_PAD - 22
     for _, kind in ipairs(KINDS) do
-        KindCard(p, kind, y)
+        KindCard(picker, kind, y)
         y = y - CARD_H - CARD_GAP
     end
 
-    -- Closing the browser must not leave the panel armed to reappear with it.
-    f:HookScript("OnHide", function() p:Hide() end)
-    f.kindPicker = p
-    return p
+    -- The hub hides a panel on every sidebar switch (and with the window); the
+    -- picker must not be left armed to reappear with it.
+    panel:HookScript("OnHide", function() picker:Hide() end)
+    panel.kindPicker = picker
+    return picker
 end
 
-local function BuildBrowser()
-    local f = UI.CreateWindow("ParchmentItemBrowserFrame", {
-        title = "Item Library", width = 520, height = 460,
-        minW = 420, minH = 320, maxW = 820, maxH = 900, dbKey = "itemBrowserWindow",
-    })
-    f.filterIndex = 1
+-- Builds the panel into the frame the hub hands over. Everything is anchored to
+-- that frame's edges: the hub body is ~370px wide at the window's minimum size,
+-- so the search box takes whatever the filter button leaves rather than a fixed
+-- width, and the row texts truncate against their buttons.
+local function BuildPanel(panel)
+    panel.filterIndex = 1
 
-    local hint = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    hint:SetPoint("TOPLEFT", PAD, -44)
-    hint:SetPoint("RIGHT", f, "RIGHT", -PAD, 0)
-    hint:SetJustifyH("LEFT")
-    hint:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
-    hint:SetText("Click an item to edit it. Give hands it to the active character;"
-        .. " X deletes (asks first).")
-
-    f.kindBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    f.kindBtn:SetSize(120, 20)
-    f.kindBtn:SetPoint("TOPLEFT", PAD, -64)
-    f.kindBtn:SetScript("OnClick", function()
-        f.filterIndex = (f.filterIndex % #FILTERS) + 1
-        RefreshBrowser(f)
+    panel.kindBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    panel.kindBtn:SetSize(110, 20)
+    panel.kindBtn:SetPoint("TOPLEFT", 0, -2)
+    panel.kindBtn:SetScript("OnClick", function()
+        panel.filterIndex = (panel.filterIndex % #FILTERS) + 1
+        RefreshPanel(panel)
     end)
 
     -- Live filter, debounced and only on real edits (OnTextChanged also fires
     -- for programmatic SetText).
-    f.searchBox = CreateFrame("EditBox", nil, f, "InputBoxTemplate")
-    f.searchBox:SetSize(150, 18)
-    f.searchBox:SetPoint("TOPRIGHT", -PAD - 4, -64)
-    f.searchBox:SetAutoFocus(false)
-    f.searchBox:SetScript("OnEscapePressed", function(box) box:SetText(""); box:ClearFocus() end)
-    f.searchBox:SetScript("OnEnterPressed", function(box) box:ClearFocus() end)
-    local runSearch = UI.Debounce(0.15, function() RefreshBrowser(f) end)
-    f.searchBox:SetScript("OnTextChanged", function(box, user)
-        if not user or box:GetText() == f.query then return end
-        f.query = box:GetText()
+    panel.searchBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
+    panel.searchBox:SetHeight(18)
+    panel.searchBox:SetPoint("LEFT", panel.kindBtn, "RIGHT", 16, 0)
+    panel.searchBox:SetPoint("RIGHT", panel, "RIGHT", -10, 0)
+    panel.searchBox:SetAutoFocus(false)
+    panel.searchBox:SetScript("OnEscapePressed", function(box) box:SetText(""); box:ClearFocus() end)
+    panel.searchBox:SetScript("OnEnterPressed", function(box) box:ClearFocus() end)
+    local runSearch = UI.Debounce(0.15, function() RefreshPanel(panel) end)
+    panel.searchBox:SetScript("OnTextChanged", function(box, user)
+        if not user or box:GetText() == panel.query then return end
+        panel.query = box:GetText()
         runSearch()
     end)
-    UI.SetPlaceholder(f.searchBox, "Search items")
+    UI.SetPlaceholder(panel.searchBox, "Search items")
 
-    f.msg = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    f.msg:SetPoint("TOPLEFT", PAD, -90)
-    f.msg:SetJustifyH("LEFT")
+    panel.msg = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    panel.msg:SetPoint("TOPLEFT", 4, -28)
+    panel.msg:SetPoint("RIGHT", panel, "RIGHT", -4, 0)
+    panel.msg:SetJustifyH("LEFT")
+    panel.msg:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
 
-    local scroll = CreateFrame("ScrollFrame", "ParchmentItemScroll", f, "UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT", PAD - 2, -104)
-    scroll:SetPoint("BOTTOMRIGHT", -PAD - 16, 44)
+    local scroll = CreateFrame("ScrollFrame", "ParchmentItemScroll", panel,
+        "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", 0, -56)
+    scroll:SetPoint("BOTTOMRIGHT", -26, 34)
     local content = CreateFrame("Frame", nil, scroll)
     content:SetSize(10, 10)
     content.rows = {}
     scroll:SetScrollChild(content)
     scroll:SetScript("OnSizeChanged", function(_, w) content:SetWidth(w) end)
-    f.content = content
+    panel.content = content
 
     -- New item opens the type picker rather than the wizard: the kind decides
     -- what the item does, so it is the one choice worth making up front.
-    f.newBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    f.newBtn:SetSize(100, 22)
-    f.newBtn:SetText("New item")
-    f.newBtn:SetPoint("BOTTOMLEFT", PAD, 14)
-    f.newBtn:SetScript("OnClick", function()
-        local p = GetKindPicker(f)
-        if p:IsShown() then p:Hide() else p:Show() end
+    panel.newBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    panel.newBtn:SetSize(90, 22)
+    panel.newBtn:SetText("New item")
+    panel.newBtn:SetPoint("BOTTOMLEFT", 0, 4)
+    panel.newBtn:SetScript("OnClick", function()
+        local picker = GetKindPicker(panel)
+        if picker:IsShown() then picker:Hide() else picker:Show() end
     end)
-
-    return f
 end
 
-local function GetBrowser()
-    if not ItemWizardUI.browser then ItemWizardUI.browser = BuildBrowser() end
-    return ItemWizardUI.browser
-end
-
+-- The library has no window of its own: both openers route to the hub panel.
 function ItemWizardUI.OpenBrowser()
-    local f = GetBrowser()
-    RefreshBrowser(f)
-    f:Show()
+    ns.HubUI.Open("items")
 end
 
 function ItemWizardUI.ToggleBrowser()
-    local f = GetBrowser()
-    if f:IsShown() then f:Hide() else ItemWizardUI.OpenBrowser() end
+    ns.HubUI.Toggle("items")
 end
 
--- Re-renders whichever of the two windows is open (called by
--- ns.Systems.RefreshAll after any item or inventory change).
+-- Re-renders the open wizard and the Items panel while the hub shows it (called
+-- by ns.Systems.RefreshAll after any item or inventory change).
 function ItemWizardUI.RefreshIfShown()
     local f = ItemWizardUI.frame
     if f and f:IsShown() and f.draft then Refresh(f) end
-    local b = ItemWizardUI.browser
-    if b and b:IsShown() then RefreshBrowser(b) end
+    ns.HubUI.RefreshIfShown("items")
 end
+
+ns.HubUI.RegisterPanel({
+    id = "items", label = "Items", order = 40, icon = "inv_misc_bag_08",
+    count = function()
+        local n = 0
+        for _ in pairs(ns.GetItemLibrary()) do n = n + 1 end
+        return n
+    end,
+    Build = BuildPanel, Refresh = RefreshPanel,
+})
 
 ns.RegisterModule("items", ItemWizardUI.ToggleBrowser)
