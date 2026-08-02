@@ -829,7 +829,13 @@ local function RefreshPanel(panel)
     for _, r in ipairs(content.rows) do r:Hide() end
 
     local filter = FILTERS[panel.filterIndex or 1]
-    panel.kindBtn:SetText("Kind: " .. filter.label)
+    -- The dropdown carries the selection as its own text; the cycle-button
+    -- fallback needs the "Kind:" prefix to read as a filter at all.
+    if panel.kindBtn.OverwriteText then
+        panel.kindBtn:OverwriteText(filter.label)
+    elseif panel.kindBtn.SetText then
+        panel.kindBtn:SetText("Kind: " .. filter.label)
+    end
     local list = LibraryList(filter.kind, tostring(panel.query or ""):lower())
 
     -- An empty library gets the full empty state; a filter that matches nothing
@@ -949,13 +955,33 @@ end
 local function BuildPanel(panel)
     panel.filterIndex = 1
 
-    panel.kindBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-    panel.kindBtn:SetSize(110, 20)
-    panel.kindBtn:SetPoint("TOPLEFT", 0, -2)
-    panel.kindBtn:SetScript("OnClick", function()
-        panel.filterIndex = (panel.filterIndex % #FILTERS) + 1
-        RefreshPanel(panel)
-    end)
+    -- The kind filter is a real dropdown (radio entries; the button text
+    -- follows the selection) - a cycle button hides the other choices. Falls
+    -- back to cycling only when the client lacks the dropdown template.
+    local hasDropdown = pcall(CreateFrame, "DropdownButton")
+    if hasDropdown then
+        panel.kindBtn = CreateFrame("DropdownButton", nil, panel, "WowStyle1DropdownTemplate")
+        panel.kindBtn:SetSize(110, 20)
+        panel.kindBtn:SetPoint("TOPLEFT", 0, -2)
+        panel.kindBtn:SetupMenu(function(_, root)
+            for i, filter in ipairs(FILTERS) do
+                root:CreateRadio(filter.label,
+                    function() return panel.filterIndex == i end,
+                    function()
+                        panel.filterIndex = i
+                        RefreshPanel(panel)
+                    end)
+            end
+        end)
+    else
+        panel.kindBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+        panel.kindBtn:SetSize(110, 20)
+        panel.kindBtn:SetPoint("TOPLEFT", 0, -2)
+        panel.kindBtn:SetScript("OnClick", function()
+            panel.filterIndex = (panel.filterIndex % #FILTERS) + 1
+            RefreshPanel(panel)
+        end)
+    end
 
     -- Live filter, debounced and only on real edits (OnTextChanged also fires
     -- for programmatic SetText).

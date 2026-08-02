@@ -23,11 +23,16 @@
 -- the visible filter's rows exist at once. Cards measure their description
 -- text and size themselves, so ladders stack at their natural heights.
 --
+-- The file also registers the hub's Feats panel: a read-only list of what the
+-- active character has picked (owned ranks then homebrew records, in the
+-- sheet's quick-ref order) with the shared pick budget and a button into the
+-- browser. Picks are made in the browser; the panel only says what they are.
+--
 -- Reads from: ns.GetSystem, ns.GetFeatPack, ns.GetActiveCharacter,
 --   ns.GetItemLibrary, ns.CharacterSheet.Compute, ns.Feats, ns.Homebrew,
---   ns.HomebrewUI, ns.Picks, ns.FormatCost, ns.AttrName, ns.UI.
+--   ns.HomebrewUI, ns.HubUI, ns.Picks, ns.FormatCost, ns.AttrName, ns.UI.
 -- Exposes on ns.FeatsUI: Open, Toggle, RefreshIfShown, and .frame.
--- Registers the "feats" module opener with Core.
+-- Registers the "feats" module opener with Core and the "feats" hub panel.
 
 local ADDON, ns = ...
 
@@ -53,6 +58,14 @@ local FeatsUI = {}
 ns.FeatsUI = FeatsUI
 
 local Refresh
+
+-- Repaints the hub's Feats panel after a pick changes here. The learn/unlearn
+-- paths redraw this window directly rather than through ns.Systems.RefreshAll
+-- (which covers the hub), so they say it themselves; the panel's Refresh only
+-- reads state, so nothing calls back.
+local function HubRefresh()
+    if ns.HubUI then ns.HubUI.RefreshIfShown("feats") end
+end
 
 -- Sets the transient message line.
 local function SetMsg(self, text, isError)
@@ -86,6 +99,7 @@ local function DoUnlearn(f, line, rankIndex, rankName)
     if ok then
         SetMsg(f, "Unlearned " .. (rankName or "?") .. ".", false)
         if ns.CharacterSheetUI then ns.CharacterSheetUI.RefreshIfShown() end
+        HubRefresh()
         Refresh(f)
     else
         SetMsg(f, reason or "Cannot unlearn.", true)
@@ -153,6 +167,7 @@ local function AcquireCard(self)
             if ok then
                 SetMsg(f, "Learned " .. (btn.line.ranks[ns.Feats.Rank(f.char, btn.line.id)].name or "?") .. ".", false)
                 if ns.CharacterSheetUI then ns.CharacterSheetUI.RefreshIfShown() end
+                HubRefresh()
                 Refresh(f)
             else
                 SetMsg(f, reason or "Cannot learn.", true)
@@ -625,5 +640,255 @@ function FeatsUI.RefreshIfShown()
     local f = FeatsUI.frame
     if f and f:IsShown() then Refresh(f) end
 end
+
+-- Feats hub panel -------------------------------------------------------------
+
+-- The hub's read-only twin of the browser: one row per owned rank, then the
+-- homebrew records, in the order the sheet's quick-ref uses. Rows are pooled
+-- and reused here too (frames are permanent in WoW).
+
+local PANEL_ROW_H = 30
+local TIP_DESC_MAX = 150
+-- The soft blue the sheet and the other hub lists tag a row's origin with.
+local TAG_BLUE = "|cff8ec6ff"
+
+-- The picks the panel lists: every owned rank in pack order, then the
+-- character's homebrew feats - the sheet's collection, entry for entry.
+-- Returns the list ({ rec, line, index } / { rec, homebrew, pending }) and how
+-- many recorded lines no active pack resolves.
+local function PickedFeats(char)
+    local pack = ns.GetFeatPack()
+    local list, unresolved = {}, 0
+    if type(char.feats) == "table" then
+        if pack then
+            for _, line in ipairs(pack.lines or {}) do
+                local owned = ns.Feats.Rank(char, line.id)
+                for i = 1, math.min(owned, #(line.ranks or {})) do
+                    list[#list + 1] = { rec = line.ranks[i], line = line, index = i }
+                end
+            end
+        end
+        for lineId in pairs(char.feats) do
+            if not (pack and ns.Feats.Line(pack, lineId)) then unresolved = unresolved + 1 end
+        end
+    end
+    for _, rec in ipairs(ns.Homebrew.List(char, "feat")) do
+        if type(rec) == "table" then
+            list[#list + 1] = { rec = rec, homebrew = true,
+                pending = not ns.Homebrew.Active(char, rec) }
+        end
+    end
+    return list, unresolved
+end
+
+-- A picked entry's mechanics as one line (the row truncates what still runs
+-- past its width).
+local function PickMeta(rec)
+    local parts = {}
+    if rec.type then parts[#parts + 1] = rec.type end
+    local cost = ns.FormatCost(rec.cost)
+    if cost then parts[#parts + 1] = cost end
+    if rec.range then parts[#parts + 1] = "Range: " .. rec.range end
+    if rec.save then parts[#parts + 1] = ns.AttrName(rec.save) .. " save" end
+    return table.concat(parts, "  -  ")
+end
+
+-- A one-paragraph excerpt of rules text for a tooltip: whitespace collapsed
+-- and cut at a word boundary past TIP_DESC_MAX. Returns nil for empty text.
+local function Excerpt(text)
+    local s = tostring(text or ""):gsub("%s+", " ")
+    s = s:gsub("^ ", ""):gsub(" $", "")
+    if s == "" then return nil end
+    if #s > TIP_DESC_MAX then
+        s = s:sub(1, TIP_DESC_MAX):gsub("%s+%S*$", "") .. "..."
+    end
+    return s
+end
+
+-- Fills a row's tooltip: the mechanics as label/value pairs, then the rules
+-- text as wrapped prose. Set fresh every render (pooled rows keep old data).
+local function FillRowTip(row, entry)
+    local rec = entry.rec
+    row.tipTitle = rec.name or "?"
+    local lines = {}
+    if rec.type then lines[#lines + 1] = { "Type", rec.type } end
+    local cost = ns.FormatCost(rec.cost)
+    if cost then lines[#lines + 1] = { "Cost", cost } end
+    if rec.range then lines[#lines + 1] = { "Range", rec.range } end
+    if rec.save then lines[#lines + 1] = { "Save", ns.AttrName(rec.save) } end
+    if entry.line then
+        lines[#lines + 1] = { "Rank",
+            Roman(entry.index) .. " of " .. (entry.line.name or entry.line.id) }
+    else
+        lines[#lines + 1] = { "Homebrew", "gained at level " .. (rec.level or 1) }
+    end
+    local excerpt = Excerpt(rec.description)
+    if excerpt then lines[#lines + 1] = excerpt end
+    row.tipLines = lines
+    row.tipHints = { "Click: open the feats browser" }
+end
+
+local function CreatePanelRow(content)
+    local row = CreateFrame("Button", nil, content)
+    row:SetHeight(PANEL_ROW_H)
+
+    UI.RowVisuals(row)
+    UI.WireRowTip(row)
+
+    row.name = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    row.name:SetPoint("TOPLEFT", 6, -2)
+    row.name:SetPoint("RIGHT", row, "RIGHT", -6, 0)
+    row.name:SetJustifyH("LEFT")
+    row.name:SetWordWrap(false)
+    row.meta = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    row.meta:SetPoint("BOTTOMLEFT", 6, 2)
+    row.meta:SetPoint("RIGHT", row, "RIGHT", -6, 0)
+    row.meta:SetJustifyH("LEFT")
+    row.meta:SetWordWrap(false)
+    row.meta:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
+
+    row:SetScript("OnClick", function() FeatsUI.Open() end)
+    return row
+end
+
+-- Fills one row: the rank (or record) name with its line/homebrew tag, the
+-- compressed mechanics line, and the tooltip. Pending records render dim.
+local function FillPanelRow(row, entry)
+    local rec = entry.rec
+    local tag
+    if entry.line then
+        tag = TAG_BLUE .. "(" .. (entry.line.name or entry.line.id) .. " " .. entry.index .. ")|r"
+    else
+        tag = TAG_BLUE .. "(homebrew"
+            .. (entry.pending and (", pending until level " .. (rec.level or 1)) or "") .. ")|r"
+    end
+    row.name:SetText((rec.name or "?") .. "  " .. tag)
+    local c = entry.pending and UI.DIM or UI.TEXT
+    row.name:SetTextColor(c[1], c[2], c[3])
+    row.meta:SetText(PickMeta(rec))
+    FillRowTip(row, entry)
+end
+
+local function RefreshPanel(panel)
+    local content = panel.content
+    for _, r in ipairs(content.rows) do r:Hide() end
+    content.note:Hide()
+    content:SetHeight(10)
+
+    -- The empty state masks the body but neither the header line nor the
+    -- footer button, so both go with it - HideEmpty only drops the overlay.
+    local function headerless()
+        panel.hint:SetText("")
+        panel.points:SetText("")
+        panel.openBtn:Hide()
+    end
+
+    if not ns.HasSystem() then
+        headerless()
+        ns.UI.NoSystem(panel)
+        return
+    end
+    local char = ns.GetActiveCharacter()
+    if not char then
+        headerless()
+        ns.UI.Empty(panel,
+            "No character yet.\n\nCreate one to pick feats, or import an existing one.",
+            "Create a character", function() ns.OpenModule("new") end,
+            "Import a character", function() ns.OpenModule("import") end)
+        return
+    end
+
+    -- Header: whose picks these are, and the budget both pickers spend from -
+    -- seeing it here saves opening a browser to read one number.
+    panel.hint:SetText("What " .. (char.name or "this character") .. " has picked."
+        .. " The browser is where picks are made.")
+    local spent, budget = ns.Picks.Points(char)
+    local left = budget - spent
+    panel.points:SetText(left .. ((left == 1) and " pick left" or " picks left"))
+    local pc = (left > 0) and UI.GREEN or UI.RED
+    panel.points:SetTextColor(pc[1], pc[2], pc[3])
+
+    local list, unresolved = PickedFeats(char)
+    if #list == 0 and unresolved == 0 then
+        panel.openBtn:Hide()
+        ns.UI.Empty(panel, "No feats picked yet.\n\nThe browser unfolds every ability line into"
+            .. " its ranks; Learn takes the next one.",
+            "Open the feats browser", function() FeatsUI.Open() end)
+        return
+    end
+    ns.UI.HideEmpty(panel)
+    panel.openBtn:Show()
+
+    local y = -2
+    for i, entry in ipairs(list) do
+        local row = content.rows[i] or CreatePanelRow(content)
+        content.rows[i] = row
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", content, "TOPLEFT", 2, y)
+        row:SetPoint("TOPRIGHT", content, "TOPRIGHT", -2, y)
+        FillPanelRow(row, entry)
+        row:Show()
+        y = y - PANEL_ROW_H
+    end
+
+    -- Picks recorded against a pack that is not active are unreachable here;
+    -- the sheet says so in the same words rather than dropping them silently.
+    if unresolved > 0 then
+        content.note:ClearAllPoints()
+        content.note:SetPoint("TOPLEFT", content, "TOPLEFT", 8, y - 4)
+        content.note:SetPoint("RIGHT", content, "RIGHT", -6, 0)
+        content.note:SetText(unresolved
+            .. " feat line(s) not shown - no matching feats pack active.")
+        content.note:Show()
+        y = y - 22
+    end
+    content:SetHeight(math.max(10, -y + 2))
+end
+
+local function BuildPanel(panel)
+    panel.hint = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    panel.hint:SetPoint("TOPLEFT", 4, -4)
+    panel.hint:SetJustifyH("LEFT")
+    -- One header line: a long character name truncates rather than wrapping
+    -- down over the list.
+    panel.hint:SetWordWrap(false)
+    panel.hint:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
+
+    panel.points = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    panel.points:SetPoint("TOPRIGHT", -10, -2)
+    panel.hint:SetPoint("RIGHT", panel.points, "LEFT", -8, 0)
+
+    local scroll = CreateFrame("ScrollFrame", "ParchmentHubFeatsScroll", panel,
+        "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", 0, -24)
+    scroll:SetPoint("BOTTOMRIGHT", -26, 34)
+    local content = CreateFrame("Frame", nil, scroll)
+    content:SetSize(10, 10)
+    content.rows = {}
+    content.note = content:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    content.note:SetJustifyH("LEFT")
+    content.note:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
+    content.note:Hide()
+    scroll:SetScrollChild(content)
+    scroll:SetScript("OnSizeChanged", function(_, w) content:SetWidth(w) end)
+    panel.content = content
+
+    panel.openBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    panel.openBtn:SetSize(160, 22)
+    panel.openBtn:SetPoint("BOTTOMLEFT", 0, 4)
+    panel.openBtn:SetText("Open the feats browser")
+    panel.openBtn:SetScript("OnClick", function() FeatsUI.Open() end)
+end
+
+ns.HubUI.RegisterPanel({
+    id = "feats", label = "Feats", order = 42, icon = "ability_warrior_battleshout",
+    count = function()
+        local char = ns.GetActiveCharacter()
+        if not char then return 0 end
+        local list = PickedFeats(char)
+        return #list
+    end,
+    Build = BuildPanel, Refresh = RefreshPanel,
+})
 
 ns.RegisterModule("feats", FeatsUI.Toggle)
