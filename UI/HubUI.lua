@@ -32,6 +32,9 @@ local NAV_H = 26
 local TEX_HOVER = "Interface\\FriendsFrame\\UI-FriendsFrame-HighlightBar"
 local TEX_SELECTED = "Interface\\QuestFrame\\UI-QuestTitleHighlight"
 
+-- Stock interface sounds (read off _G: absent in the headless tests).
+local PlaySound, SOUNDKIT = _G.PlaySound, _G.SOUNDKIT
+
 local HubUI = {}
 ns.HubUI = HubUI
 
@@ -135,10 +138,21 @@ local function BuildFrame()
         b.label:SetWordWrap(false)
         b.label:SetText(p.label)
 
-        b:SetScript("OnClick", function() Select(f, p.id) end)
+        b:SetScript("OnClick", function()
+            if PlaySound and SOUNDKIT then PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON) end
+            Select(f, p.id)
+        end)
         p.button = b
         y = y - NAV_H - 2
     end
+
+    -- Window open/close sounds (stock SOUNDKIT; guarded for headless tests).
+    f:HookScript("OnShow", function()
+        if PlaySound and SOUNDKIT then PlaySound(SOUNDKIT.ACHIEVEMENT_MENU_OPEN) end
+    end)
+    f:HookScript("OnHide", function()
+        if PlaySound and SOUNDKIT then PlaySound(SOUNDKIT.ACHIEVEMENT_MENU_CLOSE) end
+    end)
 
     local divider = f:CreateTexture(nil, "BACKGROUND")
     divider:SetColorTexture(UI.LINE[1], UI.LINE[2], UI.LINE[3], UI.LINE[4])
@@ -231,6 +245,7 @@ local function CreateCharRow(content)
     hl:SetTexCoord(0.25, 1, 0, 1)
     hl:SetBlendMode("ADD")
     hl:SetAlpha(0.6)
+    UI.WireRowTip(row)
 
     row.name = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     row.name:SetPoint("TOPLEFT", 6, -2)
@@ -335,6 +350,14 @@ local function RefreshCharacters(panel)
         row.meta:SetText("level " .. (ch.level or "?")
             .. (ch.race and ch.race ~= "" and ("  -  " .. ch.race) or "")
             .. "  -  [" .. entry.key .. "]")
+        row.tipTitle = ch.name or entry.key
+        local lines = { { "Level", ch.level or "?" } }
+        if ch.race and ch.race ~= "" then lines[#lines + 1] = { "Race", ch.race } end
+        lines[#lines + 1] = { "Key", entry.key }
+        row.tipLines = lines
+        row.tipHints = active
+            and { "This is the active character.", "Right-click: actions" }
+            or { "Click: make it the active character", "Right-click: actions" }
         row:Show()
         y = y - ROW_H
     end
