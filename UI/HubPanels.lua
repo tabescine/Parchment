@@ -1,24 +1,24 @@
--- Parchment - Hub panels: Systems, Items and Cached sheets
+-- Parchment - Hub panels: Systems, Rule packs and Cached sheets
 --
 -- Three hub panels that browse data owned by logic modules. The Systems panel
 -- lists the system library: click an entry to make it the active system
 -- (always preserving the outgoing one, and asking first once characters
 -- exist), X deletes via the shared confirm popup, footer buttons share the
--- system with the group or jump to Import / Export. The Cached sheets panel
+-- system with the group or jump to Import / Export. The Rule packs panel lists
+-- feat and spell packs in one list: click a pack to activate it (one active
+-- slot per kind), X deletes via that module's confirm, footer buttons share a
+-- pack or jump to Import / Export. The Cached sheets panel
 -- lists received character sheets: click to view one read-only, a search box
 -- filters by character/player name, each row has a refresh button (re-request
 -- a live copy) and an X (remove via the shared confirm) and shows its
--- staleness, and Clear all drops the whole cache (asks first). The
--- Items panel lists the item library: click an entry to edit it in the item
--- wizard, X deletes via that module's confirm, and the footer opens the full
--- library browser (per-row give/duplicate) or the wizard.
+-- staleness, and Clear all drops the whole cache (asks first).
 --
--- Reads from: ns.UI, ns.HubUI, ns.Systems, ns.Sharing, ns.GetSystem,
---   ns.GetCharacters,
---   ns.GetItemLibrary, ns.ItemWizardUI, ns.ShareSystem, ns.CharacterSheetUI,
---   ns.OpenModule, ns.Print.
--- Exposes nothing on ns: both panels register with the hub and are reached
---   through it (ns.Systems / ns.Sharing keep the module-level entry points).
+-- Reads from: ns.UI, ns.HubUI, ns.Systems, ns.Packs, ns.Sharing, ns.GetSystem,
+--   ns.GetCharacters, ns.GetPackLibrary, ns.GetActivePackName, ns.ShareSystem,
+--   ns.CharacterSheetUI, ns.Print.
+-- Exposes nothing on ns: the panels register with the hub and are reached
+--   through it (ns.Systems / ns.Packs / ns.Sharing keep the module-level
+--   entry points).
 
 local ADDON, ns = ...
 
@@ -300,86 +300,6 @@ ns.HubUI.RegisterPanel({
         return n
     end,
     Build = BuildPacks, Refresh = RefreshPacks,
-})
-
--- Items panel -----------------------------------------------------------------
-
--- Rows carry the library key; the item wizard owns both the editor and the
--- delete confirmation (which explains what deletion does to characters holding
--- the item), so this panel only lists and routes.
-local function MakeItemRow(content)
-    return CreateListRow(content, function(row)
-        if row.itemId and ns.ItemWizardUI then ns.ItemWizardUI.ConfirmDelete(row.itemId) end
-    end)
-end
-
-local function RefreshItems(panel)
-    local list = {}
-    for id, item in pairs(ns.GetItemLibrary()) do
-        if type(item) == "table" then list[#list + 1] = { id = id, item = item } end
-    end
-    table.sort(list, function(a, b)
-        local an, bn = tostring(a.item.name or a.id), tostring(b.item.name or b.id)
-        if an == bn then return a.id < b.id end
-        return an < bn
-    end)
-
-    -- The empty state masks the whole panel body, footer included, so the two
-    -- footer buttons are hidden while it shows (its own button covers that
-    -- path) and shown again once there is a list behind them - HideEmpty only
-    -- drops the overlay, it cannot know what was hidden underneath it.
-    if #list == 0 then
-        ns.UI.Empty(panel, "Your item library is empty.\n\nItems live here rather than on a"
-            .. " character: write one and hand it to whoever carries it.",
-            "Create an item", function() if ns.ItemWizardUI then ns.ItemWizardUI.Open() end end)
-        panel.newBtn:Hide()
-        panel.libraryBtn:Hide()
-        panel.content:SetHeight(10)
-        return
-    end
-    ns.UI.HideEmpty(panel)
-    panel.newBtn:Show()
-    panel.libraryBtn:Show()
-
-    PlaceRows(panel.content, list, function(row, entry)
-        row.itemId = entry.id
-        row.name:SetText(entry.item.name or entry.id)
-        row.name:SetTextColor(UI.TEXT[1], UI.TEXT[2], UI.TEXT[3])
-        row.meta:SetText((entry.item.kind or "?") .. "  -  [" .. entry.id .. "]")
-        row.tipTitle = entry.item.name or entry.id
-        local lines = { { "Kind", entry.item.kind or "?" }, { "ID", entry.id } }
-        local desc = tostring(entry.item.description or "")
-        if desc ~= "" then
-            if #desc > 120 then desc = desc:sub(1, 120) .. "..." end
-            lines[#lines + 1] = desc
-        end
-        row.tipLines = lines
-        row.tipHints = { "Click: edit (every carrier follows)", "X: delete (asks first)" }
-        row:SetScript("OnClick", function()
-            if ns.ItemWizardUI then ns.ItemWizardUI.Open(entry.id) end
-        end)
-    end, MakeItemRow)
-end
-
-local function BuildItems(panel)
-    BuildList(panel, "ParchmentHubItemScroll",
-        "Click an item to edit it (every character carrying it follows). X deletes (asks first).")
-    panel.newBtn = FooterButton(panel, "New item", 90, 0, function()
-        if ns.ItemWizardUI then ns.ItemWizardUI.Open() end
-    end)
-    panel.libraryBtn = FooterButton(panel, "Item library", 100, 94, function()
-        if ns.ItemWizardUI then ns.ItemWizardUI.OpenBrowser() end
-    end)
-end
-
-ns.HubUI.RegisterPanel({
-    id = "items", label = "Items", order = 40, icon = "inv_misc_bag_08",
-    count = function()
-        local n = 0
-        for _ in pairs(ns.GetItemLibrary()) do n = n + 1 end
-        return n
-    end,
-    Build = BuildItems, Refresh = RefreshItems,
 })
 
 -- Cached sheets panel ---------------------------------------------------------
