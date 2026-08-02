@@ -659,6 +659,13 @@ local function StepCount(index, delta)
     end)
 end
 
+-- The popup's edit box: "EditBox" since the 12.x GameDialog rework,
+-- "editBox" on older clients - accept either (the tracker's set-HP popup
+-- learned this the hard way).
+local function PopupEditBox(popup)
+    return popup.EditBox or popup.editBox
+end
+
 -- The free-dice popup ("/pmt roll" behind the sheet's Roll dice button). The
 -- last notation is kept and pre-selected, so rolling the same dice again is
 -- Enter twice; a notation that does not parse keeps the box open (RollToChat
@@ -669,19 +676,20 @@ StaticPopupDialogs["PARCHMENT_ROLL_DICE"] = {
     button1 = "Roll", button2 = CANCEL,
     hasEditBox = true,
     OnShow = function(self)
-        self.editBox:SetText(lastDiceNotation)
-        self.editBox:HighlightText()
+        local box = PopupEditBox(self)
+        box:SetText(lastDiceNotation)
+        box:HighlightText()
     end,
     OnAccept = function(self)
-        local notation = self.editBox:GetText()
+        local notation = PopupEditBox(self):GetText()
         if ns.Dice.RollToChat(notation) then lastDiceNotation = notation end
     end,
     EditBoxOnEnterPressed = function(self)
-        local parent = self:GetParent()
-        local notation = parent.editBox:GetText()
+        local popup = self:GetParent()
+        local notation = PopupEditBox(popup):GetText()
         if ns.Dice.RollToChat(notation) then
             lastDiceNotation = notation
-            parent:Hide()
+            popup:Hide()
         end
     end,
     EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
