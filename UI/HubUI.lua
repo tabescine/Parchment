@@ -9,11 +9,13 @@
 -- Panels self-register at load via ns.HubUI.RegisterPanel{ id, label, order,
 -- Build, Refresh }: Build(panel) creates the widgets once into the provided
 -- frame (lazily, on first show); Refresh(panel) re-fills them on every show.
--- This file owns the shell and the Characters panel (the roster: select,
--- delete, create, edit).
+-- This file owns the shell and the Characters panel (the roster: a row opens
+-- its sheet on left-click and offers set active / edit / delete on
+-- right-click, footer buttons create, edit and import).
 --
 -- Reads from: ns.UI, ns.GetCharacters, ns.GetActiveCharacter,
---   ns.SetActiveCharacter, ns.OpenModule, ns.Systems, ns.Party.
+--   ns.SetActiveCharacter, ns.CharacterSheetUI, ns.OpenModule, ns.Systems,
+--   ns.Party.
 -- Exposes on ns.HubUI: Open(panelId?), Toggle(panelId?), RegisterPanel,
 --   RefreshIfShown(panelId?).
 -- Registers the "hub" and "characters" module openers with Core.
@@ -265,23 +267,45 @@ local function CreateCharRow(content)
     row.meta:SetPoint("RIGHT", del, "LEFT", -4, 0)
     row.meta:SetWordWrap(false)
 
-    -- Left-click activates; right-click opens the secondary verbs as a
-    -- context menu (modern Menu API; without it right-click just activates
-    -- too). Every entry documents itself with a hover tooltip.
     local function Activate(self)
         if self.key and ns.SetActiveCharacter(self.key) then
             ActiveChanged()
             HubUI.RefreshIfShown("characters")
         end
     end
+
+    -- Reading a row never changes state: the active character gets the live
+    -- sheet, any other one a read-only view of its stored table (no sender, so
+    -- the header carries no "(from X)" tag - it is a local character).
+    local function OpenSheet(self)
+        if not ns.CharacterSheetUI then return end
+        if self.active then
+            ns.CharacterSheetUI.Open()
+        elseif self.char then
+            ns.CharacterSheetUI.ShowCharacter(self.char, nil)
+        end
+    end
+
+    -- Left-click reads (opens the sheet); right-click manages, as a context
+    -- menu (modern Menu API; without it right-click just opens the sheet too,
+    -- and the footer buttons plus the X remain the way in). Every entry
+    -- documents itself with a hover tooltip.
     row:SetScript("OnClick", function(self, mouseButton)
         if mouseButton == "RightButton" and MenuUtil then
             local key, name = self.key, self.charName or self.key or "?"
             MenuUtil.CreateContextMenu(self, function(_, root)
                 root:CreateTitle(name)
                 local tip = MenuUtil.SetElementTooltip
-                local e = root:CreateButton("Set active", function() Activate(self) end)
-                if tip then tip(e, "Every window renders the active character.") end
+                local e = root:CreateButton("Open sheet", function() OpenSheet(self) end)
+                if tip then
+                    tip(e, self.active and "Opens the live sheet."
+                        or "Opens a read-only view; the active character is unchanged.")
+                end
+                e = root:CreateButton("Set active", function() Activate(self) end)
+                if tip then
+                    tip(e, "Makes it the character every window renders."
+                        .. " Opening a sheet does not switch - do it here.")
+                end
                 e = root:CreateButton("Edit", function()
                     Activate(self)
                     ns.OpenModule("edit")
@@ -294,7 +318,7 @@ local function CreateCharRow(content)
             end)
             return
         end
-        Activate(self)
+        OpenSheet(self)
     end)
     return row
 end
@@ -330,6 +354,7 @@ local function RefreshCharacters(panel)
         row:SetPoint("TOPLEFT", content, "TOPLEFT", 2, y)
         row:SetPoint("TOPRIGHT", content, "TOPRIGHT", -2, y)
         local active = entry.key == activeKey
+        row.char, row.active = ch, active
         row.name:SetText((ch.name or entry.key) .. (active and "  |cff66d966(active)|r" or ""))
         local nameC = active and UI.GOLD or UI.TEXT
         row.name:SetTextColor(nameC[1], nameC[2], nameC[3])
@@ -342,8 +367,9 @@ local function RefreshCharacters(panel)
         lines[#lines + 1] = { "Key", entry.key }
         row.tipLines = lines
         row.tipHints = active
-            and { "This is the active character.", "Right-click: actions" }
-            or { "Click: make it the active character", "Right-click: actions" }
+            and { "Click: open the sheet", "Right-click: actions" }
+            or { "Click: view the sheet (read-only)",
+                "Right-click: actions (set active, edit, ...)" }
         row:Show()
         y = y - ROW_H
     end
@@ -354,7 +380,8 @@ local function BuildCharacters(panel)
     local hint = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     hint:SetPoint("TOPLEFT", 4, -4)
     hint:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
-    hint:SetText("Click a character to make it active. X deletes (asks first).")
+    hint:SetText("Click a character to open its sheet; right-click for actions."
+        .. " X deletes (asks first).")
 
     local scroll = CreateFrame("ScrollFrame", "ParchmentHubCharScroll", panel, "UIPanelScrollFrameTemplate")
     scroll:SetPoint("TOPLEFT", 0, -24)

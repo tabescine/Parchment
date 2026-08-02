@@ -2,11 +2,14 @@
 --
 -- The two faces of the item library: a stepped creator window (Kind -> Details
 -- -> Review) that writes one library item, and the hub's Items panel listing
--- what the library holds with per-row edit, duplicate, delete and
--- hand-to-character actions. The wizard is a singleton built on
--- ns.UI.CreateWindow; the browser is a panel registered with ns.HubUI and has
--- no window of its own. The panel's New item button toggles a type picker (one
--- card per kind) that opens the wizard already on the chosen kind.
+-- what the library holds. A panel row follows the addon's click grammar: left
+-- reads the item in the link viewer, shift links it in chat, right opens its
+-- actions (edit, give, duplicate, delete) as a context menu. The Give/Copy/X
+-- buttons stay on the row as visible affordances for the same flows. The
+-- wizard is a singleton built on ns.UI.CreateWindow; the browser is a panel
+-- registered with ns.HubUI and has no window of its own. The panel's New item
+-- button toggles a type picker (one card per kind) that opens the wizard
+-- already on the chosen kind.
 --
 -- The library is global and system-independent, so equipment and gear can be
 -- authored with no system loaded at all; only a weapon item's optional link to
@@ -21,7 +24,8 @@
 -- missing. The confirmations say so - it is the feature, not a caveat.
 --
 -- Reads from: ns.UI, ns.HubUI, ns.Widgets, ns.CharacterForm, ns.Dialogs,
---   ns.Items, ns.Schema.ValidateItem, the item library API (ns.GetItemLibrary,
+--   ns.Items, ns.ChatLinks, ns.ChatLinkUI,
+--   ns.Schema.ValidateItem, the item library API (ns.GetItemLibrary,
 --   ns.GetItem, ns.SetItem, ns.DeleteItem, ns.NextItemKey), ns.GetSystem,
 --   ns.FindById, ns.GetActiveCharacter, ns.GetCharacter, ns.SetCharacter,
 --   ns.DeepCopy, ns.Systems.RefreshAll, ns.Print.
@@ -81,18 +85,17 @@ local FILTERS = {
 -- The panel keeps one header line: the row gestures normally, a filter warning
 -- while nothing matches. The two never apply at once, and the hub body is too
 -- narrow to spend a second line on.
-local BROWSE_HINT = "Click an item to edit it. Give hands it to the active character;"
-    .. " X deletes (asks first)."
+local BROWSE_HINT = "Click an item to read it, shift-click to link it in chat,"
+    .. " right-click for its actions."
 
 -- Every gesture a library row carries, one green line in its tooltip: the row
 -- has no visible chrome saying which button does what.
 local ROW_HINTS = {
-    "Click: edit (every carrier follows)",
-    "Give: hand it to a character",
-    "Copy: duplicate it",
-    "X: delete (asks first)",
+    "Click: read it in its own window",
+    "Shift-click: link it in chat",
+    "Right-click: actions",
+    "Give / Copy / X: hand out, duplicate, delete",
 }
-local DESC_CAP = 120
 
 -- The "New item" type picker: a panel of one card per kind, opening upwards
 -- from the button it hangs off.
@@ -742,18 +745,59 @@ local function FillRowTip(row, id, item)
     elseif item.kind == "equipment" then
         lines[#lines + 1] = { "AC bonus", UI.Signed(tonumber(item.ac_bonus) or 0) }
     end
+    -- The description goes in whole: it is schema-capped at 512 characters and
+    -- a plain string line wraps in the tooltip, so nothing needs cutting.
     local desc = tostring(item.description or "")
-    if desc ~= "" then
-        if #desc > DESC_CAP then desc = desc:sub(1, DESC_CAP) .. "..." end
-        lines[#lines + 1] = desc
-    end
+    if desc ~= "" then lines[#lines + 1] = desc end
     row.tipLines = lines
     row.tipHints = ROW_HINTS
+end
+
+-- The four verbs a library row carries. Both the row buttons and the
+-- right-click menu call these, so a duplicated affordance is never a second
+-- implementation.
+local function RowEdit(row)
+    if row.itemId then ItemWizardUI.Open(row.itemId) end
+end
+
+local function RowGive(row)
+    if row.item then ItemWizardUI.AddToCharacter(row.item, nil) end
+end
+
+local function RowDuplicate(row)
+    if row.itemId then ItemWizardUI.Duplicate(row.itemId) end
+end
+
+local function RowDelete(row)
+    if row.itemId then ItemWizardUI.ConfirmDelete(row.itemId) end
+end
+
+-- The row's manage menu (modern Menu API; without it right-click falls back to
+-- the edit the menu leads with). Every entry documents itself on hover.
+local function RowMenu(row)
+    if not MenuUtil then
+        RowEdit(row)
+        return
+    end
+    local name = (row.item and row.item.name) or row.itemId or "?"
+    MenuUtil.CreateContextMenu(row, function(_, root)
+        root:CreateTitle(name)
+        local tip = MenuUtil.SetElementTooltip
+        local e = root:CreateButton("Edit", function() RowEdit(row) end)
+        if tip then tip(e, "Every character carrying it follows the edit.") end
+        e = root:CreateButton("Give to a character", function() RowGive(row) end)
+        if tip then tip(e, "Adds it to the active character's inventory.") end
+        e = root:CreateButton("Duplicate", function() RowDuplicate(row) end)
+        if tip then tip(e, "Stores a second copy, named '(copy)', to edit freely.") end
+        e = root:CreateButton(DELETE or "Delete", function() RowDelete(row) end)
+        if tip then tip(e, "Asks first. Carriers keep the entry, showing it as missing.") end
+    end)
 end
 
 local function CreateItemRow(content)
     local row = CreateFrame("Button", nil, content)
     row:SetHeight(ROW_BROWSE_H)
+    row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 
     UI.RowVisuals(row)
     UI.WireRowTip(row)
@@ -784,9 +828,7 @@ local function CreateItemRow(content)
     end
     -- "Give" stays clickable without an active character: the attempt says why
     -- in chat, where a disabled button (which swallows its own hover) could not.
-    row.addBtn = SmallButton("Give", -74, function()
-        if row.item then ItemWizardUI.AddToCharacter(row.item, nil) end
-    end)
+    row.addBtn = SmallButton("Give", -74, function() RowGive(row) end)
     row.addBtn:SetScript("OnEnter", function(self)
         local _, key = ns.GetActiveCharacter()
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -795,21 +837,28 @@ local function CreateItemRow(content)
         GameTooltip:Show()
     end)
     row.addBtn:SetScript("OnLeave", GameTooltip_Hide)
-    row.copyBtn = SmallButton("Copy", -26, function()
-        if row.itemId then ItemWizardUI.Duplicate(row.itemId) end
-    end)
+    row.copyBtn = SmallButton("Copy", -26, function() RowDuplicate(row) end)
 
     row.delBtn = CreateFrame("Button", nil, row)
     row.delBtn:SetSize(16, 16)
     row.delBtn:SetPoint("RIGHT", -6, 0)
     row.delBtn:SetNormalTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Up")
     row.delBtn:SetHighlightTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Up")
-    row.delBtn:SetScript("OnClick", function()
-        if row.itemId then ItemWizardUI.ConfirmDelete(row.itemId) end
-    end)
+    row.delBtn:SetScript("OnClick", function() RowDelete(row) end)
 
-    row:SetScript("OnClick", function()
-        if row.itemId then ItemWizardUI.Open(row.itemId) end
+    -- Shift wins over a plain left click (the sheet's inventory rows read the
+    -- same way), then right manages, then left reads.
+    row:SetScript("OnClick", function(self, mouseButton)
+        if not self.item then return end
+        if mouseButton ~= "RightButton" and IsShiftKeyDown and IsShiftKeyDown() then
+            ns.ChatLinks.PostLink(ns.ChatLinks.Item(self.item))
+            return
+        end
+        if mouseButton == "RightButton" then
+            RowMenu(self)
+            return
+        end
+        if ns.ChatLinkUI then ns.ChatLinkUI.Show(ns.ChatLinks.Item(self.item)) end
     end)
     return row
 end

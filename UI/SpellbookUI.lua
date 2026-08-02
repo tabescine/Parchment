@@ -24,11 +24,14 @@
 -- The file also registers the hub's Spellbook panel: a read-only list of what
 -- the active character knows (pack spells then homebrew records, in the
 -- sheet's quick-ref order) with the shared pick budget and a button into the
--- spellbook. Picks are made in the spellbook; the panel only says what they are.
+-- spellbook. A row reads its record in the link viewer on click and links it
+-- in chat on shift-click; picks are made in the spellbook, which the footer
+-- button opens.
 --
 -- Reads from: ns.GetSystem, ns.GetSpellPack, ns.GetActiveCharacter,
 --   ns.GetItemLibrary, ns.CharacterSheet.Compute, ns.Spells, ns.Homebrew,
---   ns.HomebrewUI, ns.HubUI, ns.Picks, ns.FormatCost, ns.AttrName, ns.UI.
+--   ns.HomebrewUI, ns.HubUI, ns.Picks, ns.FormatCost, ns.AttrName, ns.UI,
+--   ns.ChatLinks, ns.ChatLinkUI.
 -- Exposes on ns.SpellbookUI: Open, Toggle, RefreshIfShown, and .frame.
 -- Registers the "spellbook" module opener with Core and the "spellbook" hub
 -- panel.
@@ -742,7 +745,15 @@ local function FillRowTip(row, entry, pack)
     local excerpt = Excerpt(rec.description)
     if excerpt then lines[#lines + 1] = excerpt end
     row.tipLines = lines
-    row.tipHints = { "Click: open the spellbook" }
+    row.tipHints = { "Click: read it in its own window", "Shift-click: link it in chat" }
+end
+
+-- The chat-link payload for the record a row carries, built at click time so
+-- it reflects the current data. Returns nil for a row with no record yet.
+local function RowPayload(row)
+    if not row.rec then return nil end
+    if row.homebrew then return ns.ChatLinks.Homebrew("spell", row.rec) end
+    return ns.ChatLinks.Spell(row.pack, row.rec)
 end
 
 local function CreatePanelRow(content)
@@ -764,14 +775,27 @@ local function CreatePanelRow(content)
     row.meta:SetWordWrap(false)
     row.meta:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
 
-    row:SetScript("OnClick", function() SpellbookUI.Open() end)
+    -- Left reads the record in the link viewer, shift links it in chat; the
+    -- footer button is the way into the spellbook where picks are made.
+    row:SetScript("OnClick", function(self)
+        local payload = RowPayload(self)
+        if not payload then return end
+        if IsShiftKeyDown and IsShiftKeyDown() then
+            ns.ChatLinks.PostLink(payload)
+            return
+        end
+        if ns.ChatLinkUI then ns.ChatLinkUI.Show(payload) end
+    end)
     return row
 end
 
 -- Fills one row: the spell (or record) name with its school/homebrew tag, the
 -- compressed mechanics line, and the tooltip. Pending records render dim.
+-- The link context is set on every fill - a pooled row must never carry the
+-- previous render's record.
 local function FillPanelRow(row, entry, pack)
     local rec = entry.rec
+    row.rec, row.pack, row.homebrew = rec, pack, entry.homebrew
     local school = SchoolName(pack, rec.school)
     local tag
     if entry.homebrew then
