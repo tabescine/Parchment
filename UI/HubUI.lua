@@ -230,21 +230,7 @@ local function CreateCharRow(content)
     row:SetHeight(ROW_H)
     row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 
-    -- Engraved row band + additive hover bar (both Blizzard textures; the
-    -- band's TexCoords slice the thin title gradient out of the achievement
-    -- frame sheet - the trick TRP3 Extended's database rows use).
-    local band = row:CreateTexture(nil, "BACKGROUND")
-    band:SetPoint("TOPLEFT", 0, -1)
-    band:SetPoint("BOTTOMRIGHT", 0, 1)
-    band:SetTexture("Interface\\ACHIEVEMENTFRAME\\UI-Achievement-Title")
-    band:SetTexCoord(0, 1, 0.40625, 0.60125)
-    band:SetAlpha(0.35)
-    local hl = row:CreateTexture(nil, "HIGHLIGHT")
-    hl:SetAllPoints(row)
-    hl:SetTexture("Interface\\FriendsFrame\\UI-FriendsFrame-HighlightBar")
-    hl:SetTexCoord(0.25, 1, 0, 1)
-    hl:SetBlendMode("ADD")
-    hl:SetAlpha(0.6)
+    UI.RowVisuals(row)
     UI.WireRowTip(row)
 
     row.name = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
