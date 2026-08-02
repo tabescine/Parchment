@@ -36,17 +36,15 @@ assert(#sent == 0, "public rolls off must never reach chat")
 -- everything else (including notation past the caps); Roll sums count dice
 -- plus the modifier and echoes canonical notation; RollToChat routes to the
 -- group channel parenthesized, or a plain local print when solo.
-assert(select("#", ns.Dice.Parse("6d6")) == 3)
-local c, s, m = ns.Dice.Parse("6d6")
-assert(c == 6 and s == 6 and m == 0)
-c, s, m = ns.Dice.Parse("d20")
-assert(c == 1 and s == 20 and m == 0, "bare dY defaults to one die")
-c, s, m = ns.Dice.Parse(" 2D8+3 ")
-assert(c == 2 and s == 8 and m == 3, "case and spaces are forgiven")
-c, s, m = ns.Dice.Parse("4d6-1")
-assert(c == 4 and s == 6 and m == -1)
-for _, bad in ipairs({ "", "6d", "d", "2x6", "6d6+", "6d6+2+3", "0d6", "6d1",
-    "101d6", "6d1001", "1d6+1000", "1d6 7" }) do
+local terms = ns.Dice.Parse("6d6")
+assert(type(terms) == "table" and #terms == 1)
+assert(terms[1].count == 6 and terms[1].sides == 6 and terms[1].sign == 1)
+terms = ns.Dice.Parse("1d10+1d6-2")
+assert(#terms == 3, "riders parse as separate terms")
+assert(terms[2].sides == 6 and terms[3].flat == 2 and terms[3].sign == -1)
+for _, bad in ipairs({ "", "6d", "d", "2x6", "6d6+", "0d6", "6d1",
+    "101d6", "51d3+50d3", "6d1001", "1d6+1000", "1d6 7", "2+3",
+    "1d6+1d6+1d6+1d6+1d6+1d6+1d6+1d6+1d6+1d6+1d6" }) do
     assert(ns.Dice.Parse(bad) == nil, "must reject '" .. bad .. "'")
 end
 
@@ -55,6 +53,14 @@ local total, canon = ns.Dice.Roll("3d10+2")
 assert(total == 23 and canon == "3d10+2", "got " .. tostring(total) .. " " .. tostring(canon))
 total, canon = ns.Dice.Roll("d20")
 assert(total == 7 and canon == "1d20", "canonical form spells out the count")
+total, canon = ns.Dice.Roll(" 2D8+3 ")
+assert(total == 17 and canon == "2d8+3", "case and edge spaces are forgiven")
+total, canon = ns.Dice.Roll("1d10+1d6")
+assert(total == 14 and canon == "1d10+1d6", "damage riders sum per-term")
+total, canon = ns.Dice.Roll("1d8+1d6-2")
+assert(total == 12 and canon == "1d8+1d6-2", "got " .. tostring(total) .. " " .. tostring(canon))
+total, canon = ns.Dice.Roll("6d6+2+3")
+assert(total == 47 and canon == "6d6+2+3", "multiple flats sum")
 assert(ns.Dice.Roll("nope") == nil)
 
 -- Solo: plain local print, nothing sent.

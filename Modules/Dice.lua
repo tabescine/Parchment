@@ -146,40 +146,65 @@ end
 -- takes on trust, like any hand-typed number.
 
 -- Caps on parsed notation: a typo must not hang the client rolling.
-local MAX_DICE, MAX_SIDES, MAX_MOD = 100, 1000, 999
+local MAX_DICE, MAX_SIDES, MAX_FLAT, MAX_TERMS = 100, 1000, 999, 10
 
--- Parses "XdY" with an optional "+Z"/"-Z" ("6d6", "d20", "2d8+3", "4d6-1").
--- Returns count, sides, modifier - or nil for anything else (including
--- notation past the caps).
+-- Parses dice notation: one or more +/- joined terms, each "XdY" dice or a
+-- flat number ("6d6", "d20", "2d8+3", "1d10+1d6", "1d8+1d6-2"). Returns a
+-- term list ({ sign, count, sides } for dice, { sign, flat } for numbers),
+-- or nil for anything else - including notation past the caps and sums with
+-- no dice in them ("2+3" is arithmetic, not a roll).
 function Dice.Parse(notation)
     -- Trim the ends only: collapsing interior whitespace would quietly turn
     -- "1d6 7" into 1d67 - dice the user never asked for.
     local s = tostring(notation or ""):lower():match("^%s*(.-)%s*$")
-    local count, sides, rest = s:match("^(%d*)d(%d+)(.-)$")
-    if not sides then return nil end
-    local mod = 0
-    if rest ~= "" then
-        mod = tonumber(rest:match("^([%+%-]%d+)$"))
-        if not mod then return nil end
+    if s == "" then return nil end
+    if not s:match("^[%+%-]") then s = "+" .. s end
+    local terms, totalDice, hasDice, consumed = {}, 0, false, 0
+    for sgn, body in s:gmatch("([%+%-])([^%+%-]*)") do
+        consumed = consumed + 1 + #body
+        local sign = (sgn == "-") and -1 or 1
+        local count, sides = body:match("^(%d*)d(%d+)$")
+        if sides then
+            count = (count == "") and 1 or tonumber(count)
+            sides = tonumber(sides)
+            totalDice = totalDice + count
+            if count < 1 or sides < 2 or sides > MAX_SIDES or totalDice > MAX_DICE then
+                return nil
+            end
+            hasDice = true
+            terms[#terms + 1] = { sign = sign, count = count, sides = sides }
+        else
+            local flat = tonumber(body:match("^(%d+)$"))
+            if not flat or flat > MAX_FLAT then return nil end
+            terms[#terms + 1] = { sign = sign, flat = flat }
+        end
     end
-    count = (count == "") and 1 or tonumber(count)
-    sides = tonumber(sides)
-    if count < 1 or count > MAX_DICE then return nil end
-    if sides < 2 or sides > MAX_SIDES then return nil end
-    if mod < -MAX_MOD or mod > MAX_MOD then return nil end
-    return count, sides, mod
+    -- gmatch skips malformed stretches silently; a length check catches them.
+    if consumed ~= #s then return nil end
+    if not hasDice or #terms > MAX_TERMS then return nil end
+    return terms
 end
 
--- Rolls parsed notation. Returns total and the canonical notation ("2d8+3"),
--- or nil when the notation does not parse.
+-- Rolls parsed notation. Returns total and the canonical notation
+-- ("1d10+1d6-2"), or nil when the notation does not parse.
 function Dice.Roll(notation)
-    local count, sides, mod = Dice.Parse(notation)
-    if not count then return nil end
-    local total = mod
-    for _ = 1, count do total = total + math.random(1, sides) end
-    local canon = count .. "d" .. sides
-        .. (mod > 0 and ("+" .. mod) or (mod < 0 and tostring(mod)) or "")
-    return total, canon
+    local terms = Dice.Parse(notation)
+    if not terms then return nil end
+    local total, parts = 0, {}
+    for i, t in ipairs(terms) do
+        local value, text
+        if t.sides then
+            value = 0
+            for _ = 1, t.count do value = value + math.random(1, t.sides) end
+            text = t.count .. "d" .. t.sides
+        else
+            value, text = t.flat, tostring(t.flat)
+        end
+        total = total + t.sign * value
+        local joiner = (t.sign < 0) and "-" or (i > 1 and "+" or "")
+        parts[#parts + 1] = joiner .. text
+    end
+    return total, table.concat(parts)
 end
 
 -- Rolls and announces: "(rolled 6d6: 23)" to the group channel, the same
@@ -188,7 +213,7 @@ end
 function Dice.RollToChat(notation)
     local total, canon = Dice.Roll(notation)
     if not total then
-        ns.Print("usage: roll XdY with an optional +Z/-Z - e.g. 6d6 or 2d8+3.")
+        ns.Print("usage: roll dice terms joined by + or - : 6d6, 2d8+3, 1d10+1d6.")
         return false
     end
     local line = "rolled " .. canon .. ": " .. total

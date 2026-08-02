@@ -457,7 +457,7 @@ local function PrintHelp()
         .. "share feats|r / |r" .. C_GOLD .. "share spells|r / |r" .. C_GOLD
         .. "share all|r for the active packs")
     Print("  " .. C_GOLD .. "/pmt systems|r - manage your system library (activate / delete)")
-    Print("  " .. C_GOLD .. "/pmt roll XdY|r - roll free dice (e.g. 6d6, 2d8+3) to group chat")
+    Print("  " .. C_GOLD .. "/pmt roll XdY|r - roll free dice (6d6, 2d8+3, 1d10+1d6) to group chat")
     Print("  " .. C_GOLD .. "/pmt rolls|r   - toggle public (party-visible) dice rolls")
     Print("  " .. C_GOLD .. "/pmt party|r   - live party overview (HP/Mana/AC of group members)")
     Print("  " .. C_GOLD .. "/pmt view <name>|r - view another player's character sheet")
