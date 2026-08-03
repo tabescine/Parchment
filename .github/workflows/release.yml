@@ -6,6 +6,11 @@
 #
 # The release is gated: the test suite must pass, and the tag must match the
 # .toc's "## Version:" line, so a stale version string can never ship.
+#
+# The same zip is then uploaded to CurseForge (project 1637964), tagged with
+# the game versions the .toc's "## Interface:" line declares and carrying the
+# GitHub release notes as its changelog. Needs the CF_API_KEY repo secret (a
+# CurseForge author API token); rotating the token means updating that secret.
 name: Release
 
 on:
@@ -76,3 +81,28 @@ jobs:
               --title "Parchment ${VERSION}" \
               --generate-notes
           fi
+
+      - name: Upload to CurseForge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+          CF_PROJECT_ID: "1637964"
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # The toc's "## Interface:" list maps straight to CurseForge
+          # game-version ids: the API's apiVersion field uses the same
+          # numbers (120007 = 12.0.7), so a patch bump stays a toc edit.
+          export WANTED=$(grep -m1 '^## Interface:' Parchment.toc | cut -d: -f2 | tr -d ' ')
+          export GAME_VERSIONS=$(curl -sf -H "X-Api-Token: ${CF_API_KEY}" \
+              "https://wow.curseforge.com/api/game/versions" \
+            | python3 -c 'import json,sys,os; want=set(os.environ["WANTED"].split(",")); ids=[v["id"] for v in json.load(sys.stdin) if v.get("apiVersion") in want]; assert ids, "no CurseForge game version matched "+str(want); print(json.dumps(ids))')
+          echo "game versions ${WANTED} -> ${GAME_VERSIONS}"
+          # The CurseForge changelog is the GitHub release body, so the two
+          # channels always tell the same story.
+          export CHANGELOG=$(gh release view "${GITHUB_REF_NAME}" --json body -q .body)
+          export DISPLAY_NAME="Parchment ${VERSION}"
+          python3 -c 'import json,os; print(json.dumps({"changelog": os.environ["CHANGELOG"], "changelogType": "markdown", "displayName": os.environ["DISPLAY_NAME"], "gameVersions": json.loads(os.environ["GAME_VERSIONS"]), "releaseType": "release"}))' > metadata.json
+          curl -sf -H "X-Api-Token: ${CF_API_KEY}" \
+            -F "metadata=<metadata.json" \
+            -F "file=@dist/Parchment-${VERSION}.zip" \
+            "https://wow.curseforge.com/api/projects/${CF_PROJECT_ID}/upload-file"
