@@ -234,3 +234,72 @@ local safe = ns.CharacterSheet.Compute(Char({ { item_id = "itm_x", equipped = tr
     system, poisoned)
 assert(safe.weapons[1].attack_total == 2 and safe.inventory.weapons[1].bonus == 0)
 assert(safe.inventory.weapons[1].attack_total == 2, "a poisoned bonus contributes nothing")
+
+-- Worn-armor modifier caps (ac_mod_cap): an equipped equipment piece may cap
+-- the AC attribute's contribution - heavy armor is cap 0, medium cap 2/3,
+-- absent means the full modifier. The lowest worn cap binds, a cap never
+-- raises a low modifier, and a stashed piece caps nothing. Needs nonzero
+-- modifiers, so the shared table is swapped and restored around the block.
+system.modifier_table = { 0, 1, 2, 3, 4, 5 }        -- score N -> N-1
+local armory = {
+    heavy  = { id = "heavy", name = "Heavy Plate", kind = "equipment",
+               ac_bonus = 8, ac_mod_cap = 0 },
+    medium = { id = "medium", name = "Scale Mail", kind = "equipment",
+               ac_bonus = 4, ac_mod_cap = 2 },
+    light  = { id = "light", name = "Leathers", kind = "equipment", ac_bonus = 1 },
+    cursed = { id = "cursed", name = "Cursed Girdle", kind = "equipment", ac_mod_cap = -7 },
+    broken = { id = "broken", name = "Broken Circlet", kind = "equipment", ac_mod_cap = 0 / 0 },
+}
+local function Nimble(inventory)
+    return { name = "Nimble", level = 1, attributes = { a = 6 },   -- +5 modifier
+             ac_attribute = "a", inventory = inventory }
+end
+
+-- Heavy armor suppresses the +5 entirely; its own ac_bonus still lands:
+-- 10 base + 0 (capped) + 8 plate.
+local plated = ns.CharacterSheet.Compute(Nimble({ { item_id = "heavy", equipped = true } }),
+    system, armory)
+assert(plated.derived.ac == 18, "heavy armor must suppress the modifier, got " .. plated.derived.ac)
+assert(plated.derived.ac_attribute_mod == 0, "the used modifier term is exposed post-cap")
+assert(plated.derived.ac_mod_cap.value == 0 and plated.derived.ac_mod_cap.source == "Heavy Plate")
+assert(plated.inventory.equipment[1].ac_mod_cap == 0, "the display entry carries its cap")
+
+-- Stashed, the same plate neither caps nor adds.
+local carried = ns.CharacterSheet.Compute(Nimble({ { item_id = "heavy", equipped = false } }),
+    system, armory)
+assert(carried.derived.ac == 15 and carried.derived.ac_mod_cap == nil)
+assert(carried.derived.ac_attribute_mod == 5)
+
+-- Layered pieces: the lowest worn cap binds and is the one named.
+local layered = ns.CharacterSheet.Compute(Nimble({
+    { item_id = "medium", equipped = true },
+    { item_id = "light", equipped = true },
+}), system, armory)
+assert(layered.derived.ac == 17, "10 + capped 2 + 4 mail + 1 leathers, got " .. layered.derived.ac)
+assert(layered.derived.ac_mod_cap.value == 2 and layered.derived.ac_mod_cap.source == "Scale Mail")
+
+-- A cap never raises: a modifier already below it passes through untouched.
+local modest = ns.CharacterSheet.Compute({
+    name = "Modest", level = 1, attributes = { a = 1 }, ac_attribute = "a",
+    inventory = { { item_id = "medium", equipped = true } },
+}, system, armory)
+assert(modest.derived.ac == 14 and modest.derived.ac_attribute_mod == 0,
+    "a +2 cap must not lift a +0 modifier")
+
+-- Hostile/hand-edited caps: a negative cap reads as 0 (a penalty belongs in
+-- ac_bonus), a NaN cap caps nothing at all.
+local girdled = ns.CharacterSheet.Compute(Nimble({ { item_id = "cursed", equipped = true } }),
+    system, armory)
+assert(girdled.derived.ac == 10, "a negative cap must read as 0, got " .. girdled.derived.ac)
+local circlet = ns.CharacterSheet.Compute(Nimble({ { item_id = "broken", equipped = true } }),
+    system, armory)
+assert(circlet.derived.ac == 15 and circlet.derived.ac_mod_cap == nil, "a NaN cap caps nothing")
+
+-- A wire snapshot's cap applies exactly like a library one - the shared-sheet
+-- path holds the same line as the local one.
+local wireCapped = ns.CharacterSheet.Compute(Nimble({
+    { item_id = "their_plate", equipped = true,
+      resolved = { name = "Borrowed Plate", kind = "equipment", ac_bonus = 2, ac_mod_cap = 0 } },
+}), system, {})
+assert(wireCapped.derived.ac == 12 and wireCapped.derived.ac_mod_cap.source == "Borrowed Plate")
+system.modifier_table = { 0 }

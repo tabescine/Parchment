@@ -141,7 +141,12 @@ local function MechanicsText(item)
         return item.weapon_id and (bonus .. " to " .. WeaponName(item.weapon_id) .. " attack rolls")
             or (bonus .. " attack (no weapon linked)")
     elseif item.kind == "equipment" then
-        return UI.Signed(tonumber(item.ac_bonus) or 0) .. " AC while equipped"
+        local text = UI.Signed(tonumber(item.ac_bonus) or 0) .. " AC while equipped"
+        local cap = tonumber(item.ac_mod_cap)
+        if cap then
+            text = text .. ", caps the AC attribute modifier at " .. UI.Signed(cap)
+        end
+        return text
     end
     return "carried in stacks of " .. (tonumber(item.default_count) or 1)
 end
@@ -173,6 +178,16 @@ local function ClampBonus(value)
     return math.max(-BONUS_CAP, math.min(BONUS_CAP, n))
 end
 
+-- The AC modifier cap is optional: nil means "no cap" (light armor, plain
+-- clothing), so unlike ClampBonus this preserves nil instead of coercing to 0,
+-- and a cap is never negative (heavy armor is cap 0).
+local function ClampCap(value)
+    if value == nil then return nil end
+    local n = tonumber(value)
+    if not n or n ~= n then return nil end
+    return math.max(0, math.min(BONUS_CAP, math.floor(n)))
+end
+
 -- Coerces a draft into the shape a library item has, dropping the fields the
 -- chosen kind does not own: switching kind mid-edit must not leave an AC bonus
 -- on a weapon, which no page would then show and no mechanic would read. `id`
@@ -186,13 +201,14 @@ local function Normalize(d)
     if d.kind == "weapon" then
         d.bonus = ClampBonus(d.bonus)
         if type(d.weapon_id) ~= "string" then d.weapon_id = nil end
-        d.ac_bonus, d.default_count = nil, nil
+        d.ac_bonus, d.ac_mod_cap, d.default_count = nil, nil, nil
     elseif d.kind == "equipment" then
         d.ac_bonus = ClampBonus(d.ac_bonus)
+        d.ac_mod_cap = ClampCap(d.ac_mod_cap)
         d.bonus, d.weapon_id, d.default_count = nil, nil, nil
     else
         d.default_count = ns.Items.ClampCount(d.default_count) or 1
-        d.bonus, d.weapon_id, d.ac_bonus = nil, nil, nil
+        d.bonus, d.weapon_id, d.ac_bonus, d.ac_mod_cap = nil, nil, nil, nil
     end
     return d
 end
@@ -258,12 +274,19 @@ local function FillDetails(f, d)
     else
         f.linkBtn:Hide()
         f.stepperA:Show()
-        f.rowBLabel:Hide()
-        f.stepperB:Hide()
         if d.kind == "equipment" then
             f.rowALabel:SetText("AC bonus")
             f.stepperA:SetText(UI.Signed(d.ac_bonus or 0))
+            -- Row B is the optional modifier cap: "(none)" means the wearer
+            -- keeps their full AC attribute modifier (light armor); 0 is heavy
+            -- armor, 2/3 the usual medium-armor caps.
+            f.rowBLabel:Show()
+            f.rowBLabel:SetText("Modifier cap")
+            f.stepperB:Show()
+            f.stepperB:SetText(d.ac_mod_cap and UI.Signed(d.ac_mod_cap) or "(none)")
         else
+            f.rowBLabel:Hide()
+            f.stepperB:Hide()
             f.rowALabel:SetText("Count per stack")
             f.stepperA:SetText(tostring(d.default_count or 1))
         end
@@ -558,8 +581,20 @@ local function WireDetails(f)
         Refresh(f)
     end)
     f.stepperB:OnStep(function(delta)
-        if not f.draft then return end
-        f.draft.bonus = ClampBonus((f.draft.bonus or 0) + delta)
+        local d = f.draft
+        if not d then return end
+        if d.kind == "equipment" then
+            -- The cap steps through its "off" state below zero:
+            -- (none) -> +0 -> +1 -> ... and back down past 0 to (none).
+            if d.ac_mod_cap == nil then
+                if delta > 0 then d.ac_mod_cap = 0 end
+            else
+                local n = d.ac_mod_cap + delta
+                d.ac_mod_cap = n < 0 and nil or math.min(BONUS_CAP, n)
+            end
+        else
+            d.bonus = ClampBonus((d.bonus or 0) + delta)
+        end
         Refresh(f)
     end)
 
@@ -744,6 +779,9 @@ local function FillRowTip(row, id, item)
         end
     elseif item.kind == "equipment" then
         lines[#lines + 1] = { "AC bonus", UI.Signed(tonumber(item.ac_bonus) or 0) }
+        if tonumber(item.ac_mod_cap) then
+            lines[#lines + 1] = { "Modifier cap", UI.Signed(tonumber(item.ac_mod_cap)) }
+        end
     end
     -- The description goes in whole: it is schema-capped at 512 characters and
     -- a plain string line wraps in the tooltip, so nothing needs cutting.

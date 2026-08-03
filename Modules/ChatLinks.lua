@@ -216,6 +216,9 @@ function CL.Item(item)
     if type(item.ac_bonus) == "number" and item.ac_bonus ~= 0 then
         bits[#bits + 1] = (item.ac_bonus > 0 and "+" or "") .. item.ac_bonus .. " AC"
     end
+    if type(item.ac_mod_cap) == "number" then
+        bits[#bits + 1] = "modifier cap " .. (item.ac_mod_cap >= 0 and "+" or "") .. item.ac_mod_cap
+    end
     if #bits > 0 then lines[#lines + 1] = { text = table.concat(bits, "  -  "), color = "gold" } end
     if item.description and item.description ~= "" then
         lines[#lines + 1] = { text = item.description, color = "text", wrap = true }

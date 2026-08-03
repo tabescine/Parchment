@@ -210,6 +210,8 @@ end
 assert(Schema.ValidateItem(Item({ weapon_id = "w1", bonus = 2, icon = "inv_sword_04",
     description = "Warm.", version = 3 })))
 assert(Schema.ValidateItem(Item({ kind = "equipment", ac_bonus = 1 })))
+assert(Schema.ValidateItem(Item({ kind = "equipment", ac_bonus = 8, ac_mod_cap = 0 })),
+    "heavy armor (cap 0) must validate")
 assert(Schema.ValidateItem(Item({ kind = "gear", default_count = 10 })))
 ok, issues = Schema.ValidateItem(Item({ kind = "hat" }))
 assert(not ok and findIssue(issues, "unknown kind 'hat'"))
@@ -219,6 +221,12 @@ ok, issues = Schema.ValidateItem(Item({ bonus = 1 / 0 }))
 assert(not ok and findIssue(issues, "not a finite number"), "inf bonus not reported")
 ok, issues = Schema.ValidateItem(Item({ ac_bonus = 0 / 0 }))
 assert(not ok and findIssue(issues, "not a finite number"), "NaN ac_bonus not reported")
+ok, issues = Schema.ValidateItem(Item({ ac_mod_cap = 0 / 0 }))
+assert(not ok and findIssue(issues, "not a finite number"), "NaN ac_mod_cap not reported")
+ok, issues = Schema.ValidateItem(Item({ ac_mod_cap = -1 }))
+assert(not ok and findIssue(issues, "should not be negative"), "negative ac_mod_cap not reported")
+ok, issues = Schema.ValidateItem(Item({ ac_mod_cap = 1000 }))
+assert(not ok and findIssue(issues, "outside"), "an absurd ac_mod_cap must be reported")
 ok, issues = Schema.ValidateItem(Item({ bonus = 500 }))
 assert(not ok and findIssue(issues, "outside"), "an absurd bonus must be reported")
 ok, issues = Schema.ValidateItem(Item({ default_count = 1e9 }))
@@ -279,6 +287,9 @@ assert(Schema.ValidateCharacter(resolvedChar({
     name = "Borrowed Axe", kind = "weapon", icon = "inv_axe_01", weapon_id = "w1", bonus = 3,
 }), nil))
 assert(Schema.ValidateCharacter(resolvedChar({}), nil), "a snapshot may carry nothing at all")
+assert(Schema.ValidateCharacter(resolvedChar({
+    name = "Borrowed Plate", kind = "equipment", ac_bonus = 2, ac_mod_cap = 0,
+}), nil), "a capped-armor snapshot must validate")
 for _, bad in ipairs({
     { kind = "hat" },
     { name = string.rep("x", 65) },
@@ -287,6 +298,8 @@ for _, bad in ipairs({
     { bonus = 1 / 0 },
     { bonus = 9999 },
     { ac_bonus = -1000 },
+    { ac_mod_cap = -1 },
+    { ac_mod_cap = 1 / 0 },
     { bonus = "lots" },
     { weapon_id = 5 },
 }) do

@@ -43,7 +43,7 @@ local MAX_ENTRIES = 50
 -- The item fields a shared inventory entry carries as its display snapshot:
 -- what the receiver needs to render the row and apply its bonuses, and nothing
 -- else (no description, no version - the item itself is not being transferred).
-local RESOLVED_FIELDS = { "name", "kind", "icon", "weapon_id", "bonus", "ac_bonus" }
+local RESOLVED_FIELDS = { "name", "kind", "icon", "weapon_id", "bonus", "ac_bonus", "ac_mod_cap" }
 
 -- Targets we are awaiting a reply from (prevents request pile-ups).
 local pending = {}
