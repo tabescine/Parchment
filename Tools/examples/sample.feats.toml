@@ -38,7 +38,8 @@ rank_attribute_req = [5, 6, 7]
 #                   rank rolls; the sheet row then rolls it on click
 #   attribute_req - overrides rank_attribute_req for this rank
 #   description   - the rules text
-#   effects       - optional mechanical effects, same vocabulary as perks
+#   effects       - optional mechanical effects (shared vocabulary - see the
+#                   system file's footer)
 # -----------------------------------------------------------------------------
 [[lines]]
 id = "iron_grip"
