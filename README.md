@@ -91,7 +91,7 @@ Type `/pmt` (or `/parchment`) for the full command list:
 
 | Command | Action |
 |---|---|
-| `/pmt hub` | The Parchment menu (characters, settings, ...) - also minimap left-click |
+| `/pmt hub` | The Parchment menu (characters, settings, ...) - also via minimap context-menu |
 | `/pmt characters` | Manage characters (select / delete / create) |
 | `/pmt sheet` | Open the character sheet |
 | `/pmt combat` | Open the combat tracker (`/pmt init` still works) |
