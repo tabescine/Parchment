@@ -1,5 +1,6 @@
 ## Interface: 120007, 120100
 ## Title: Parchment
+## IconTexture: Interface\AddOns\Parchment\Media\logo.png
 ## Notes: System-agnostic TTRPG toolkit - character sheets, initiative, feats and spellbooks.
 ## Author: Parchment
 ## Version: 0.3.0
