@@ -20,6 +20,16 @@
       "ac_bonus": 1,
       "version": 1
     },
+    "itm_4": {
+      "id": "itm_4",
+      "name": "Guard's Plate",
+      "kind": "equipment",
+      "description": "Municipal-issue plate, sized for whoever stands the watch.",
+      "icon": "inv_chest_plate04",
+      "ac_bonus": 3,
+      "ac_mod_cap": 0,
+      "version": 1
+    },
     "itm_3": {
       "id": "itm_3",
       "name": "Arrows",

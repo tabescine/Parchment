@@ -431,12 +431,19 @@ local function RenderOverview(content, sheet, ctx)
     -- differences from the structural parts.
     local acEquip = d.ac_equipment
     local acFromGear = acEquip and acEquip.total or 0
+    -- The modifier term the total actually used: worn armor may have capped it
+    -- (d.ac_mod_cap names the binding piece), so the raw attribute modifier
+    -- would misreport both this term and the effect residue.
+    local acModUsed = d.ac_attribute_mod or aMod(d.ac_attribute)
+    local acCapped = d.ac_mod_cap and acModUsed < aMod(d.ac_attribute)
     Row(content, "Armor Class", tostring(d.ac), 0, C_GOLD, Tip("Armor Class",
         "base " .. cfg.ac_base .. " + " .. aName(d.ac_attribute) .. " modifier "
-        .. Signed(aMod(d.ac_attribute))
+        .. Signed(acModUsed)
+        .. (acCapped and (" (capped from " .. Signed(aMod(d.ac_attribute)) .. " by "
+            .. d.ac_mod_cap.source .. ")") or "")
         .. (acEquip and (" " .. Signed(acFromGear) .. " equipment ("
             .. table.concat(acEquip.sources, ", ") .. ")") or "")
-        .. fxTerm(d.ac - cfg.ac_base - aMod(d.ac_attribute) - acFromGear)))
+        .. fxTerm(d.ac - cfg.ac_base - acModUsed - acFromGear)))
     -- Initiative is gold (interactive): clicking rolls it and joins combat,
     -- via the same path as the combat window's Me/Submit button.
     Row(content, "Initiative", Signed(d.initiative), 0, C_GOLD, Tip("Initiative",
@@ -762,6 +769,10 @@ local function ItemTip(entry, kind, own)
         elseif kind == "equipment" then
             if entry.ac_bonus ~= 0 then
                 tt:AddLine("Adds " .. Signed(entry.ac_bonus) .. " AC while equipped.", 0.9, 0.9, 0.9)
+            end
+            if entry.ac_mod_cap then
+                tt:AddLine("Caps the AC attribute modifier at " .. Signed(entry.ac_mod_cap)
+                    .. " while equipped (the lowest worn cap wins).", 0.9, 0.9, 0.9, true)
             end
             tt:AddLine(entry.equipped and "Equipped." or "Stashed.", 0.56, 0.78, 1)
         else

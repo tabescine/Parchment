@@ -44,7 +44,10 @@
 -- proficiency total + the item's bonus), so a character holding two blades
 -- rolls the one actually swung. Equipment ac_bonus values sum into derived.ac
 -- through their own `ac_equipment` term, kept separate so the AC tooltip can
--- name the equipment share.
+-- name the equipment share. Equipment may also cap the AC attribute's
+-- contribution while worn (ac_mod_cap - heavy armor is cap 0, medium cap 2/3,
+-- absent means the full modifier applies); the lowest worn cap binds and is
+-- surfaced as derived.ac_mod_cap.
 --
 -- Reads from: ns.GetModifier, ns.GetHitDie, ns.GetAccomplishmentBonus,
 --   ns.Items.Resolve, system.
@@ -261,6 +264,18 @@ local function BonusValue(value)
     return n
 end
 
+-- Coerces an item's ac_mod_cap into a usable cap: a whole number in [0, 99],
+-- or nil when the field is absent or unusable. Reads the same hand-editable
+-- and wire data as BonusValue, so garbage must coerce, never throw. A negative
+-- cap reads as 0 - a cap limits the modifier's benefit, a penalty belongs in
+-- ac_bonus.
+local function CapValue(value)
+    if value == nil then return nil end
+    local n = tonumber(value)
+    if not n or n ~= n or n == math.huge or n == -math.huge then return nil end
+    return math.max(0, math.min(99, math.floor(n)))
+end
+
 -- The bare attack total for one system weapon: the best of its governing
 -- attribute(s) modifiers + accomplishment + global attack-roll effects. The one
 -- place that number is computed, so a weapon proficiency row and the inventory
@@ -296,9 +311,13 @@ end
 --                 and count without knowing how resolution worked
 --   acEquipment - { total, sources } from equipped equipment, or nil when no
 --                 equipped piece carries an ac_bonus
+--   acCap       - { value, source } for the lowest ac_mod_cap among equipped
+--                 equipment (the binding cap), or nil when nothing worn caps
+--                 the AC attribute modifier
 local function ResolveInventory(char, system, itemLib, weaponAttack)
     local inventory = { weapons = {}, equipment = {}, gear = {} }
     local acTotal, acSources = 0, {}
+    local acCap
 
     for index, raw in ipairs(AsList(char.inventory)) do
         local state = AsList(raw)                  -- the per-character half
@@ -332,9 +351,16 @@ local function ResolveInventory(char, system, itemLib, weaponAttack)
         elseif kind == "equipment" then
             entry.equipped = state.equipped and true or false
             entry.ac_bonus = BonusValue(item.ac_bonus)
+            entry.ac_mod_cap = CapValue(item.ac_mod_cap)
             if entry.equipped and entry.ac_bonus ~= 0 then
                 acTotal = acTotal + entry.ac_bonus
                 acSources[#acSources + 1] = entry.name
+            end
+            -- The most restrictive worn cap binds; ties keep the first piece,
+            -- so the tooltip names one garment, deterministically.
+            if entry.equipped and entry.ac_mod_cap
+                and (not acCap or entry.ac_mod_cap < acCap.value) then
+                acCap = { value = entry.ac_mod_cap, source = entry.name }
             end
             inventory.equipment[#inventory.equipment + 1] = entry
         else
@@ -349,7 +375,7 @@ local function ResolveInventory(char, system, itemLib, weaponAttack)
     end
 
     local acEquipment = #acSources > 0 and { total = acTotal, sources = acSources } or nil
-    return inventory, acEquipment
+    return inventory, acEquipment, acCap
 end
 
 -- Computes the full sheet for a character against a system definition.
@@ -491,7 +517,7 @@ function CharacterSheet.Compute(char, system, itemLib)
     -- Inventory, resolved against the library and the weapon totals above:
     -- each weapon item ends up with its own attack total, and equipped
     -- equipment adds to AC in `derived`.
-    local inventory, acEquipment = ResolveInventory(char, system, itemLib, weaponAttack)
+    local inventory, acEquipment, acModCap = ResolveInventory(char, system, itemLib, weaponAttack)
 
     -- Derived stats. Which attributes drive hit die, mana, movement etc. comes
     -- from the system's derived_stats config; an unset coupling contributes 0,
@@ -532,6 +558,10 @@ function CharacterSheet.Compute(char, system, itemLib)
     local acAttr = EffectiveAttr(char.ac_attribute, cfg.ac_attributes)
     local initAttr = EffectiveAttr(char.init_attribute, cfg.init_attributes)
     local acMod = modifier[acAttr] or 0
+    -- Worn armor may cap the AC attribute's contribution (heavy armor caps at
+    -- 0, medium at +2/+3). The cap only limits the benefit: a modifier already
+    -- below it - negative included - passes through untouched.
+    local acModWorn = acModCap and math.min(acMod, acModCap.value) or acMod
     local initMod = modifier[initAttr] or 0
     local moveMod = cfg.movement_attribute and (modifier[cfg.movement_attribute] or 0) or 0
     local hitDieMod = cfg.hit_die_attribute and (modifier[cfg.hit_die_attribute] or 0) or 0
@@ -558,12 +588,17 @@ function CharacterSheet.Compute(char, system, itemLib)
             base = manaBase,
             max = manaBase + fx.maxMana,
         },
-        ac = cfg.ac_base + acMod + fx.ac + (acEquipment and acEquipment.total or 0),
+        ac = cfg.ac_base + acModWorn + fx.ac + (acEquipment and acEquipment.total or 0),
         -- The equipped-equipment share of AC, named so the tooltip can break it
         -- out ("+1 equipment (Chainmail)"). Absent when no equipped piece
         -- carries an ac_bonus - a character without equipment reads as before.
         ac_equipment = acEquipment,
         ac_attribute = acAttr,       -- the EFFECTIVE attribute (pick or best candidate)
+        -- The modifier term the total actually used (post-cap), plus the
+        -- binding cap itself ({ value, source }) when one is worn - so the
+        -- tooltip can show the capped number and name the garment that did it.
+        ac_attribute_mod = acModWorn,
+        ac_mod_cap = acModCap,
         initiative = initMod + fx.initiative,
         init_attribute = initAttr,   -- ditto
         movement = cfg.movement_base + math.max(0, moveMod) * cfg.movement_per_step + fx.movement,
