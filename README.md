@@ -2,11 +2,11 @@
 
 A system-agnostic tabletop-RPG toolkit for World of Warcraft. Run your own
 TTRPG campaign inside the game client: character sheets, an initiative
-tracker, perk trees, dice rolls, and DM-to-player syncing - all driven by a
-ruleset *you* import, not one the addon dictates.
+tracker, feats and spellbooks, dice rolls, and DM-to-player syncing - all
+driven by a ruleset *you* import, not one the addon dictates.
 
 Parchment ships with **no game system**. You provide one as JSON or TOML
-(attributes, skills, perks, traits, modifier tables), import it in-game, and
+(attributes, skills, weapons, traits, modifier tables), import it in-game, and
 every window - sheet math included - adapts to it.
 
 ## Features
@@ -18,11 +18,20 @@ every window - sheet math included - adapts to it.
 - **Character creation** - a guided wizard (`/pmt new`: Identity → Traits →
   Attributes → Proficiencies → Review) and a freeform point-buy
   editor (`/pmt edit`) with live warnings, plus level-up support.
-- **Perk trees** - a viewer/builder for your system's perk spheres with
-  prerequisites, exclusivity, ranks, perk-driven choices, homebrew perks,
-  and live search across every sphere (by name or description). Homebrew
-  perks are written in game with a stepped wizard (`/pmt perkwizard`:
-  Basics → Effects → Review) whose effects fold into the sheet's totals.
+- **Feats & spells** - browse-and-learn windows driven by *packs*: a feats
+  pack (ability lines with ranks) and a spells pack (schools and rank-gated
+  spells) imported separately from the system and paired to it, so a ruleset
+  and its ability collections can evolve independently. Feat ranks, known
+  spells and homebrew all spend from one shared per-level pick budget; both
+  windows have live search. Homebrew feats and spells are written in game
+  with a stepped wizard whose effects fold into the sheet's totals.
+- **Dice** - click-to-roll on skills, saves, weapons, feats and spells
+  (rolls announce their source), plus a free roller for arbitrary dice:
+  `/pmt roll 2d8+3`, including sums of terms like `1d10+1d6-2`.
+- **Chat links** - TRP3-style links: shift-click a feat, spell, homebrew
+  entry or item to put a clickable token in chat; readers click it to fetch
+  the content from you and read it in a link viewer. Group members without
+  Parchment just see plain text.
 - **Items & inventory** - a shared item library (weapons, equipment, gear)
   written in game (`/pmt items`) and handed to any character: equip/stash
   toggles and gear counters on the sheet, each equipped weapon rolling its own
@@ -35,16 +44,17 @@ every window - sheet math included - adapts to it.
   submit their own rolls and can end their own turn.
 - **Party tools** - live party overview (HP/Mana/AC), view another player's
   sheet on demand, dice rolls that are either private or party-visible.
-- **DM sharing with consent** - a DM can broadcast the active system to the
+- **DM sharing with consent** - a DM can broadcast the active system and the
+  active feat/spell packs (`/pmt share`, `share feats`, `share all`) to the
   group; receivers are prompted before anything replaces their own setup, and
   every received system is kept in a local library (`/pmt systems`). Sync
   requires compatible addon versions - mismatched messages are ignored with a
   chat notice saying who needs to update.
-- **Import/export** - paste a system, a character or your item library as JSON
-  or TOML in-game (comments and all), export back out the same way. Imports
-  merge, so a paste never wipes what it does not mention. No external tooling
-  needed; an optional offline converter lives in `Tools/` for file-based
-  workflows and recovery.
+- **Import/export** - paste a system, a character, a feats/spells pack or
+  your item library as JSON or TOML in-game (comments and all), export back
+  out the same way. Imports merge, so a paste never wipes what it does not
+  mention. No external tooling needed; an optional offline converter lives in
+  `Tools/` for file-based workflows and recovery.
 
 ## Installation
 
@@ -68,9 +78,10 @@ harmlessly - WoW only loads what `Parchment.toc` lists.
 
 ## Quick start
 
-1. `/pmt import` - paste a system, character or item library (JSON or TOML). A small
-   public-domain sample lives in [`Tools/examples/`](Tools/examples/) in the
-   repository if you just want to try it.
+1. `/pmt import` - paste a system, feats/spells pack, item library or
+   character (JSON or TOML), in that order. A small public-domain sample
+   lives in [`Tools/examples/`](Tools/examples/) in the repository if you
+   just want to try it.
 2. `/pmt new` - create a character with the guided wizard.
 3. `/pmt sheet` - open your character sheet.
 4. Playing with a group? The DM toggles `/pmt dm` and uses `/pmt share` to
@@ -84,16 +95,17 @@ Type `/pmt` (or `/parchment`) for the full command list:
 | `/pmt characters` | Manage characters (select / delete / create) |
 | `/pmt sheet` | Open the character sheet |
 | `/pmt combat` | Open the combat tracker (`/pmt init` still works) |
-| `/pmt perks` | Open the perk tree viewer |
-| `/pmt perkwizard` | Write a homebrew perk for the active character |
+| `/pmt feats` | Browse and learn feats (homebrew included) |
+| `/pmt spellbook` | Browse and learn spells (`/pmt spells` works too) |
 | `/pmt items` | Browse the item library (create, edit, hand out items) |
 | `/pmt new` | Create a character (guided wizard) |
 | `/pmt edit` | Open the character editor |
 | `/pmt import` | Open the import/export dialog |
 | `/pmt config` | Open settings |
-| `/pmt dm` | Toggle DM mode (broadcast vs receive sync) |
-| `/pmt share` | DM: send your system to the group |
-| `/pmt systems` | Choose the active system (`delete` to remove one) |
+| `/pmt dm` | Toggle DM mode (`dm who` / `dm accept <name>` manage who you recognize) |
+| `/pmt share` | DM: send your system to the group (`share feats` / `spells` / `all` for the active packs) |
+| `/pmt systems` | Manage the system library (activate / delete) |
+| `/pmt roll XdY` | Roll free dice (`6d6`, `2d8+3`, `1d10+1d6`) |
 | `/pmt rolls` | Toggle public (party-visible) dice rolls |
 | `/pmt party` | Live party overview (HP/Mana/AC) |
 | `/pmt view <name>` | View another player's character sheet |
@@ -113,21 +125,24 @@ raid night.
 ## Bring your own system
 
 A system definition declares your ruleset as data: attributes, a modifier
-table, skills, saving throws, weapons, racial/origin traits, perk trees, and
-an optional `derived_stats` block that tells Parchment which attributes drive
-HP, mana, AC, movement, and so on. Nothing is hard-coded - see
+table, skills, saving throws, weapons, racial/origin traits, a pick budget
+for feats/spells (`progression`), and an optional `derived_stats` block that
+tells Parchment which attributes drive HP, mana, AC, movement, and so on.
+Feats and spells live in separate *pack* files paired to the system by name,
+so they import, export and share independently. Nothing is hard-coded - see
 [`Tools/examples/sample.system.toml`](Tools/examples/sample.system.toml) for
 the fully annotated format reference (every feature appears once, with a
-comment), `sample.character.toml` for its character-side counterpart, and
+comment), `sample.feats.toml` / `sample.spells.toml` for the packs,
+`sample.character.toml` for the character-side counterpart, and
 `sample.items.toml` for the item library that character's inventory points at.
-Import all three with `/pmt import`. The repository's `Tools/` folder (not part of
-the release zip) also holds an optional offline converter for
+Import them all with `/pmt import`. The repository's `Tools/` folder (not part
+of the release zip) also holds an optional offline converter for
 version-controlled rulesets and SavedVariables recovery.
 
 ## Development
 
 Parchment keeps its rules logic free of WoW APIs, so the data layer, codecs,
-schema, and the character/perk engines run - and are tested - under plain
+schema, and the character/feat/spell engines run - and are tested - under plain
 Lua 5.1, no game client or dependencies needed:
 
 ```sh
@@ -135,8 +150,9 @@ lua5.1 Tests/run.lua
 ```
 
 The suite covers the data API and migrations, schema validation, the
-JSON/TOML codecs, sheet computation, the perk engine, comm version gating,
-the context-menu integration, and an end-to-end import of the sample files
+JSON/TOML codecs, sheet computation, the feat/spell/pick engines, homebrew,
+dice parsing, chat links, comm version gating and payload hardening, the
+context-menu integration, and an end-to-end import of the sample files
 (whose documented numbers double as regression expectations). CI
 (`.github/workflows/ci.yml`) runs a syntax check plus this suite. UI code
 (frames, menus beyond their logic) is exercised in-game.
