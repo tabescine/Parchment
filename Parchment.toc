@@ -3,7 +3,7 @@
 ## IconTexture: Interface\AddOns\Parchment\Media\logo.png
 ## Notes: System-agnostic TTRPG toolkit - character sheets, initiative, feats and spellbooks.
 ## Author: Parchment
-## Version: 0.3.0
+## Version: 0.3.2
 ## SavedVariables: ParchmentSystemDB, ParchmentCharDB, ParchmentItemDB, ParchmentPackDB, ParchmentDB
 
 # Embedded libraries (load first so LibStub and the Ace3 modules exist).
