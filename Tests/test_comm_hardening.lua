@@ -74,6 +74,27 @@ assert(cnt == 2, "after the interval the next SYSTEM is accepted")
 wire.receive("Parchment", W({ t = "SYSTEM", v = {}, ver = "0.1.0" }), "PARTY", "Carol")
 assert(cnt == 3, "the rate limit must be keyed per sender")
 
+-- The amplifier types are rate-limited too. A REQ is ~20 bytes in and up to a
+-- ~100 KB serialized, compressed sheet out; a DMROLE prints, shows a popup and
+-- (when we are the DM) whispers a counter-claim per claim - a flood the sender
+-- would otherwise reflect off us at their own rate.
+local reqs, claims = 0, 0
+ns.Comm.On("REQ", function() reqs = reqs + 1 end)
+ns.Comm.On("DMROLE", function() claims = claims + 1 end)
+NOW = 100
+wire.receive("Parchment", W({ t = "REQ", v = {}, ver = "0.1.0" }), "WHISPER", "Alice")
+wire.receive("Parchment", W({ t = "REQ", v = {}, ver = "0.1.0" }), "WHISPER", "Alice")
+assert(reqs == 1, "a second REQ within the interval must be rate-limited")
+NOW = 110
+wire.receive("Parchment", W({ t = "REQ", v = {}, ver = "0.1.0" }), "WHISPER", "Alice")
+assert(reqs == 2, "after the interval the next REQ is accepted")
+wire.receive("Parchment", W({ t = "DMROLE", v = {}, ver = "0.1.0" }), "PARTY", "Alice")
+wire.receive("Parchment", W({ t = "DMROLE", v = {}, ver = "0.1.0" }), "PARTY", "Alice")
+assert(claims == 1, "a second DMROLE within the interval must be rate-limited")
+NOW = 130
+wire.receive("Parchment", W({ t = "DMROLE", v = {}, ver = "0.1.0" }), "PARTY", "Alice")
+assert(claims == 2, "after the interval the next DMROLE is accepted")
+
 -- A type with no configured interval is never rate-limited.
 local pings = 0
 ns.Comm.On("PING", function() pings = pings + 1 end)
@@ -96,6 +117,16 @@ UnitName = function(u)
     if u == "party1" then return "Friend" end
     return nil
 end
+-- With a roster available, membership is checkable: Friend is in the party,
+-- Ghost is not.
+assert(ns.Comm.InGroup("Friend") and ns.Comm.InGroup("Me-Realm"), "group members must pass")
+assert(not ns.Comm.InGroup("Ghost"), "a non-member must not pass the membership gate")
+
+-- The party vitals cache is keyed by sender too, so the roster prune hands
+-- Party the set of names still in the group (guarded - Party may not be loaded).
+local pruned
+ns.Party = { PruneDeparted = function(keep) pruned = keep end }
+
 local base = #printed
 wire.receive("Parchment", W({ t = "SYSTEM", v = {}, ver = "9.9.9" }), "PARTY", "Ghost")
 assert(#printed == base + 1, "a first version mismatch should warn")
@@ -105,3 +136,10 @@ assert(wire.events.GROUP_ROSTER_UPDATE, "the roster prune was not registered")
 wire.events.GROUP_ROSTER_UPDATE()
 wire.receive("Parchment", W({ t = "SYSTEM", v = {}, ver = "9.9.9" }), "PARTY", "Ghost")
 assert(#printed == base + 2, "a departed peer can be warned again after pruning")
+assert(pruned and pruned.friend and pruned.me, "the roster prune must reach Party's vitals cache")
+assert(not pruned.ghost, "a departed sender must not be in the keep set")
+
+-- Leave the roster APIs as the later test files expect to find them (absent):
+-- every file installs the globals it needs itself.
+GetNumGroupMembers, UnitExists = nil, nil
+UnitName = function() return "Me" end

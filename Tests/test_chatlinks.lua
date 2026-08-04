@@ -5,6 +5,11 @@ local T = dofile((TEST_ROOT or "") .. "Tests/wow_stubs.lua")
 T.InstallLifecycleStubs({})
 local ns = T.load({}, "Core.lua")
 T.load(ns, "Modules/Spells.lua")
+-- Item payloads summarize effects via ns.Widgets.EffectSummary, which reads
+-- the effect vocabulary and the UI's sign formatter.
+T.load(ns, "UI/Window.lua")
+T.load(ns, "UI/Widgets.lua")
+T.load(ns, "Modules/CharacterSheet.lua")
 
 -- Comm stub capturing whispers and letting us fire handlers.
 local handlers, whispers = {}, {}
@@ -83,6 +88,19 @@ payload = CL.Item({ name = "Dagger +1", kind = "weapon", weapon_name = "Dagger",
 assert(payload.title == "Dagger +1")
 assert(payload.lines[1].text:find("Weapon") and payload.lines[1].text:find("+1 attack")
     and payload.lines[1].text:find("for Dagger"), payload.lines[1].text)
+assert(payload.icon == nil, "an iconless item must not invent one")
+
+-- An item's icon rides as its own payload field, and each effect becomes a
+-- line under a "While equipped:" header, before the description.
+payload = CL.Item({ name = "Sentry Ring", kind = "equipment", icon = "inv_jewelry_ring_03",
+    effects = { { type = "save", id = "vit", value = 1 }, { type = "initiative", value = 2 } },
+    description = "Watchful." })
+assert(payload.icon == "inv_jewelry_ring_03")
+assert(payload.lines[1].text == "Equipment")
+assert(payload.lines[2].text == "While equipped:" and payload.lines[2].color == "blue")
+assert(payload.lines[3].text == "- Saving throw: Vitality  +1", payload.lines[3].text)
+assert(payload.lines[4].text == "- Initiative  +2", payload.lines[4].text)
+assert(payload.lines[5].text == "Watchful.")
 
 -- SanitizeAnswer: caps sizes, strips escapes, normalizes colors, keeps
 -- `unknown`; garbage shapes are nil.
@@ -103,6 +121,17 @@ assert(CL.SanitizeAnswer("nope") == nil)
 assert(CL.SanitizeAnswer({ id = 5 }) == nil)
 assert(CL.SanitizeAnswer({ id = "X:1", title = nil }) == nil)
 
+-- A received icon is bounded like the item schema's: plain texture names
+-- pass, anything path-shaped, escaped, overlong or non-string is dropped
+-- (the answer survives, iconless).
+assert(CL.SanitizeAnswer({ id = "X:1", title = "T", icon = "inv_sword_04" }).icon
+    == "inv_sword_04")
+for _, evil in ipairs({ "..\\..\\Interface\\evil", "Interface/Icons/x", "a|cff00ff00b",
+    string.rep("i", 65), 5, true }) do
+    assert(CL.SanitizeAnswer({ id = "X:1", title = "T", icon = evil }).icon == nil,
+        "a hostile icon survived sanitizing: " .. tostring(evil))
+end
+
 -- LINKQ answers from the registry; unknown ids get an expiry answer.
 whispers = {}
 handlers.LINKQ({ id = id1 }, "Asker")
@@ -112,6 +141,11 @@ handlers.LINKQ({ id = "gone:9" }, "Asker")
 assert(whispers[2].payload.unknown == true)
 handlers.LINKQ("garbage", "Asker")
 assert(#whispers == 2, "garbage question must be dropped silently")
+
+-- A stored payload's icon travels in the answer.
+local iconId = CL.Store({ title = "Ring", icon = "inv_jewelry_ring_03", lines = {} })
+handlers.LINKQ({ id = iconId }, "Asker")
+assert(whispers[3].payload.icon == "inv_jewelry_ring_03", "the answer must carry the icon")
 
 -- LINKA renders only through the UI seam, sanitized.
 local shown

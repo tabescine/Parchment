@@ -12,7 +12,9 @@
 -- Sync is handled by the UI layer: the DM broadcasts state (INIT, via
 -- WireState so NPC hit points never cross the wire) and players submit their
 -- own rolls back (INITSUBMIT); SetState applies a received state and accepts
--- only name/init/isNPC, so remote data cannot smuggle fields in either.
+-- only name/init/isNPC, so remote data cannot smuggle fields in either. It
+-- also caps the number of combatants (MAX_COMBATANTS) and their name lengths
+-- (MAX_NAME): the comm layer bounds a payload's bytes, not its element count.
 --
 -- A player submission is bound to its sender: SubmitFor records the submitter
 -- as the combatant's `owner` (DM-private, stripped from WireState) and refuses a
@@ -39,6 +41,17 @@ local SUBMIT_MIN, SUBMIT_MAX = -999, 999
 -- wire paths hold the same line. (A multi-byte char may be cut mid-sequence -
 -- cosmetic at worst, and only on names this long.)
 local MAX_NAME = 64
+
+-- Cap on how many combatants a received order may hold. The comm layer bounds
+-- a payload's decompressed BYTES, not its element count, and combatants
+-- compress well: ten thousand of them are a few tens of KB on the wire, i.e.
+-- comfortably under every existing cap. Each one would persist in the
+-- SavedVariables and become a frame the UI can never destroy, so the count
+-- needs its own line. A tabletop encounter runs a few dozen rows at most; 200
+-- leaves an order of magnitude of headroom and still bounds the damage.
+-- UI/InitiativeUI.lua holds an independent render ceiling: state can also
+-- arrive from a hand-edited SavedVariables file, which never passes here.
+local MAX_COMBATANTS = 200
 
 -- Returns the persisted initiative state, creating the default on first use.
 local function State()
@@ -102,24 +115,32 @@ end
 
 -- Replaces the whole turn order (used by players receiving the DM's sync).
 -- The incoming table crossed the wire, so it is rebuilt field by field: only
--- well-formed combatants survive and the pointers are coerced into range,
--- ensuring bad remote data can never poison the persisted state.
+-- well-formed combatants survive, the list is truncated at MAX_COMBATANTS, and
+-- the pointers are coerced into range, ensuring bad remote data can never
+-- poison the persisted state. Returns the number of well-formed combatants the
+-- cap dropped (0 when the whole order fit) - the caller says so out loud, since
+-- a legitimately clipped order must not go unnoticed.
 function IT.SetState(incoming)
     local state = State()
-    local combatants = {}
+    local combatants, dropped = {}, 0
     for _, c in ipairs(type(incoming.combatants) == "table" and incoming.combatants or {}) do
         if type(c) == "table" and type(c.name) == "string" and c.name ~= "" then
-            combatants[#combatants + 1] = {
-                name = string.sub(c.name, 1, MAX_NAME),
-                init = tonumber(c.init) or 0,
-                isNPC = c.isNPC and true or false,
-            }
+            if #combatants >= MAX_COMBATANTS then
+                dropped = dropped + 1
+            else
+                combatants[#combatants + 1] = {
+                    name = string.sub(c.name, 1, MAX_NAME),
+                    init = tonumber(c.init) or 0,
+                    isNPC = c.isNPC and true or false,
+                }
+            end
         end
     end
     state.combatants = combatants
     local current = math.floor(tonumber(incoming.current) or 0)
     state.current = math.max(0, math.min(current, #combatants))
     state.round = math.max(0, math.floor(tonumber(incoming.round) or 0))
+    return dropped
 end
 
 -- The state as broadcast to players: combatants reduced to name/init/isNPC.

@@ -378,13 +378,17 @@ local function RefreshCached(panel)
     ns.UI.HideEmpty(panel)
 
     PlaceRows(panel.content, list, function(row, item)
-        row.cacheKey, row.cacheName = item.key, item.entry.name
-        row.name:SetText(item.entry.name or "?")
+        -- The cached name came off the wire; sanitize it at the render seam so
+        -- escape codes cannot forge a link in a row or its tooltip. cacheKey
+        -- stays raw - it identifies the entry for removal.
+        local safeName = ns.SafeText(item.entry.name)
+        row.cacheKey, row.cacheName = item.key, safeName
+        row.name:SetText(safeName)
         row.name:SetTextColor(UI.TEXT[1], UI.TEXT[2], UI.TEXT[3])
         local age = AgeText(item.entry.time)
         local suffix = age ~= "" and ("   |cff8a857a" .. age .. "|r") or ""
         row.meta:SetText("played by " .. item.key .. suffix)
-        row.tipTitle = item.entry.name or "?"
+        row.tipTitle = safeName
         local lines = { { "Player", item.key } }
         local lvl = type(item.entry.char) == "table" and item.entry.char.level
         if lvl then lines[#lines + 1] = { "Level", lvl } end
@@ -393,7 +397,7 @@ local function RefreshCached(panel)
         row.tipHints = { "Click: view (read-only)", "Right-click: actions",
             "Refresh: re-request a live copy", "X: remove (asks first)" }
 
-        local name = item.entry.name or "?"
+        local name = safeName
         local function View()
             if ns.CharacterSheetUI then
                 ns.CharacterSheetUI.ShowCharacter(item.entry.char, item.key .. " (cached)")

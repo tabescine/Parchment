@@ -1,8 +1,8 @@
 -- Parchment - Item Wizard and Library panel (UI)
 --
 -- The two faces of the item library: a stepped creator window (Kind -> Details
--- -> Review) that writes one library item, and the hub's Items panel listing
--- what the library holds. A panel row follows the addon's click grammar: left
+-- -> Effects -> Review) that writes one library item, and the hub's Items panel
+-- listing what the library holds. A panel row follows the addon's click grammar: left
 -- reads the item in the link viewer, shift links it in chat, right opens its
 -- actions (edit, give, duplicate, delete) as a context menu. The Give/Copy/X
 -- buttons stay on the row as visible affordances for the same flows. The
@@ -23,10 +23,23 @@
 -- carrying it on the next render, and deleting one leaves those rows showing as
 -- missing. The confirmations say so - it is the feature, not a caveat.
 --
--- Reads from: ns.UI, ns.HubUI, ns.Widgets, ns.CharacterForm, ns.Dialogs,
+-- Weapon and equipment items may carry effects from the shared vocabulary
+-- (ns.CharacterSheet.EFFECT_TYPES) that apply while the item is equipped -
+-- "+1 Alpha saving throws", "+2 Perception" - edited on the Effects step with
+-- the same pooled row pattern the homebrew wizard uses. Target pickers read
+-- the loaded system, so a type whose target list it cannot fill (attributes,
+-- skills) is not offered without one; target-free types and the school types
+-- (whose school is optional - none means every school) stay authorable with no
+-- system at all. Gear is counted, not worn, so its Effects step is just a hint
+-- and Normalize drops the list.
+--
+-- Reads from: ns.UI, ns.HubUI, ns.Widgets (incl. EffectSummary),
+--   ns.CharacterForm, ns.Dialogs (Pick, PickIcon),
+--   ns.CharacterSheet.EFFECT_TYPES/EffectType,
 --   ns.Items, ns.ChatLinks, ns.ChatLinkUI,
 --   ns.Schema.ValidateItem, the item library API (ns.GetItemLibrary,
 --   ns.GetItem, ns.SetItem, ns.DeleteItem, ns.NextItemKey), ns.GetSystem,
+--   ns.HasSystem, ns.AttrName,
 --   ns.FindById, ns.GetActiveCharacter, ns.GetCharacter, ns.SetCharacter,
 --   ns.DeepCopy, ns.Systems.RefreshAll, ns.Print.
 -- Exposes on ns.ItemWizardUI: Open(id, kind, charKey), AddFlow(kind),
@@ -39,11 +52,18 @@ local ADDON, ns = ...
 
 local UI = ns.UI
 local Form = ns.CharacterForm
+local CS = ns.CharacterSheet
 
 local PAD, ROW_H, CTRL_X = 16, 26, 110
-local STEPS = { "Kind", "Details", "Review" }
+local STEPS = { "Kind", "Details", "Effects", "Review" }
 local BONUS_CAP = 99
 local ROW_BROWSE_H = 30
+
+-- The Effects step's row grid (the homebrew wizard's layout) and the caps the
+-- schema mirrors (MAX_ITEM_EFFECTS there, VALUE within the shared bonus cap).
+local EFFECT_ROW_H = 26
+local COL_TYPE, COL_TARGET, COL_VALUE, COL_MOD, COL_DEL = 0, 112, 212, 288, 378
+local MAX_EFFECTS = 10
 
 -- Picker ids for the two synthetic entries: no linked weapon, and "author a new
 -- item" at the top of the add flow's list.
@@ -58,7 +78,7 @@ local KINDS = {
       hint = "Carried and wielded. Its bonus adds to the attack rolls of the system weapon"
           .. " you link it to." },
     { id = "equipment", label = "Equipment",
-      hint = "Worn. Its AC bonus counts while equipped, and pieces stack." },
+      hint = "Worn. Its AC bonus and modifiers count while equipped, and pieces stack." },
     { id = "gear", label = "Gear",
       hint = "Everything else: counted rather than equipped (rope, rations, a lantern)." },
 }
@@ -133,22 +153,40 @@ local function WeaponName(id)
     return weapon and weapon.name or id
 end
 
+-- ", 2 effects" when an equippable item carries any - the count for one-line
+-- summaries; the tooltips and the review spell each effect out.
+local function EffectsSuffix(item)
+    local n = type(item.effects) == "table" and #item.effects or 0
+    if n == 0 then return "" end
+    return ", " .. n .. " effect" .. (n == 1 and "" or "s")
+end
+
 -- One line describing what an item does, shared by the review step, the panel
 -- rows and their tooltips.
 local function MechanicsText(item)
     if item.kind == "weapon" then
         local bonus = UI.Signed(tonumber(item.bonus) or 0)
-        return item.weapon_id and (bonus .. " to " .. WeaponName(item.weapon_id) .. " attack rolls")
-            or (bonus .. " attack (no weapon linked)")
+        return (item.weapon_id and (bonus .. " to " .. WeaponName(item.weapon_id) .. " attack rolls")
+            or (bonus .. " attack (no weapon linked)")) .. EffectsSuffix(item)
     elseif item.kind == "equipment" then
         local text = UI.Signed(tonumber(item.ac_bonus) or 0) .. " AC while equipped"
         local cap = tonumber(item.ac_mod_cap)
         if cap then
             text = text .. ", caps the AC attribute modifier at " .. UI.Signed(cap)
         end
-        return text
+        return text .. EffectsSuffix(item)
     end
     return "carried in stacks of " .. (tonumber(item.default_count) or 1)
+end
+
+-- The id an effect points at, or nil when it has none yet. Skill-targeted types
+-- take the generic `id` as an alias for `skill` (ns.CharacterSheet's skill and
+-- accomplish_skill both apply `e.skill or e.id`), so an imported effect written
+-- as { type = "skill", id = "s1" } reads here exactly as the sheet folds it.
+local function TargetId(spec, e)
+    local id = spec.target_key and e[spec.target_key] or nil
+    if id == nil and spec.target == "skill" then return e.id end
+    return id
 end
 
 -- Appends a library item to a character's inventory. Returns true when it
@@ -210,6 +248,22 @@ local function Normalize(d)
         d.default_count = ns.Items.ClampCount(d.default_count) or 1
         d.bonus, d.weapon_id, d.ac_bonus, d.ac_mod_cap = nil, nil, nil, nil
     end
+    -- Equippable kinds keep an effects list to edit (capped like the schema);
+    -- gear drops it - counted items are never worn, so nothing would apply it.
+    if d.kind == "gear" then
+        d.effects = nil
+    else
+        d.effects = type(d.effects) == "table" and d.effects or {}
+        while #d.effects > MAX_EFFECTS do table.remove(d.effects) end
+    end
+    return d
+end
+
+-- Draft-only scaffolding a stored item must not carry: an empty effects list
+-- would round-trip JSON as {} (an object, not a list) and read as "has
+-- effects" downstream, so absence encodes it.
+local function Strip(d)
+    if type(d.effects) == "table" and #d.effects == 0 then d.effects = nil end
     return d
 end
 
@@ -220,7 +274,7 @@ local function Warnings(d)
     local out = {}
     if d.name == "" then out[#out + 1] = "no name" end
 
-    local probe = ns.DeepCopy(d)
+    local probe = Strip(ns.DeepCopy(d))
     probe.id = "draft"
     local ok, issues = ns.Schema.ValidateItem(probe)
     if not ok then
@@ -232,7 +286,178 @@ local function Warnings(d)
         out[#out + 1] = "links a weapon '" .. d.weapon_id
             .. "' the loaded system does not define (no attack bonus will apply)"
     end
+
+    -- Effects the sheet could not fold: an unchosen target, or one the loaded
+    -- system does not define (the schema cannot see either - the library is
+    -- system-independent, so these resolve only against the system at hand).
+    local system = ns.HasSystem() and ns.GetSystem() or nil
+    for i, e in ipairs(type(d.effects) == "table" and d.effects or {}) do
+        local spec = CS.EffectType(e.type)
+        local id = spec and TargetId(spec, e)
+        if not spec then
+            -- Outside the vocabulary: informational only, the wording the row
+            -- summaries use for the same effect (an imported item can carry one).
+            out[#out + 1] = "effect " .. i .. " has an unknown type '"
+                .. tostring(e.type or "?") .. "' (not applied)"
+        elseif spec.target ~= "none" and spec.target ~= "school" and not id then
+            out[#out + 1] = "effect " .. i .. " (" .. spec.label .. ") has no target"
+        elseif system then
+            if spec.target == "attribute" and id and not ns.FindById(system.attributes, id) then
+                out[#out + 1] = "effect " .. i .. " targets an attribute '" .. tostring(id)
+                    .. "' the loaded system does not define"
+            elseif spec.target == "skill" and id and not ns.FindById(system.skills, id) then
+                out[#out + 1] = "effect " .. i .. " targets a skill '" .. tostring(id)
+                    .. "' the loaded system does not define"
+            end
+        end
+    end
     return out
+end
+
+-- Effect rows (the Effects step). Pooled and derived from CS.EFFECT_TYPES like
+-- the homebrew wizard's, so the pickers cannot drift from what Compute folds.
+-- Target lists read the loaded system; a type whose targets are empty (no
+-- system, or one without skills/attributes) is not offered at all.
+
+local function SchoolItems(system)
+    local items = { { id = NONE_ID, name = "(all schools)" } }
+    for _, s in ipairs(system.spell_schools or {}) do
+        local id = type(s) == "table" and s.id or s
+        local name = (type(s) == "table" and s.name) or tostring(s)
+        if id then items[#items + 1] = { id = id, name = name } end
+    end
+    return items
+end
+
+local function TargetItems(spec, system)
+    if spec.target == "attribute" then return ns.Widgets.AttrItems(system) end
+    if spec.target == "skill" then return ns.Widgets.ListItems(system.skills) end
+    if spec.target == "school" then return SchoolItems(system) end
+    return nil
+end
+
+local function TargetName(spec, e)
+    local id = TargetId(spec, e)
+    if spec.target == "attribute" then return id and ns.AttrName(id) or "(choose)" end
+    if spec.target == "skill" then
+        local rec = ns.FindById(ns.GetSystem().skills, id)
+        return rec and rec.name or id or "(choose)"
+    end
+    if spec.target == "school" then
+        if not id then return "(all schools)" end
+        for _, s in ipairs(ns.GetSystem().spell_schools or {}) do
+            if (type(s) == "table" and s.id or s) == id then
+                return (type(s) == "table" and s.name) or tostring(s)
+            end
+        end
+        return tostring(id)
+    end
+    return "-"
+end
+
+local function EffectAt(f, row)
+    local d = f.draft
+    return d and type(d.effects) == "table" and d.effects[row.index] or nil
+end
+
+local function PickInto(f, row, title, prompt, items, selected, apply)
+    ns.Dialogs.Pick({
+        title = title, prompt = prompt, items = items, max = 1, selected = selected,
+        onConfirm = function(ids)
+            local e = EffectAt(f, row)
+            if e then apply(e, ids[1]) end
+            Refresh(f)
+        end,
+    })
+end
+
+local function CreateEffectRow(f, index)
+    local page = f.pages[3]
+    local row = CreateFrame("Frame", nil, page)
+    row:SetSize(400, EFFECT_ROW_H)
+    row:SetPoint("TOPLEFT", PAD, -PAD - (index - 1) * EFFECT_ROW_H)
+    row.index = index
+
+    row.typeBtn = FieldButton(row, COL_TYPE, -4, 106)
+    row.typeBtn:SetScript("OnClick", function()
+        local items = {}
+        for _, spec in ipairs(CS.EFFECT_TYPES) do
+            local targets = TargetItems(spec, ns.GetSystem())
+            if not targets or #targets > 0 then
+                items[#items + 1] = { id = spec.id, name = spec.label }
+            end
+        end
+        local e = EffectAt(f, row)
+        PickInto(f, row, "Effect", "What does this item change while equipped?", items,
+            { e and e.type },
+            function(eff, id)
+                if not id or id == eff.type then return end
+                eff.type, eff.id, eff.skill, eff.school, eff.add_modifier = id, nil, nil, nil, nil
+            end)
+    end)
+
+    row.targetBtn = FieldButton(row, COL_TARGET, -4, 94)
+    row.targetBtn:SetScript("OnClick", function()
+        local e = EffectAt(f, row)
+        local spec = e and CS.EffectType(e.type)
+        if not (spec and spec.target ~= "none") then return end
+        local items = TargetItems(spec, ns.GetSystem())
+        if #items == 0 then
+            ns.Print("the loaded system defines no " .. spec.target .. "s to target.")
+            return
+        end
+        PickInto(f, row, spec.label, "Choose a target", items, { TargetId(spec, e) },
+            function(eff, id)
+                eff[spec.target_key] = (id and id ~= NONE_ID) and id or nil
+                -- A skill target read through the `id` alias: clear it, or the
+                -- old alias would keep resolving instead of the new pick.
+                if spec.target == "skill" then eff.id = nil end
+            end)
+    end)
+
+    row.stepper = ns.Widgets.Stepper(row, 72)
+    row.stepper:SetPoint("TOPLEFT", COL_VALUE, -2)
+    row.stepper:OnStep(function(delta)
+        local e = EffectAt(f, row)
+        if not e then return end
+        e.value = math.max(-BONUS_CAP, math.min(BONUS_CAP, (e.value or 0) + delta))
+        Refresh(f)
+    end)
+
+    row.modBtn = FieldButton(row, COL_MOD, -4, 84)
+    row.modBtn:SetScript("OnClick", function()
+        local e = EffectAt(f, row)
+        local spec = e and CS.EffectType(e.type)
+        if not (spec and spec.add_modifier) then return end
+        local items = { { id = NONE_ID, name = "(none)" } }
+        for _, a in ipairs(ns.Widgets.AttrItems(ns.GetSystem())) do items[#items + 1] = a end
+        PickInto(f, row, "Add Modifier", "Also add an attribute's modifier", items,
+            { e.add_modifier },
+            function(eff, id)
+                eff.add_modifier = (id and id ~= NONE_ID) and id or nil
+            end)
+    end)
+
+    row.delBtn = FieldButton(row, COL_DEL, -4, 22)
+    row.delBtn:SetText("X")
+    row.delBtn:SetScript("OnClick", function()
+        local d = f.draft
+        if not (d and type(d.effects) == "table") then return end
+        table.remove(d.effects, row.index)
+        Refresh(f)
+    end)
+
+    return row
+end
+
+local function AcquireEffectRow(f, index)
+    local row = f.effectRows[index]
+    if not row then
+        row = CreateEffectRow(f, index)
+        f.effectRows[index] = row
+    end
+    row:Show()
+    return row
 end
 
 -- Page fill.
@@ -293,6 +518,39 @@ local function FillDetails(f, d)
     end
 end
 
+-- The Effects step: pooled rows for an equippable draft, a hint for gear
+-- (whose kind carries no equipped state to hang an effect on).
+local function FillEffects(f, d)
+    local effects = type(d.effects) == "table" and d.effects or {}
+    for i, e in ipairs(effects) do
+        local row = AcquireEffectRow(f, i)
+        local spec = CS.EffectType(e.type)
+        row.typeBtn:SetText(spec and spec.label or "(choose)")
+        local hasTarget = spec and spec.target ~= "none"
+        row.targetBtn:SetShown(hasTarget and true or false)
+        if hasTarget then row.targetBtn:SetText(TargetName(spec, e)) end
+        row.stepper:SetText(UI.Signed(e.value or 0))
+        local hasMod = spec and spec.add_modifier
+        row.modBtn:SetShown(hasMod and true or false)
+        if hasMod then
+            row.modBtn:SetText(e.add_modifier and (ns.AttrName(e.add_modifier) .. " mod")
+                or "+ modifier")
+        end
+    end
+    for i = #effects + 1, #f.effectRows do f.effectRows[i]:Hide() end
+
+    local isGear = d.kind == "gear"
+    f.fxAddBtn:SetShown(not isGear)
+    f.fxAddBtn:ClearAllPoints()
+    f.fxAddBtn:SetPoint("TOPLEFT", PAD, -PAD - #effects * EFFECT_ROW_H - 4)
+    f.fxAddBtn:SetEnabled(#effects < MAX_EFFECTS)
+    f.fxHint:SetText(isGear
+        and "Gear is counted, not equipped - it cannot carry modifiers. Switch the kind to"
+            .. " weapon or equipment if this item should change the sheet while worn."
+        or "Modifiers apply while the item is equipped: saving throws, skills, attributes,"
+            .. " AC, initiative and more. An item without any is fine.")
+end
+
 local function FillReview(f, d)
     local lines = {
         "|cffc8a868" .. (d.name ~= "" and d.name or "(unnamed item)") .. "|r   -   "
@@ -301,8 +559,11 @@ local function FillReview(f, d)
         " ",
         MechanicsText(d),
         "Icon: " .. (d.icon or "|cff9e998c(default)|r"),
-        " ",
     }
+    for _, e in ipairs(type(d.effects) == "table" and d.effects or {}) do
+        lines[#lines + 1] = "- while equipped: " .. ns.Widgets.EffectSummary(e)
+    end
+    lines[#lines + 1] = " "
     if f.editId then
         lines[#lines + 1] = "|cff9e998cSaving updates every character carrying this item.|r"
         lines[#lines + 1] = " "
@@ -332,6 +593,7 @@ Refresh = function(self)
 
     FillKind(self, d)
     FillDetails(self, d)
+    FillEffects(self, d)
     if self.step == #STEPS then FillReview(self, d) end
 end
 
@@ -344,7 +606,7 @@ local function Commit(self)
         return
     end
     local id = self.editId or ns.NextItemKey()
-    local item = ns.SetItem(id, Normalize(d))
+    local item = ns.SetItem(id, Strip(Normalize(d)))
     local charKey, editing = self.addToKey, self.editId ~= nil
     self.draft, self.editId, self.addToKey = nil, nil, nil
     self:Hide()
@@ -482,7 +744,8 @@ local function BuildDetailsPage(f)
     f.nameBox = Form.TextBox(p, CTRL_X, y, 230)
     y = y - ROW_H
 
-    -- Icon: a texture name, a live preview, and per-kind suggestions.
+    -- Icon: a texture name, a live preview, per-kind suggestions, and the
+    -- browse button opening the categorized icon picker (pants, rings, ...).
     Label(p, "Icon", PAD, y)
     f.iconBox = Form.TextBox(p, CTRL_X, y, 120)
     f.iconPreview = p:CreateTexture(nil, "ARTWORK")
@@ -492,6 +755,21 @@ local function BuildDetailsPage(f)
     for i = 1, 3 do
         f.iconBtns[i] = IconSwatch(f, p, CTRL_X + 180 + (i - 1) * 26, y + 4)
     end
+    f.iconBrowseBtn = CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
+    f.iconBrowseBtn:SetSize(60, 20)
+    f.iconBrowseBtn:SetPoint("TOPLEFT", CTRL_X + 180 + 3 * 26 + 4, y + 3)
+    f.iconBrowseBtn:SetText("Browse")
+    f.iconBrowseBtn:SetScript("OnClick", function()
+        if not f.draft then return end
+        ns.Dialogs.PickIcon({
+            selected = f.draft.icon,
+            onPick = function(name)
+                if not f.draft then return end
+                f.draft.icon = name:lower()
+                Refresh(f)
+            end,
+        })
+    end)
     y = y - 40
 
     -- Two kind-specific rows: weapon uses both (link, bonus), the others one.
@@ -610,6 +888,7 @@ local function BuildFrame()
     })
     f.step = 1
     f.pages = {}
+    f.effectRows = {}
 
     f.stepLabel = f:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     f.stepLabel:SetPoint("TOPLEFT", PAD, -44)
@@ -618,12 +897,30 @@ local function BuildFrame()
     BuildKindPage(f)
     BuildDetailsPage(f)
 
-    -- Page 3: Review.
+    -- Page 3: Effects (rows are pooled and laid out on refresh).
     local p3 = NewPage(f)
     f.pages[3] = p3
-    f.review = p3:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    f.fxAddBtn = CreateFrame("Button", nil, p3, "UIPanelButtonTemplate")
+    f.fxAddBtn:SetSize(110, 20)
+    f.fxAddBtn:SetText("+ Add effect")
+    f.fxAddBtn:SetScript("OnClick", function()
+        local d = f.draft
+        if not (d and type(d.effects) == "table") or #d.effects >= MAX_EFFECTS then return end
+        d.effects[#d.effects + 1] = { type = CS.EFFECT_TYPES[1].id, value = 1 }
+        Refresh(f)
+    end)
+    f.fxHint = p3:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    f.fxHint:SetPoint("BOTTOMLEFT", PAD, PAD)
+    f.fxHint:SetPoint("RIGHT", p3, "RIGHT", -PAD, 0)
+    f.fxHint:SetJustifyH("LEFT")
+    f.fxHint:SetTextColor(UI.DIM[1], UI.DIM[2], UI.DIM[3])
+
+    -- Page 4: Review.
+    local p4 = NewPage(f)
+    f.pages[4] = p4
+    f.review = p4:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     f.review:SetPoint("TOPLEFT", PAD, -PAD)
-    f.review:SetPoint("RIGHT", p3, "RIGHT", -PAD, 0)
+    f.review:SetPoint("RIGHT", p4, "RIGHT", -PAD, 0)
     f.review:SetJustifyH("LEFT")
 
     -- Navigation.
@@ -782,6 +1079,9 @@ local function FillRowTip(row, id, item)
         if tonumber(item.ac_mod_cap) then
             lines[#lines + 1] = { "Modifier cap", UI.Signed(tonumber(item.ac_mod_cap)) }
         end
+    end
+    for _, e in ipairs(type(item.effects) == "table" and item.effects or {}) do
+        lines[#lines + 1] = { "While equipped", ns.Widgets.EffectSummary(e) }
     end
     -- The description goes in whole: it is schema-capped at 512 characters and
     -- a plain string line wraps in the tooltip, so nothing needs cutting.

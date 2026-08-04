@@ -46,6 +46,22 @@ local MAX_ICON = 64
 local ICON_PATTERN = "^[%w_%-]+$"
 local MAX_BONUS = 99
 local MAX_COUNT = 9999   -- matches the counter clamp in Modules/Items.lua
+local MAX_ITEM_EFFECTS = 10   -- matches the item wizard's row cap
+
+-- Bound on a character's level. Level is the number every other number hangs
+-- off - hit dice, the mana formula, and per_level effects, which multiply
+-- their (already bounded) value by it - so it is capped as well as required to
+-- be finite: at level 1e308 a validated +/-99 effect still lands as inf in the
+-- derived stats. The default cap in Modules/CharacterEditor.lua is level 30,
+-- so this leaves any system room to spare.
+local MAX_LEVEL = 200
+-- A character's own free text. `name` rides chat lines, the sheet title, the
+-- Cached Sheets rows and a popup argument, and `quote` is concatenated into the
+-- sheet subtitle - all reachable from a sheet another player shared, so both
+-- need a type and a length, not just a type. Generous next to what anyone types
+-- by hand; the point is that 200 KB cannot arrive.
+local MAX_CHAR_NAME = 64
+local MAX_CHAR_TEXT = 2048
 
 ns.Schema = ns.Schema or {}
 local Schema = ns.Schema
@@ -177,6 +193,23 @@ local function CheckNumberList(list, ctx, field, issues)
     end
 end
 
+-- Checks an optional list of id strings (a character's origin traits and
+-- accomplished lists). The ids resolve against the system wherever one is at
+-- hand; here only the container and the entry types are enforced - the sheet
+-- iterates these lists on every render, so a scalar in place of one throws.
+local function CheckIdList(list, ctx, field, issues)
+    if list == nil then return end
+    if type(list) ~= "table" then
+        Report(issues, ctx, "field '" .. field .. "' should be a list, got " .. type(list))
+        return
+    end
+    for i, id in ipairs(list) do
+        if type(id) ~= "string" then
+            Report(issues, ctx, field .. "[" .. i .. "] should be string, got " .. type(id))
+        end
+    end
+end
+
 -- Checks an optional cost record ({ ap = n, mana = n }): both fields optional,
 -- numeric, finite and non-negative. Costs render on the sheet and pickers, so
 -- a malformed one degrades display but must never poison arithmetic.
@@ -197,7 +230,9 @@ end
 
 -- Checks an optional effects list: each entry must be a table. Effect contents
 -- follow the shared vocabulary (Modules/CharacterSheet.lua) where unknown
--- types are informational, so only the container shape is enforced here.
+-- types are informational, so only the container shape is enforced here - plus
+-- `per_level`, which is a flag the engine tests for truthiness: a stray
+-- `per_level = "no"` would scale the value anyway, inverting what was written.
 local function CheckEffects(effects, ctx, issues)
     if effects == nil then return end
     if type(effects) ~= "table" then
@@ -205,8 +240,11 @@ local function CheckEffects(effects, ctx, issues)
         return
     end
     for j, e in ipairs(effects) do
+        local ectx = ctx .. ".effects[" .. j .. "]"
         if type(e) ~= "table" then
-            Report(issues, ctx .. ".effects[" .. j .. "]", "should be a table, got " .. type(e))
+            Report(issues, ectx, "should be a table, got " .. type(e))
+        elseif e.per_level ~= nil and type(e.per_level) ~= "boolean" then
+            Report(issues, ectx, "field 'per_level' should be boolean, got " .. type(e.per_level))
         end
     end
 end
@@ -242,6 +280,46 @@ local function CheckRollCheck(check, ctx, attrIds, skillIds, issues)
     end
 end
 
+-- Checks an optional item effects list. Weapon and equipment items may carry
+-- effect records from the shared vocabulary (Modules/CharacterSheet.lua) that
+-- fold into the sheet's totals while the item is equipped. Unlike pack effects
+-- (CheckEffects above, container shape only), every field here is bounded:
+-- item effects also arrive inside a shared inventory's `resolved` snapshot,
+-- which is attacker-controlled and reaches saves, skills and attributes.
+local function CheckItemEffects(effects, ctx, issues)
+    if effects == nil then return end
+    if type(effects) ~= "table" then
+        Report(issues, ctx, "field 'effects' should be a list, got " .. type(effects))
+        return
+    end
+    if #effects > MAX_ITEM_EFFECTS then
+        Report(issues, ctx, "has more than " .. MAX_ITEM_EFFECTS .. " effects")
+    end
+    for j, e in ipairs(effects) do
+        local ectx = ctx .. ".effects[" .. j .. "]"
+        if type(e) ~= "table" then
+            Report(issues, ectx, "should be a table, got " .. type(e))
+        else
+            if type(e.type) ~= "string" then
+                Report(issues, ectx, "field 'type' should be string, got " .. type(e.type))
+            else
+                -- Capped like the other item strings: an effect summary is
+                -- rendered into the tooltip on every inventory-row hover
+                -- (EffectSummary in UI/Widgets.lua), type name included.
+                CheckText(e.type, ectx, "type", MAX_ITEM_NAME, issues)
+            end
+            CheckNumeric(e.value, ectx, "value", MAX_BONUS, issues)
+            for _, field in ipairs({ "id", "skill", "school", "add_modifier" }) do
+                CheckText(e[field], ectx, field, MAX_ITEM_NAME, issues)
+            end
+            if e.per_level ~= nil and type(e.per_level) ~= "boolean" then
+                Report(issues, ectx,
+                    "field 'per_level' should be boolean, got " .. type(e.per_level))
+            end
+        end
+    end
+end
+
 -- Validates one item-library record (id, name, kind plus the per-kind extras).
 -- Bails after the required-field check so a non-record cannot be probed further.
 local function CheckItem(item, ctx, issues)
@@ -258,6 +336,12 @@ local function CheckItem(item, ctx, issues)
     CheckCap(item.ac_mod_cap, ctx, issues)
     CheckNumeric(item.default_count, ctx, "default_count", MAX_COUNT, issues)
     CheckNumeric(item.version, ctx, "version", nil, issues)
+    CheckItemEffects(item.effects, ctx, issues)
+    -- Gear is counted, never equipped, so its effects would never apply -
+    -- almost certainly an authoring slip (the wizard drops them on kind switch).
+    if item.kind == "gear" and item.effects ~= nil then
+        Report(issues, ctx, "gear cannot carry effects (only equipped items apply them)")
+    end
 end
 
 -- Validates the `resolved` display snapshot a shared inventory entry carries
@@ -275,6 +359,7 @@ local function CheckResolved(r, ctx, issues)
     CheckNumeric(r.bonus, ctx, "bonus", MAX_BONUS, issues)
     CheckNumeric(r.ac_bonus, ctx, "ac_bonus", MAX_BONUS, issues)
     CheckCap(r.ac_mod_cap, ctx, issues)
+    CheckItemEffects(r.effects, ctx, issues)
 end
 
 -- Validates char.inventory: thin per-character instances of library items (an
@@ -478,7 +563,11 @@ end
 --
 -- When `system` is supplied, attribute keys, the primary/ac/cast attributes
 -- and accomplished skills/saves are checked against it. When `system` is nil
--- only the character's own shape is validated.
+-- only the character's own shape is validated - but that shape covers every
+-- field the sheet computes from (level, resources, the accomplished/trait
+-- lists, the inventory and the homebrew records with their effects), because
+-- a shared sheet reaches us exactly that way (the comm receive path in
+-- Modules/Sharing.lua) and Compute must not throw on what it is handed.
 --
 -- `packs` is an optional { feats = featPack, spells = spellPack } table (the
 -- active packs, see ns.GetFeatPack/GetSpellPack). Pack membership resolves
@@ -492,11 +581,51 @@ function Schema.ValidateCharacter(char, system, packs)
 
     CheckRequired(char, CHAR_REQUIRED, "character", issues)
 
+    -- Level carries a magnitude cap on top of that (see MAX_LEVEL). A missing,
+    -- non-numeric or non-finite level was reported just above, so only a usable
+    -- number reaches the bounds check.
+    if type(char.level) == "number" and char.level == char.level
+        and char.level ~= math.huge and char.level ~= -math.huge then
+        CheckNumeric(char.level, "character", "level", MAX_LEVEL, issues)
+    end
+
+    -- The id sets the system contributes, or nil when there is no system to
+    -- resolve against - as in the pack validators, a nil set means "check the
+    -- shape, resolve nothing".
+    local hasSystem = type(system) == "table"
+    local attrIds = hasSystem and IdSet(system.attributes) or nil
+    local skillIds = hasSystem and IdSet(system.skills) or nil
+    local weaponIds = hasSystem and IdSet(system.weapons) or nil
+
+    -- Free text the UI concatenates. CheckRequired already established that
+    -- `name` is a string; these add the bounds. `quote` and `notes` were
+    -- previously unchecked entirely - a shared sheet carrying `quote = {}`
+    -- validated, computed and cached, then threw in the sheet subtitle on every
+    -- open (UI/CharacterSheetUI.lua).
+    CheckText(char.name, "character", "name", MAX_CHAR_NAME, issues)
+    CheckText(char.quote, "character", "quote", MAX_CHAR_TEXT, issues)
+    CheckText(char.notes, "character", "notes", MAX_CHAR_TEXT, issues)
+
+    -- Everything the sheet does arithmetic on or iterates over is checked with
+    -- or without a system: a shared character arrives through the comm path,
+    -- which validates shape only, and Compute would throw on a string where it
+    -- expects a number or a scalar where it expects a list.
+    for key, value in pairs(AsTable(char.attributes)) do
+        CheckNumeric(value, "character.attributes", tostring(key), nil, issues)
+    end
+    for _, field in ipairs({ "max_hp", "current_hp", "temp_hp", "max_mana", "current_mana" }) do
+        CheckNumeric(char[field], "character", field, nil, issues)
+    end
+    for _, field in ipairs({ "origin_traits", "accomplished_skills",
+        "accomplished_saves", "accomplished_weapons" }) do
+        CheckIdList(char[field], "character", field, issues)
+    end
+    CheckString(char.racial_trait, "character", "racial_trait", issues)
+
     -- The inventory is shape-checked with or without a system: it is the one
     -- character field whose contents can arrive from the wire (the `resolved`
     -- snapshots), and the comm receive path validates shape only. The weapon
     -- id set is what the system adds here - see CheckInventory.
-    local weaponIds = (type(system) == "table") and IdSet(system.weapons) or nil
     CheckInventory(char, weaponIds, issues)
 
     -- Feats and spells, like the inventory, are checked with or without a
@@ -590,25 +719,75 @@ function Schema.ValidateCharacter(char, system, packs)
         end
     end
 
-    if type(system) ~= "table" then
+    -- Homebrew lists (feats and spells). Their shape is checked with or without
+    -- a system - they ride the wire inside a shared sheet and their effects fold
+    -- into every derived stat - while the id resolution (skills, attributes)
+    -- only runs when a system is at hand. The picker metadata (cost, save) is
+    -- bounded like the pack equivalents.
+    for _, listName in ipairs({ "custom_feats", "custom_spells" }) do
+        local list = char[listName]
+        if list ~= nil and type(list) ~= "table" then
+            Report(issues, "character",
+                "field '" .. listName .. "' should be a list, got " .. type(list))
+        end
+        for i, rec in ipairs(AsTable(list)) do
+            local pctx = listName .. "[" .. i .. "]"
+            if type(rec) ~= "table" then
+                Report(issues, pctx, "should be a table, got " .. type(rec))
+            else
+                CheckNumeric(rec.level, pctx, "level", MAX_LEVEL, issues)
+                CheckCost(rec.cost, pctx, issues)
+                CheckString(rec.type, pctx, "type", issues)
+                CheckString(rec.range, pctx, "range", issues)
+                if attrIds and type(rec.save) == "string" and not attrIds[rec.save] then
+                    Report(issues, pctx, "unknown save attribute '" .. rec.save .. "'")
+                end
+                CheckRollCheck(rec.check, pctx, attrIds, skillIds, issues)
+                if rec.effects ~= nil and type(rec.effects) ~= "table" then
+                    Report(issues, pctx,
+                        "field 'effects' should be a list, got " .. type(rec.effects))
+                end
+                for j, e in ipairs(AsTable(rec.effects)) do
+                    local ctx = pctx .. ".effects[" .. j .. "]"
+                    if type(e) ~= "table" then
+                        Report(issues, ctx, "should be a table, got " .. type(e))
+                    else
+                        -- The value is bounded like an item effect's: it is
+                        -- summed into saves, skills and attributes, and
+                        -- per_level multiplies it by the character's level.
+                        CheckNumeric(e.value, ctx, "value", MAX_BONUS, issues)
+                        if e.per_level ~= nil and type(e.per_level) ~= "boolean" then
+                            Report(issues, ctx,
+                                "field 'per_level' should be boolean, got " .. type(e.per_level))
+                        end
+                        if skillIds and (e.type == "skill" or e.type == "accomplish_skill")
+                            and (e.skill or e.id) and not skillIds[e.skill or e.id] then
+                            Report(issues, ctx,
+                                "unknown skill '" .. tostring(e.skill or e.id) .. "'")
+                        end
+                        if attrIds and (e.type == "attribute" or e.type == "save")
+                            and e.id and not attrIds[e.id] then
+                            Report(issues, ctx, "unknown attribute '" .. tostring(e.id) .. "'")
+                        end
+                        if attrIds and e.add_modifier and not attrIds[e.add_modifier] then
+                            Report(issues, ctx, "unknown add_modifier attribute '"
+                                .. tostring(e.add_modifier) .. "'")
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if not hasSystem then
         return #issues == 0, issues
     end
 
-    -- Sets of valid ids drawn from the system definition.
-    local attrIds = IdSet(system.attributes)
-    local skillIds = IdSet(system.skills)
-
-    -- Base attribute keys must be known attributes, and a numeric value must be
-    -- finite (the JSON/TOML decoders reject NaN/inf, but the Lua-literal import
-    -- path and AceSerializer over the wire deliver them intact, and they would
-    -- flow straight into sheet math).
-    for key, value in pairs(AsTable(char.attributes)) do
+    -- Base attribute keys must be known attributes (their values were checked
+    -- above, with or without a system).
+    for key in pairs(AsTable(char.attributes)) do
         if not attrIds[key] then
             Report(issues, "character.attributes", "unknown attribute '" .. tostring(key) .. "'")
-        end
-        if type(value) == "number" and (value ~= value or value == math.huge
-            or value == -math.huge) then
-            Report(issues, "character.attributes", "'" .. tostring(key) .. "' is not a finite number")
         end
     end
 
@@ -653,44 +832,6 @@ function Schema.ValidateCharacter(char, system, packs)
     for _, id in ipairs(AsTable(char.accomplished_saves)) do
         if not attrIds[id] then
             Report(issues, "character.accomplished_saves", "unknown save attribute '" .. tostring(id) .. "'")
-        end
-    end
-
-    -- Homebrew lists (feats and spells): effects must reference real
-    -- skills/attributes, and the picker metadata (cost, save) is bounded
-    -- like the pack equivalents.
-    for _, listName in ipairs({ "custom_feats", "custom_spells" }) do
-        for i, rec in ipairs(AsTable(char[listName])) do
-            local pctx = listName .. "[" .. i .. "]"
-            if type(rec) ~= "table" then
-                Report(issues, pctx, "should be a table, got " .. type(rec))
-            else
-                CheckNumeric(rec.level, pctx, "level", nil, issues)
-                CheckCost(rec.cost, pctx, issues)
-                CheckString(rec.type, pctx, "type", issues)
-                CheckString(rec.range, pctx, "range", issues)
-                if rec.save ~= nil and type(rec.save) == "string" and not attrIds[rec.save] then
-                    Report(issues, pctx, "unknown save attribute '" .. rec.save .. "'")
-                end
-                CheckRollCheck(rec.check, pctx, attrIds, skillIds, issues)
-                for j, e in ipairs(AsTable(rec.effects)) do
-                    local ctx = pctx .. ".effects[" .. j .. "]"
-                    if type(e) ~= "table" then
-                        Report(issues, ctx, "should be a table, got " .. type(e))
-                    else
-                        if (e.type == "skill" or e.type == "accomplish_skill")
-                            and (e.skill or e.id) and not skillIds[e.skill or e.id] then
-                            Report(issues, ctx, "unknown skill '" .. tostring(e.skill or e.id) .. "'")
-                        end
-                        if (e.type == "attribute" or e.type == "save") and e.id and not attrIds[e.id] then
-                            Report(issues, ctx, "unknown attribute '" .. tostring(e.id) .. "'")
-                        end
-                        if e.add_modifier and not attrIds[e.add_modifier] then
-                            Report(issues, ctx, "unknown add_modifier attribute '" .. tostring(e.add_modifier) .. "'")
-                        end
-                    end
-                end
-            end
         end
     end
 

@@ -182,6 +182,30 @@ for _, spec in ipairs(CS.EFFECT_TYPES) do EXPECT[spec.id]() end
 T.assert_deepeq(SheetWith({ type = "made_up_informational", value = 9 }).derived,
     base.derived, "informational effect changed the sheet")
 
+-- per_level scaling: the effect's value is multiplied by character level
+-- ("+1 maximum HP per character level"), for any effect type, and rescales
+-- when the character levels.
+local function AtLevel(level, effect)
+    local char = BaseChar()
+    char.level = level
+    if effect then
+        char.custom_feats = { { id = "hf-1", name = "Scaled", level = 1,
+            description = "Grows.", effects = { effect } } }
+    end
+    return ns.CharacterSheet.Compute(char, system)
+end
+assert(SheetWith({ type = "max_hp", value = 1, per_level = true }).derived.hp.max
+    == base.derived.hp.max + 1, "per_level at level 1 must equal the plain value")
+local base5 = AtLevel(5)
+assert(AtLevel(5, { type = "max_hp", value = 1, per_level = true }).derived.hp.max
+    == base5.derived.hp.max + 5, "per_level must scale with character level")
+assert(AtLevel(5, { type = "max_hp", value = 2, per_level = true }).derived.hp.max
+    == base5.derived.hp.max + 10, "per_level must multiply the full value")
+assert(AtLevel(5, { type = "ac", value = 1, per_level = true }).derived.ac
+    == base5.derived.ac + 5, "per_level must work for any effect type")
+assert(AtLevel(5, { type = "max_hp", value = 1 }).derived.hp.max
+    == base5.derived.hp.max + 1, "a flat effect must not scale with level")
+
 -- Level gating: a homebrew record only folds into the totals once the
 -- character has reached the level it is gained at. Until then it is pending
 -- and moves nothing.

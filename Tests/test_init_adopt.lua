@@ -20,6 +20,18 @@ ns.Print = function() end
 ns.RegisterModule = function() end
 ns.UI = {}
 
+-- Core's remote-text sanitizer, mirrored here because this file loads the
+-- module under test without Core.lua: combatant names arrive over the wire and
+-- reach chat lines and the adopt prompt through it.
+ns.SafeText = function(value, maxLen, fallback)
+    local s = (type(value) == "string") and value or tostring(value or "")
+    s = s:gsub("|", ""):gsub("%c", " ")
+    local cap = maxLen or 64
+    if #s > cap then s = s:sub(1, cap) .. "..." end
+    if s == "" then return fallback or "?" end
+    return s
+end
+
 -- Comm stub mirroring the recognized-DM session state the real module keeps.
 local handlers, recognized = {}, nil
 ns.Comm = {

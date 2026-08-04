@@ -2,6 +2,8 @@
 -- Schema -> Packs), pairing/activation against the active system, the
 -- library management seams, export round-trips, and the FEATS/SPELLS comm
 -- receive path (validate -> cache -> adopt prompt, never a silent overwrite).
+-- The last section covers the wire-path bounds both libraries hold (size cap,
+-- entry cap that refuses instead of evicting, sanitized notices, depth cap).
 local T = dofile((TEST_ROOT or "") .. "Tests/wow_stubs.lua")
 T.InstallLifecycleStubs({})
 strtrim = function(s) return (s:gsub("^%s*(.-)%s*$", "%1")) end
@@ -9,7 +11,7 @@ strtrim = function(s) return (s:gsub("^%s*(.-)%s*$", "%1")) end
 -- Capture popups instead of showing them.
 local shown
 StaticPopup_Show = function(which, arg1, arg2, data)
-    shown = { which = which, arg1 = arg1, data = data }
+    shown = { which = which, arg1 = arg1, arg2 = arg2, data = data }
 end
 
 local ns = {}
@@ -162,6 +164,136 @@ handlers.FEATS({ _smuggled = true, kind = "feats", pack_name = "Meta",
     lines = { { id = "l", name = "L", attribute = "might", ranks = { { name = "R" } } } } }, "Alice")
 local stored = ns.GetPackLibrary("feats")["Meta"]
 assert(stored and stored.pack._smuggled == nil, "wire metadata must be stripped")
+
+-- Wire-path bounds. A share is stored under an attacker-chosen name, so both
+-- libraries cap entry count and encoded size, everything they print or put in
+-- a popup is sanitized, and an over-deep payload is flattened, not thrown.
+
+-- Capture printed notices (Core's Print writes to the chat-frame stub).
+local printed = {}
+local realPrint = ns.Print
+ns.Print = function(line) printed[#printed + 1] = line end
+
+-- A minimal valid feats pack under a given name, plus any extra fields.
+local function featsPack(name, extra)
+    local p = { kind = "feats", pack_name = name,
+        lines = { { id = "l", name = "L", attribute = "might", ranks = { { name = "R" } } } } }
+    for k, v in pairs(extra or {}) do p[k] = v end
+    return p
+end
+
+local function count(t)
+    local n = 0
+    for _ in pairs(t) do n = n + 1 end
+    return n
+end
+
+-- Names carrying chat escapes must never reach printed text or a popup raw:
+-- "|H...|h" renders as a clickable forged item link, "|T...|t" as a texture.
+-- The library still keys the entry by the exact name (data, not display).
+shown, printed = nil, {}
+local evil = "|Hitem:6948:0:0:0|h[Hearthstone]|h|TInterface\\Icons\\INV_Misc:16|t"
+handlers.FEATS(featsPack(evil), "|Hplayer:Mallory|h[Mallory]|h")
+assert(#printed > 0, "an accepted share must print a notice")
+for _, line in ipairs(printed) do
+    assert(not line:find("|", 1, true), "printed text must carry no escapes: " .. line)
+end
+assert(shown and shown.which == "PARCHMENT_ADOPT_PACK")
+assert(not shown.arg1:find("|", 1, true), "popup text must carry no escapes: " .. shown.arg1)
+assert(ns.GetPackLibrary("feats")[evil], "the exact name must still key the entry")
+
+-- An oversized pack is refused before it touches SavedVariables, and a refused
+-- store must not prompt for adoption either (the popup is the flood's payload).
+shown, printed = nil, {}
+handlers.FEATS(featsPack("Huge", { note = string.rep("x", 600 * 1024) }), "Mallory")
+assert(ns.GetPackLibrary("feats")["Huge"] == nil, "an oversized pack must be refused")
+assert(shown == nil, "a refused pack must not prompt")
+assert(#printed == 1 and printed[1]:find("too large", 1, true), tostring(printed[1]))
+
+-- A pathologically deep payload (AceSerializer accepts thousands of levels) is
+-- flattened by StripMeta's depth cap rather than overflowing the stack out of
+-- the AceComm callback - and the abusive depth never reaches the library.
+local function deep(levels)
+    local root = {}
+    local node = root
+    for _ = 1, levels do node.child = {}; node = node.child end
+    return root
+end
+local function depthOf(t)
+    local n = 0
+    while type(t) == "table" and t.child do n, t = n + 1, t.child end
+    return n
+end
+assert(pcall(ns.ImportExport.StripMeta, deep(5000)), "StripMeta must not overflow")
+assert(depthOf(ns.ImportExport.StripMeta(deep(5000))) < 40, "StripMeta must cap depth")
+printed = {}
+assert(pcall(handlers.FEATS, featsPack("Deep", { nest = deep(5000) }), "Mallory"),
+    "a deeply nested share must not error out of the comm callback")
+local deepEntry = ns.GetPackLibrary("feats")["Deep"]
+assert(deepEntry, "the pack is otherwise valid, so it is still stored")
+assert(depthOf(deepEntry.pack.nest) < 40, "over-deep nesting must never persist")
+
+-- The library caps its entry count. Filling past the cap refuses the newcomer
+-- with a notice and evicts nothing: unlike a re-requestable cached sheet, these
+-- entries are the player's own imported content.
+local lib = ns.GetPackLibrary("feats")
+local filled
+for i = count(lib) + 1, 25 do
+    filled = "Fill" .. i
+    assert(ns.Packs.Store("feats", featsPack(filled), "test"), "storing below the cap must work")
+end
+local kept = next(lib)
+printed = {}
+assert(ns.Packs.Store("feats", featsPack("OneTooMany"), "test") == false,
+    "storing past the cap must be refused")
+assert(lib["OneTooMany"] == nil, "a refused pack must not be stored")
+assert(#printed == 1 and printed[1]:find("full", 1, true), tostring(printed[1]))
+assert(count(lib) == 25, "the library must cap at MAX_ENTRIES, got " .. count(lib))
+assert(lib[kept], "nothing may be evicted to make room")
+
+-- At the cap, updating a name already stored still goes through (latest wins).
+assert(ns.Packs.Store("feats", featsPack(filled, { version = "2" }), "test"))
+assert(lib[filled].pack.version == "2", "an update of a stored name must be allowed")
+
+-- A share arriving at a full library is refused and never prompts.
+shown, printed = nil, {}
+handlers.FEATS(featsPack("Flood"), "Mallory")
+assert(lib["Flood"] == nil and shown == nil, "a full library must refuse and not prompt")
+
+-- The system library holds exactly the same line (Modules/Systems.lua).
+assert(handlers.SYSTEM, "system comm handler not registered")
+local function system(name, extra)
+    local s = { system_name = name, attributes = { { id = "x", name = "X" } } }
+    for k, v in pairs(extra or {}) do s[k] = v end
+    return s
+end
+shown, printed = nil, {}
+handlers.SYSTEM(system(evil), "Mallory")
+for _, line in ipairs(printed) do
+    assert(not line:find("|", 1, true), "printed text must carry no escapes: " .. line)
+end
+assert(shown and shown.which == "PARCHMENT_ADOPT_SYSTEM")
+assert(not shown.arg2:find("|", 1, true), "the popup's system name must be sanitized")
+assert(ns.Systems.GetLibrary()[evil], "the exact name must still key the entry")
+
+shown, printed = nil, {}
+handlers.SYSTEM(system("Huge", { note = string.rep("x", 600 * 1024) }), "Mallory")
+assert(ns.Systems.GetLibrary()["Huge"] == nil, "an oversized system must be refused")
+assert(shown == nil, "a refused system must not prompt")
+
+local sysLib = ns.Systems.GetLibrary()
+for i = count(sysLib) + 1, 25 do
+    assert(ns.Systems.Store(system("Sys" .. i), "test"), "storing below the cap must work")
+end
+local keptSys = next(sysLib)
+printed = {}
+assert(ns.Systems.Store(system("OneTooMany"), "test") == false,
+    "storing past the cap must be refused")
+assert(sysLib["OneTooMany"] == nil and sysLib[keptSys], "nothing may be evicted to make room")
+assert(#printed == 1 and printed[1]:find("full", 1, true), tostring(printed[1]))
+assert(count(sysLib) == 25, "the system library must cap at MAX_ENTRIES, got " .. count(sysLib))
+
+ns.Print = realPrint
 
 -- Leave no active packs behind: the manifest runs files in one process, and a
 -- later file's Compute would silently fold this file's packs.

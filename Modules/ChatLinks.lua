@@ -28,10 +28,14 @@
 -- exactly like linking a regular item.
 --
 -- Reads from: ns.Comm (On/Whisper), ns.Print, ns.FormatCost, ns.AttrName,
---   ns.Spells (school names), ns.ChatLinkUI (render, guarded - loads later).
+--   ns.Spells (school names), ns.Widgets.EffectSummary (item effect lines,
+--   call-time - Widgets loads later), ns.ChatLinkUI (render, guarded - loads
+--   later).
 -- Exposes on ns.ChatLinks: Store, Get, MakeToken, Rewrite, ParseHref,
 --   PostLink, Request, SanitizeAnswer, the payload builders (FeatRank,
---   Spell, Homebrew, Item) and the LINK_TYPE/FIND_PATTERN constants.
+--   Spell, Homebrew, Item - Item payloads also carry an optional `icon`
+--   texture name, sanitized on receive) and the LINK_TYPE/FIND_PATTERN
+--   constants.
 
 local ADDON, ns = ...
 
@@ -46,10 +50,14 @@ CL.FIND_PATTERN = "%[PMT:([^%]]+)%]"
 
 local LINK_COLOR = "|cffc8a868"
 
--- Caps on a received answer (attacker-controlled).
+-- Caps on a received answer (attacker-controlled). The icon bound mirrors the
+-- item schema's: a capped plain texture name, so a received icon can never
+-- reach into a texture path.
 local MAX_TITLE = 120
 local MAX_LINES = 40
 local MAX_LINE = 600
+local MAX_ICON = 64
+local ICON_PATTERN = "^[%w_%-]+$"
 
 -- Session registry of links WE sent: identifier -> { title, lines }.
 local sent = {}
@@ -203,7 +211,12 @@ function CL.Homebrew(kind, rec)
     return Build(rec.name or "?", context, rec)
 end
 
--- A library item (resolved display entry or raw record).
+-- A library item (resolved display entry or raw record). The item's icon
+-- rides as its own payload field, never as inline |T...|t text - the
+-- sanitizer strips escape codes from received lines, so a field is the only
+-- way an icon survives the round-trip (and the receiver re-checks it).
+-- Effect summaries are resolved here, at link time, against the SENDER's
+-- system - the side whose names the item was authored under.
 function CL.Item(item)
     local lines = {}
     local kind = item.kind and (item.kind:gsub("^%l", string.upper)) or nil
@@ -220,10 +233,21 @@ function CL.Item(item)
         bits[#bits + 1] = "modifier cap " .. (item.ac_mod_cap >= 0 and "+" or "") .. item.ac_mod_cap
     end
     if #bits > 0 then lines[#lines + 1] = { text = table.concat(bits, "  -  "), color = "gold" } end
+    local effects = type(item.effects) == "table" and item.effects or {}
+    if #effects > 0 then
+        lines[#lines + 1] = { text = "While equipped:", color = "blue" }
+        for _, e in ipairs(effects) do
+            lines[#lines + 1] = { text = "- " .. ns.Widgets.EffectSummary(e), color = "text" }
+        end
+    end
     if item.description and item.description ~= "" then
         lines[#lines + 1] = { text = item.description, color = "text", wrap = true }
     end
-    return { title = item.name or "?", lines = lines }
+    return {
+        title = item.name or "?",
+        icon = type(item.icon) == "string" and item.icon or nil,
+        lines = lines,
+    }
 end
 
 -- Bounds and cleans a received LINKA payload. Returns a safe copy, or nil
@@ -237,6 +261,10 @@ function CL.SanitizeAnswer(data)
     end
     if type(data.title) ~= "string" then return nil end
     out.title = CleanText(data.title):sub(1, MAX_TITLE)
+    if type(data.icon) == "string" and #data.icon <= MAX_ICON
+        and data.icon:match(ICON_PATTERN) then
+        out.icon = data.icon
+    end
     out.lines = {}
     for i, line in ipairs(type(data.lines) == "table" and data.lines or {}) do
         if i > MAX_LINES then break end
@@ -270,7 +298,8 @@ if ns.Comm then
             ns.Comm.Whisper("LINKA", { id = id, unknown = true }, sender)
             return
         end
-        ns.Comm.Whisper("LINKA", { id = id, title = link.title, lines = link.lines }, sender)
+        ns.Comm.Whisper("LINKA",
+            { id = id, title = link.title, icon = link.icon, lines = link.lines }, sender)
     end)
     ns.Comm.On("LINKA", function(payload, sender)
         local answer = CL.SanitizeAnswer(payload)

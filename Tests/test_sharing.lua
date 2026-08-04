@@ -19,6 +19,17 @@ C_Timer = { After = function() end }         -- request-timeout no-op
 
 local ns = {}
 ns.Print = function() end
+-- Core's ns.SafeText, mirrored: this file loads the module under test without
+-- Core.lua, and a shared character's name reaches a chat line and the
+-- remove-cached popup through it.
+ns.SafeText = function(value, maxLen, fallback)
+    local s = (type(value) == "string") and value or tostring(value or "")
+    s = s:gsub("|", ""):gsub("%c", " ")
+    local cap = maxLen or 64
+    if #s > cap then s = s:sub(1, cap) .. "..." end
+    if s == "" then return fallback or "?" end
+    return s
+end
 T.load(ns, "Schema.lua")   -- the real validator: the comm path must hold the import path's line
 T.load(ns, "JSON.lua")
 local handlers, whispered = {}, {}
@@ -166,3 +177,39 @@ for i, inventory in ipairs(evil) do
     deliver(sender, validChar(sender, { inventory = inventory }))
     assert(S.GetCache()[sender] == nil, "hostile inventory #" .. i .. " was cached")
 end
+
+-- A sheet that passes validation but cannot be computed must never be cached.
+-- The cache is written BEFORE the sheet is displayed and read again by every
+-- later open (a re-request, the Cached Sheets panel), where the render is not
+-- guarded - so a poisoned sheet would throw on every view, out of
+-- SavedVariables, until the player cleared the cache. The receive path therefore
+-- computes first, and drops what it cannot compute.
+local computed = {}
+ns.CharacterSheet = { Compute = function(char)
+    computed[#computed + 1] = char
+    if char.poison then error("compute exploded") end
+    return { name = char.name }
+end }
+deliver("Poison", validChar("Poison", { poison = true }))
+assert(computed[#computed] and computed[#computed].name == "Poison",
+    "the receive path must compute the sheet before caching it")
+assert(S.GetCache()["Poison"] == nil, "a sheet that cannot be computed must not be cached")
+
+-- A computable one still lands, and a display error still only costs the
+-- display: the sheet is cached and nothing propagates out of the handler.
+ns.CharacterSheetUI = { ShowCharacter = function() error("display exploded") end }
+deliver("Sane", validChar("Sane"))
+assert(S.GetCache()["Sane"], "a computable sheet must still be cached")
+ns.CharacterSheetUI = nil
+
+-- A shared character's NAME is attacker-controlled text that reaches a chat
+-- line: a "|H...|h[...]|h" sequence in it would render as a clickable forged
+-- item link in the victim's chat frame (and an unbounded name would freeze it).
+-- The receive path sanitizes before printing, so no raw pipe survives.
+local printed = {}
+ns.Print = function(msg) printed[#printed + 1] = msg end
+ns.CharacterSheet = { Compute = function(char) return { name = char.name } end }
+deliver("Mallory", validChar("|Hitem:6948:0|h[Hearthstone]|h"))
+local line = printed[#printed] or ""
+assert(line:find("Hearthstone", 1, true), "the name's text should still be shown")
+assert(not line:find("|", 1, true), "no raw escape code may reach a printed line")

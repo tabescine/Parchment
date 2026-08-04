@@ -4,7 +4,9 @@
 -- snapshot (character name, level, hp/temp/mana, ac, initiative, DM flag)
 -- when their resources change and whenever someone asks (VITREQ). Everyone
 -- caches what they receive, keyed by sender, session-only (vitals are too
--- volatile to be worth persisting). Pushes are leading-edge throttled (resource
+-- volatile to be worth persisting, and dropped again when their sender leaves
+-- the group - Comm's roster-change prune calls PruneDeparted, so the overview
+-- never lingers on a departed member). Pushes are leading-edge throttled (resource
 -- edits can fire per keystroke); VITREQ answers are jittered and coalesced to
 -- avoid a group-wide reply storm; and incoming-vitals UI refreshes are
 -- debounced. Every received field is coerced per the comm hard
@@ -17,7 +19,7 @@
 --   ns.PartyUI and
 --   ns.InitiativeUI (refresh notifications; the tracker renders vitals inline).
 -- Exposes on ns.Party: GetRoster, OwnSnapshot, RequestAll, OnVitalsChanged,
---   Clear.
+--   PruneDeparted, Clear.
 
 local ADDON, ns = ...
 
@@ -135,6 +137,24 @@ local function ScheduleRefresh()
         if ns.InitiativeUI and ns.InitiativeUI.RefreshIfShown then ns.InitiativeUI.RefreshIfShown() end
     end
     if C_Timer then C_Timer.After(REFRESH_DEBOUNCE, fire) else fire() end
+end
+
+-- Drops cached vitals for senders who are no longer in the group, so a departed
+-- member's (or a stranger's) row cannot linger in the overview for the session.
+-- keepSet is the canonical-name set Comm builds on a roster change
+-- (Comm.NormalizeName keys); an absent or empty set means "roster unknown" and
+-- nothing is dropped. Refreshes the UI only when a row actually went away.
+function Party.PruneDeparted(keepSet)
+    if type(keepSet) ~= "table" or next(keepSet) == nil then return end
+    local dropped = false
+    for sender in pairs(vitals) do
+        local who = ns.Comm and ns.Comm.NormalizeName(sender)
+        if not who or not keepSet[who] then
+            vitals[sender] = nil
+            dropped = true
+        end
+    end
+    if dropped then ScheduleRefresh() end
 end
 
 -- Comm handlers. Own echoes are dropped centrally in Comm.OnReceive; the

@@ -21,9 +21,15 @@
 -- combatant / round changes (also via the DM's sync), click pauses/resumes,
 -- right-click restarts. Purely local; nothing crosses the wire.
 --
+-- Remote data is treated as hostile on the way to the screen: the list renders
+-- at most MAX_ROWS rows (frames are permanent - see the constant), a truncated
+-- INIT is announced in chat rather than applied quietly, and every
+-- remote-derived string this file prints or shows in a popup goes through
+-- Safe/ns.SafeText so "|" escape codes cannot forge a link or a texture.
+--
 -- Reads from: ns.InitiativeTracker, ns.Party (vitals for player rows),
 --   ns.GetActiveCharacter, ns.GetSystem, ns.GetItemLibrary,
---   ns.CharacterSheet.Compute, ns.UI (shared window + palette).
+--   ns.CharacterSheet.Compute, ns.UI (shared window + palette), ns.SafeText.
 -- Exposes on ns.InitiativeUI: Open, Toggle, RefreshIfShown, AddSelf (roll
 --   initiative and join combat; the sheet's Initiative row uses it).
 -- Registers the "initiative" module opener with Core.
@@ -31,6 +37,14 @@
 local ADDON, ns = ...
 
 local ROW_H = 20
+
+-- Hard ceiling on the rows the list will ever build. Deliberately independent
+-- of the tracker's own MAX_COMBATANTS: state also reaches us from the
+-- persisted DB (a hand-edited SavedVariables file never passes through
+-- SetState), and WoW cannot destroy a frame - a single oversized order would
+-- brick the window for good. Rows past this are summarised in a note instead.
+local MAX_ROWS = 200
+
 local UI = ns.UI
 local IT = ns.InitiativeTracker
 
@@ -39,6 +53,16 @@ ns.InitiativeUI = InitiativeUI
 
 -- Forward declarations so row/button scripts can refresh the window.
 local Refresh, CanEdit, Sync, RefreshIfShown
+
+-- Makes a remote-derived string safe to print or show in a popup: Core's
+-- ns.SafeText strips "|" escape codes (a name carrying |H...|h renders as a
+-- clickable forged link, |T...|t as an arbitrary texture) and caps the length.
+-- Core always loads first in game, and the pure-Lua tests that load this file
+-- on its own install their own ns.SafeText - one sanitiser, no second copy to
+-- drift out of step with it.
+local function Safe(value, maxLen, fallback)
+    return ns.SafeText(value, maxLen, fallback)
+end
 
 -- Creates a small text button using the standard panel button look.
 local function MakeButton(parent, text, width, tooltip)
@@ -129,7 +153,7 @@ local function CreateRow(content)
         -- shift while the dialog is open (e.g. a player submission inserts),
         -- and the input must land on this combatant, not this position.
         local c = IT.GetState().combatants[row.index]
-        if c then StaticPopup_Show("PARCHMENT_SET_NPC_HP", row.npcName, nil, c) end
+        if c then StaticPopup_Show("PARCHMENT_SET_NPC_HP", Safe(row.npcName), nil, c) end
     end)
     hpBtn:SetScript("OnEnter", function(self)
         if not row.npcName then return end
@@ -154,13 +178,15 @@ local function CreateRow(content)
         if not CanEdit() then return end
         local c = IT.GetState().combatants[row.index]
         if not c then return end
-        StaticPopup_Show("PARCHMENT_INIT_REMOVE", c.name, nil,
+        -- The displayed name is sanitised; the data copy stays raw, so the
+        -- accept handler can re-check it against the combatant it came from.
+        StaticPopup_Show("PARCHMENT_INIT_REMOVE", Safe(c.name), nil,
             { index = row.index, name = c.name })
     end)
     rm:SetScript("OnEnter", function(self)
         if not CanEdit() then return end
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText("Remove " .. (row.name:GetText() or "combatant"), 1, 1, 1)
+        GameTooltip:SetText("Remove " .. Safe(row.name:GetText(), 64, "combatant"), 1, 1, 1)
         GameTooltip:Show()
     end)
     rm:SetScript("OnLeave", GameTooltip_Hide)
@@ -172,7 +198,7 @@ local function CreateRow(content)
         IT.SetCurrent(row.index)
         Refresh(InitiativeUI.frame)
         Sync()
-        if c then ns.Print("skipped to " .. c.name .. ".") end
+        if c then ns.Print("skipped to " .. Safe(c.name) .. ".") end
     end)
     row:SetScript("OnEnter", function(self)
         if not CanEdit() then return end
@@ -221,6 +247,31 @@ local function SetEmptyHint(content, show, editable)
     hint:Show()
 end
 
+-- Shows/hides the note standing in for the rows past MAX_ROWS, anchored at the
+-- offset the next row would have used. Created on first need and then reused,
+-- like the empty hint. Returns the height it occupies, so the caller can size
+-- the scroll child. A clipped list must say so - silently dropping combatants
+-- would look like data loss.
+local function SetOverflowNote(content, hidden, y)
+    if hidden <= 0 then
+        if content.overflow then content.overflow:Hide() end
+        return 0
+    end
+    local note = content.overflow
+    if not note then
+        note = content:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        note:SetJustifyH("LEFT")
+        note:SetTextColor(UI.RED[1], UI.RED[2], UI.RED[3])
+        content.overflow = note
+    end
+    note:ClearAllPoints()
+    note:SetPoint("TOPLEFT", content, "TOPLEFT", 6, y - 2)
+    note:SetText(hidden .. (hidden == 1 and " more combatant is" or " more combatants are")
+        .. " not shown (display limit " .. MAX_ROWS .. ").")
+    note:Show()
+    return ROW_H
+end
+
 -- "7+2/12" (temp HP rides on top of current) or "7/12" without a buffer.
 local function FormatHP(cur, max, temp)
     local t = (temp and temp > 0) and ("+" .. temp) or ""
@@ -236,8 +287,12 @@ local function RenderList(self)
 
     local vitals = VitalsByName()
     local editable = CanEdit()
+    -- Never build more rows than the ceiling, whatever the state holds.
+    local total = #state.combatants
+    local shown = math.min(total, MAX_ROWS)
     local y = -2
-    for i, c in ipairs(state.combatants) do
+    for i = 1, shown do
+        local c = state.combatants[i]
         local row = content.rows[i] or CreateRow(content)
         content.rows[i] = row
         row:ClearAllPoints()
@@ -290,7 +345,8 @@ local function RenderList(self)
         row:Show()
         y = y - ROW_H
     end
-    SetEmptyHint(content, #state.combatants == 0, editable)
+    SetEmptyHint(content, total == 0, editable)
+    y = y - SetOverflowNote(content, total - shown, y)
     content:SetHeight(math.max(10, -y + 2))
 end
 
@@ -759,7 +815,7 @@ StaticPopupDialogs["PARCHMENT_INIT_REMOVE"] = {
         IT.Remove(data.index)
         RefreshIfShown()
         Sync()
-        ns.Print("removed " .. c.name .. " (initiative " .. tostring(c.init) .. ").")
+        ns.Print("removed " .. Safe(c.name) .. " (initiative " .. tostring(c.init) .. ").")
     end,
     timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
 }
@@ -780,6 +836,16 @@ StaticPopupDialogs["PARCHMENT_RESET_COMBAT"] = {
     timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
 }
 
+-- Announces an order that did not fit the tracker's combatant cap (the count
+-- IT.SetState returns). A DM whose legitimate encounter got clipped has to find
+-- out, and a peer flooding the order should be loud rather than silent.
+local function NotifyTruncated(dropped, sender)
+    if not dropped or dropped <= 0 then return end
+    ns.Print("|cffffcc00combat order from " .. Safe(sender, 32, "the DM")
+        .. " was too long -|r " .. dropped
+        .. (dropped == 1 and " combatant was" or " combatants were") .. " dropped.")
+end
+
 -- Adopt prompt for an INIT arriving before any DM is recognized (the bootstrap
 -- window, where Comm's central gate accepts anyone). Accepting applies the
 -- order AND recognizes the sender as this session's DM, so their later syncs
@@ -791,7 +857,7 @@ StaticPopupDialogs["PARCHMENT_ADOPT_INIT"] = {
     button2 = "Ignore",
     OnAccept = function(_, data)
         ns.Comm.SetRecognizedDM(data.sender)
-        IT.SetState(data.state)
+        NotifyTruncated(IT.SetState(data.state), data.sender)
         RefreshIfShown()
     end,
     OnCancel = function(_, data)
@@ -818,11 +884,11 @@ if ns.Comm then
         if not ns.Comm.RecognizedDM() then
             local key = ns.Comm.NormalizeName(sender) or "?"
             if ignoredInit[key] then return end
-            StaticPopup_Show("PARCHMENT_ADOPT_INIT", tostring(sender), nil,
+            StaticPopup_Show("PARCHMENT_ADOPT_INIT", Safe(sender, 32, "someone"), nil,
                 { sender = sender, state = state, key = key, ignored = ignoredInit })
             return
         end
-        IT.SetState(state)
+        NotifyTruncated(IT.SetState(state), sender)
         RefreshIfShown()
     end)
     -- A player submitted their own initiative. SubmitFor binds the entry to the
@@ -834,11 +900,16 @@ if ns.Comm then
         if type(payload) ~= "table" or type(payload.name) ~= "string" then return end
         local combatant, err = IT.SubmitFor(sender, payload.name, payload.init, payload.tb)
         if combatant then
-            ns.Print((sender or "a player") .. " submitted initiative " .. combatant.init .. ".")
+            -- Both names: the submitter picks the combatant name freely, so the
+            -- DM should see WHO claimed it (a player squatting a teammate's
+            -- name is otherwise invisible until the teammate is refused).
+            ns.Print(Safe(sender, 32, "a player") .. " submitted " .. Safe(combatant.name)
+                .. " at initiative " .. combatant.init .. ".")
             RefreshIfShown()
             Sync()
         elseif err then
-            ns.Print((sender or "a player") .. " re-submitted initiative; ignored - " .. err)
+            ns.Print(Safe(sender, 32, "a player") .. " re-submitted initiative; ignored - "
+                .. Safe(err, 128))
         end
     end)
     -- A player ended their own turn: EndTurnFor advances only when the active
@@ -849,7 +920,7 @@ if ns.Comm then
         if type(payload) ~= "table" or type(payload.name) ~= "string" then return end
         local c = IT.EndTurnFor(sender, payload.name)
         if not c then return end
-        ns.Print((sender or "a player") .. " ended " .. c.name .. "'s turn.")
+        ns.Print(Safe(sender, 32, "a player") .. " ended " .. Safe(c.name) .. "'s turn.")
         RefreshIfShown()
         Sync()
     end)

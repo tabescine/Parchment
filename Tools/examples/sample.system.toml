@@ -362,6 +362,10 @@ value = 1
 #   { type = "accomplish_skill", skill = <skill> }   grants accomplishment
 #   { type = "attribute_points", value = N }   extra editor budget (not sheet math)
 #
+# Any effect may add per_level = true: its value is multiplied by the
+# character's level ("+1 maximum HP per character level"), rescaling on every
+# level-up.
+#
 # Any OTHER type (e.g. "damage_reduction") is informational: validated,
 # displayed with its record, but never folded into a total - by design,
 # situational rules stay in the players' hands.

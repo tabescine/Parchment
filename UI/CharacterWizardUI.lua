@@ -199,7 +199,11 @@ Refresh = function(self)
 
     if self.step == #STEPS then
         local lines = {
-            "|cffc8a868" .. (d.name or "?") .. "|r" .. (d.race ~= "" and ("  -  " .. d.race) or ""),
+            -- Race is optional AND nullable: the picker can be confirmed with
+            -- nothing ticked, which stores nil rather than the seeded "" (the
+            -- shared form's field fill guards it the same way).
+            "|cffc8a868" .. (d.name or "?") .. "|r"
+                .. ((d.race and d.race ~= "") and ("  -  " .. d.race) or ""),
             "Primary " .. ns.AttrName(d.primary_attribute) .. ", AC " .. ns.AttrName(d.ac_attribute)
                 .. ", Init " .. ns.AttrName(d.init_attribute),
             "Racial: " .. (d.racial_trait and TraitName(system, "racial_traits", d.racial_trait) or "none")

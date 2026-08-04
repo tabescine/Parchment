@@ -317,6 +317,41 @@ assert(not ok and findIssue(issues, "unknown weapon 'w9'"))
 assert(Schema.ValidateCharacter(resolvedChar({ name = "Axe", kind = "weapon", weapon_id = "w9" }), nil),
     "without a system there is nothing to check the link against")
 
+-- Item effects: bounded on every axis, because they also ride the `resolved`
+-- snapshot and fold into saves, skills and attributes while equipped.
+assert(Schema.ValidateItem(Item({ kind = "equipment", ac_bonus = 1, effects = {
+    { type = "save", id = "a", value = 1 },
+    { type = "skill", skill = "s1", value = 2, per_level = true },
+    { type = "ac", value = 1, add_modifier = "b" },
+} })), "a well-formed effects list must validate")
+ok, issues = Schema.ValidateItem(Item({ effects = 5 }))
+assert(not ok and findIssue(issues, "'effects' should be a list"))
+ok, issues = Schema.ValidateItem(Item({ effects = { 5 } }))
+assert(not ok and findIssue(issues, "effects[1]"), "a scalar effect must be reported")
+ok, issues = Schema.ValidateItem(Item({ effects = { { value = 1 } } }))
+assert(not ok and findIssue(issues, "'type' should be string"))
+ok, issues = Schema.ValidateItem(Item({ effects = { { type = "save", id = "a", value = 500 } } }))
+assert(not ok and findIssue(issues, "outside"), "an absurd effect value must be reported")
+ok, issues = Schema.ValidateItem(Item({ effects = { { type = "save", id = "a", value = 1 / 0 } } }))
+assert(not ok and findIssue(issues, "not a finite number"))
+ok, issues = Schema.ValidateItem(Item({ effects = { { type = "skill", skill = string.rep("s", 65) } } }))
+assert(not ok and findIssue(issues, "longer than 64"))
+ok, issues = Schema.ValidateItem(Item({ effects = { { type = "save", id = "a", per_level = "yes" } } }))
+assert(not ok and findIssue(issues, "'per_level' should be boolean"))
+local many = {}
+for i = 1, 11 do many[i] = { type = "ac", value = 1 } end
+ok, issues = Schema.ValidateItem(Item({ effects = many }))
+assert(not ok and findIssue(issues, "more than 10 effects"))
+ok, issues = Schema.ValidateItem(Item({ kind = "gear", effects = { { type = "ac", value = 1 } } }))
+assert(not ok and findIssue(issues, "gear cannot carry effects"))
+-- The resolved snapshot holds the same line.
+assert(Schema.ValidateCharacter(resolvedChar({ kind = "equipment",
+    effects = { { type = "save", id = "a", value = 2 } } }), nil))
+ok, issues = Schema.ValidateCharacter(resolvedChar({ kind = "equipment",
+    effects = { { type = "save", id = "a", value = 500 } } }), nil)
+assert(not ok and findIssue(issues, "outside"), "an out-of-bounds resolved effect was accepted")
+assert(not reports(Schema.ValidateCharacter, resolvedChar({ effects = "lots" }), nil))
+
 -- Targets the wizard's pickers cannot produce, but a hand-edited paste or a
 -- wire payload can: reported, never thrown.
 for _, bad in ipairs({
@@ -328,3 +363,124 @@ for _, bad in ipairs({
     assert(not reports(Schema.ValidateCharacter, wizChar(bad), wizSys),
         "unknown custom-perk target not reported")
 end
+
+-- Shape-only validation (a sheet shared by another player arrives with no
+-- system, see Modules/Sharing.lua) must type-check every field the sheet
+-- computes from, not just the required three and the inventory: without a
+-- system there are no ids to resolve, but Compute still iterates the lists and
+-- does arithmetic on the numbers, and the payload is attacker-controlled.
+local function shapeChar(mutate)
+    local c = {
+        name = "C", level = 3, attributes = { a = 1 },
+        racial_trait = "human", origin_traits = { "o1" },
+        accomplished_skills = { "s1" }, accomplished_saves = { "a" },
+        accomplished_weapons = { "w1" },
+        max_hp = 20, current_hp = 18, temp_hp = 2, max_mana = 6, current_mana = 6,
+        custom_feats = { { id = "hf-1", name = "F", level = 2,
+            effects = { { type = "max_hp", value = 2, per_level = true } } } },
+    }
+    mutate(c)
+    return c
+end
+assert(Schema.ValidateCharacter(shapeChar(function() end), nil),
+    "a well-formed sheet must still validate with no system at hand")
+for _, case in ipairs({
+    { "origin_traits as a scalar", function(c) c.origin_traits = "x" end },
+    { "origin_traits holding a non-id", function(c) c.origin_traits = { 5 } end },
+    { "accomplished_skills as a scalar", function(c) c.accomplished_skills = "x" end },
+    { "accomplished_saves as a scalar", function(c) c.accomplished_saves = "x" end },
+    { "accomplished_weapons as a scalar", function(c) c.accomplished_weapons = "x" end },
+    { "a non-string racial_trait", function(c) c.racial_trait = 5 end },
+    { "a table attribute value", function(c) c.attributes = { a = {} } end },
+    { "a string attribute value", function(c) c.attributes = { a = "zz" } end },
+    { "a table max_hp", function(c) c.max_hp = {} end },
+    { "a table max_mana", function(c) c.max_mana = {} end },
+    { "a string current_hp", function(c) c.current_hp = "18" end },
+    { "a table temp_hp", function(c) c.temp_hp = {} end },
+    { "a string current_mana", function(c) c.current_mana = "6" end },
+    { "custom_feats as a scalar", function(c) c.custom_feats = "x" end },
+    { "a numeric custom_feats record", function(c) c.custom_feats = { 1 } end },
+    { "a boolean custom_feats record", function(c) c.custom_feats = { true } end },
+    { "custom_feats effects as a scalar", function(c) c.custom_feats[1].effects = "no" end },
+    { "a scalar custom_feats effect", function(c) c.custom_feats[1].effects = { 5 } end },
+    { "a table effect value", function(c) c.custom_feats[1].effects[1].value = {} end },
+    { "an infinite effect value", function(c) c.custom_feats[1].effects[1].value = 1 / 0 end },
+    { "an absurd effect value", function(c) c.custom_feats[1].effects[1].value = 500 end },
+    { "a scalar custom_spells record", function(c) c.custom_spells = { 1 } end },
+    -- Free text the UI concatenates. quote/notes were unchecked entirely: a
+    -- shared sheet carrying quote = {} validated, computed and cached, then
+    -- threw in the sheet subtitle on every open.
+    { "a table quote", function(c) c.quote = {} end },
+    { "a table notes", function(c) c.notes = {} end },
+    { "a numeric quote", function(c) c.quote = 5 end },
+    { "an unbounded name", function(c) c.name = string.rep("x", 200000) end },
+    { "an unbounded quote", function(c) c.quote = string.rep("x", 200000) end },
+    { "an unbounded notes", function(c) c.notes = string.rep("x", 200000) end },
+}) do
+    assert(not reports(Schema.ValidateCharacter, shapeChar(case[2]), nil),
+        "shape-only validation accepted " .. case[1])
+end
+
+-- Level is capped, not merely required-finite: per_level effects multiply
+-- their value by it (ApplyEffect in Modules/CharacterSheet.lua), so a shared
+-- sheet at level 1e308 turns a validated +/-99 bonus into inf in the derived
+-- stats - the same poisoning the finite checks exist to prevent.
+ok, issues = Schema.ValidateCharacter({ name = "C", level = 1e308, attributes = {} }, nil)
+assert(not ok and findIssue(issues, "field 'level' is outside"), "an absurd level was accepted")
+ok, issues = Schema.ValidateCharacter({ name = "C", level = -1e9, attributes = {} }, nil)
+assert(not ok and findIssue(issues, "field 'level' is outside"), "an absurd negative level")
+ok, issues = Schema.ValidateCharacter({ name = "C", level = 1e6, attributes = { a = 1 } }, refSys)
+assert(not ok and findIssue(issues, "field 'level' is outside"),
+    "the cap must hold on the full path too")
+assert(Schema.ValidateCharacter({ name = "C", level = 30, attributes = {} }, nil),
+    "an ordinary level must still pass")
+-- Homebrew records carry a gained-at level of their own, capped the same way.
+local hbLevel = wizChar({})
+hbLevel.custom_feats[1].level = 1e12
+ok, issues = Schema.ValidateCharacter(hbLevel, wizSys)
+assert(not ok and findIssue(issues, "custom_feats[1]: field 'level' is outside"),
+    "an absurd homebrew level was accepted")
+
+-- An effect's `type` is capped like the other item strings: the effect summary
+-- goes into GameTooltip on every inventory-row hover (EffectSummary in
+-- UI/Widgets.lua), type name and all, from the library and the wire alike.
+local hugeType = string.rep("t", 100000)
+ok, issues = Schema.ValidateItem(Item({ effects = { { type = hugeType, value = 1 } } }))
+assert(not ok and findIssue(issues, "field 'type' is longer than 64"),
+    "a 100KB effect type was accepted")
+ok, issues = Schema.ValidateCharacter(resolvedChar({ kind = "equipment",
+    effects = { { type = hugeType, value = 1 } } }), nil)
+assert(not ok and findIssue(issues, "field 'type' is longer than 64"),
+    "a 100KB effect type rode in on a resolved snapshot")
+
+-- `per_level` belongs to the shared effect vocabulary, so it is checked on
+-- every effect source, not just items: the engine tests it for truthiness, so
+-- a non-boolean scales the value anyway and silently inverts the author's
+-- intent.
+local function featPackWith(effects)
+    return { pack_name = "P", lines = { { id = "l1", name = "L", attribute = "a",
+        ranks = { { name = "R1", effects = effects } } } } }
+end
+assert(Schema.ValidateFeatPack(featPackWith({ { type = "ac", value = 1, per_level = true } })),
+    "a per_level rank effect must validate")
+ok, issues = Schema.ValidateFeatPack(featPackWith({ { type = "ac", value = 1, per_level = "no" } }))
+assert(not ok and findIssue(issues, "field 'per_level' should be boolean"),
+    "a non-boolean per_level on a feat rank was accepted")
+
+local function spellPackWith(effects)
+    return { pack_name = "P", schools = { { id = "ev", name = "Evocation" } },
+        spells = { { id = "sp", name = "S", school = "ev", rank = 1, effects = effects } } }
+end
+assert(Schema.ValidateSpellPack(spellPackWith({ { type = "ac", value = 1, per_level = false } })),
+    "a per_level spell effect must validate")
+ok, issues = Schema.ValidateSpellPack(spellPackWith({ { type = "ac", value = 1, per_level = 1 } }))
+assert(not ok and findIssue(issues, "field 'per_level' should be boolean"),
+    "a non-boolean per_level on a spell was accepted")
+
+assert(Schema.ValidateCharacter(
+    wizChar({ { type = "max_hp", value = 1, per_level = true } }), wizSys),
+    "a per_level homebrew effect must validate")
+ok, issues = Schema.ValidateCharacter(
+    wizChar({ { type = "max_hp", value = 1, per_level = "yes" } }), wizSys)
+assert(not ok and findIssue(issues, "field 'per_level' should be boolean"),
+    "a non-boolean per_level on a homebrew effect was accepted")

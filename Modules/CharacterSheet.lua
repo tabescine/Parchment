@@ -47,7 +47,20 @@
 -- name the equipment share. Equipment may also cap the AC attribute's
 -- contribution while worn (ac_mod_cap - heavy armor is cap 0, medium cap 2/3,
 -- absent means the full modifier applies); the lowest worn cap binds and is
--- surfaced as derived.ac_mod_cap.
+-- surfaced as derived.ac_mod_cap. Weapon and equipment items may additionally
+-- carry an `effects` list from the shared vocabulary below (saving throws,
+-- skills, attributes, ...), folded into the totals only while the item is
+-- equipped - before the attribute pass, so an item's attribute bonus reaches
+-- everything a trait's would.
+--
+-- Compute never throws on a character that passed schema validation, and does
+-- not assume much more of one that did not: a shared sheet is validated for
+-- shape only (there is no sender system to cross-reference), fields like `name`
+-- are optional, and the sheet is cached before it is ever rendered - so a value
+-- that throws here would keep throwing on every later view. Every character-side
+-- read is therefore coerced (AsList / FiniteNumber / DisplayName) and every
+-- effect value clamped to +/- MAX_EFFECT, scaled by a level bounded to
+-- MAX_LEVEL, so no wire payload can produce a non-finite or absurd total.
 --
 -- Reads from: ns.GetModifier, ns.GetHitDie, ns.GetAccomplishmentBonus,
 --   ns.Items.Resolve, system.
@@ -62,6 +75,80 @@ local ADDON, ns = ...
 ns.CharacterSheet = ns.CharacterSheet or {}
 local CharacterSheet = ns.CharacterSheet
 
+-- Bounds on the numbers that fold into a sheet. A character can arrive straight
+-- off the wire, where only its shape was validated, so every effect value is
+-- clamped to +/- MAX_EFFECT (the schema's item-bonus limit) and the level a
+-- per_level effect multiplies by to MAX_LEVEL: neither a huge value nor a huge
+-- level, nor the two multiplied together, may reach a total.
+local MAX_EFFECT = 99
+local MAX_LEVEL = 1000
+
+-- Stands in for a missing item/record name. `name` is optional in the schema
+-- (and on a wire snapshot), but it is what an effect's provenance line
+-- concatenates and what an inventory row is labelled with, so the sheet
+-- substitutes a string rather than carrying a nil into either.
+local UNNAMED = "Unnamed"
+
+-- Returns x when it is a table, else an empty table. Used at every optional-list
+-- read on a character: unlike a system (imported and validated locally), a
+-- character can be a wire snapshot and may be any shape at all.
+local function AsList(x)
+    return type(x) == "table" and x or {}
+end
+
+-- Returns value as a finite number, or nil when it is not usable as one (a
+-- table, an unparseable string, NaN, an infinity). Every number the sheet reads
+-- off a character or an item passes through here or one of the coercions built
+-- on it - a NaN or infinity would poison every total it reaches.
+local function FiniteNumber(value)
+    local n = tonumber(value)
+    if not n or n ~= n or n == math.huge or n == -math.huge then return nil end
+    return n
+end
+
+-- The usable value of an item bonus: a finite number, or 0.
+local function BonusValue(value)
+    return FiniteNumber(value) or 0
+end
+
+-- The usable value of an effect: finite and clamped to +/- MAX_EFFECT. Trait,
+-- homebrew, pack feat/spell and item effects all fold through here, so one
+-- discipline covers every source an effect can come from.
+local function EffectValue(value)
+    return math.max(-MAX_EFFECT, math.min(MAX_EFFECT, BonusValue(value)))
+end
+
+-- The level the sheet computes with: a finite number in [1, MAX_LEVEL]. Level
+-- multiplies into per_level effects, mana and the hit-die line, so a shared
+-- character's (attacker-influenced) level is bounded once, here.
+local function SheetLevel(value)
+    return math.max(1, math.min(MAX_LEVEL, FiniteNumber(value) or 1))
+end
+
+-- The display name of an item or record, always a string (see UNNAMED).
+local function DisplayName(name)
+    return type(name) == "string" and name or UNNAMED
+end
+
+-- Optional free text passed through to the sheet, or nil. The UI concatenates
+-- these (the sheet subtitle does '"' .. quote .. '"'), so a non-string from a
+-- shared sheet must not survive Compute even when validation let it past.
+local function DisplayText(value)
+    return type(value) == "string" and value or nil
+end
+
+-- Coerces an item's ac_mod_cap into a usable cap: a whole number in [0, 99],
+-- or nil when the field is absent or unusable. Reads the same hand-editable
+-- and wire data as BonusValue, so garbage must coerce, never throw. A negative
+-- cap reads as 0 - a cap limits the modifier's benefit, a penalty belongs in
+-- ac_bonus.
+local function CapValue(value)
+    if value == nil then return nil end
+    local n = FiniteNumber(value)
+    if not n then return nil end
+    return math.max(0, math.min(99, math.floor(n)))
+end
+
 -- Returns a list of the trait records a character has selected (racial first,
 -- then origins), skipping any that do not resolve in the system.
 local function SelectedTraits(char, system)
@@ -70,7 +157,7 @@ local function SelectedTraits(char, system)
         local t = ns.FindById(system.racial_traits, char.racial_trait)
         if t then out[#out + 1] = t end
     end
-    for _, id in ipairs(char.origin_traits or {}) do
+    for _, id in ipairs(AsList(char.origin_traits)) do
         local t = ns.FindById(system.origin_traits, id)
         if t then out[#out + 1] = t end
     end
@@ -101,7 +188,9 @@ end
 -- Effect vocabulary, shared by trait bonuses/penalties, pack feat/spell
 -- effects, and homebrew records.
 -- Each effect is a record { type = <id>, value = N, ... }; this table is the
--- one place that says what a type means.
+-- one place that says what a type means. Any effect may add per_level = true
+-- to scale its value by character level ("+1 maximum HP per character level"),
+-- applied before the type folds it in.
 --
 -- Per entry:
 --   id          the effect `type` string stored in the data
@@ -209,27 +298,35 @@ end
 -- Picks.Spent and the UIs all ask here.
 function CharacterSheet.HomebrewActive(char, record)
     local gainedAt = tonumber(type(record) == "table" and record.level) or 1
-    return gainedAt <= ((type(char) == "table" and char.level) or 1)
+    return gainedAt <= (tonumber(type(char) == "table" and char.level) or 1)
 end
 
 -- Folds a single effect entry into the accumulator. source is the record
--- name, recorded for attribute bonus provenance.
-local function ApplyEffect(acc, e, source)
+-- name, recorded for attribute bonus provenance; level scales per_level
+-- effects. Everything read here is coerced: an effect can come from a shared
+-- character's homebrew or an equipped item's wire snapshot, where a value may
+-- be any shape and a name may simply be absent.
+local function ApplyEffect(acc, e, source, level)
+    if type(e) ~= "table" then return end
     local spec = EFFECT_BY_ID[e.type]
     if not spec then return end
-    spec.apply(acc, e, e.value or 0, source)
+    local v = EffectValue(e.value)
+    if e.per_level then v = v * SheetLevel(level) end
+    spec.apply(acc, e, v, DisplayName(source))
 end
 
 -- Accumulates every effect from the selected traits and the gained
 -- feat/spell records into one structure the rest of compute reads from.
-local function AccumulateEffects(traits, records)
+local function AccumulateEffects(traits, records, level)
     local acc = NewAccumulator()
-    for _, trait in ipairs(traits) do
-        for _, b in ipairs(trait.bonuses or {}) do ApplyEffect(acc, b, trait.name) end
-        for _, p in ipairs(trait.penalties or {}) do ApplyEffect(acc, p, trait.name) end
+    for _, trait in ipairs(AsList(traits)) do
+        for _, b in ipairs(AsList(trait.bonuses)) do ApplyEffect(acc, b, trait.name, level) end
+        for _, p in ipairs(AsList(trait.penalties)) do ApplyEffect(acc, p, trait.name, level) end
     end
-    for _, rec in ipairs(records or {}) do
-        for _, e in ipairs(rec.effects or {}) do ApplyEffect(acc, e, rec.name) end
+    for _, rec in ipairs(AsList(records)) do
+        if type(rec) == "table" then
+            for _, e in ipairs(AsList(rec.effects)) do ApplyEffect(acc, e, rec.name, level) end
+        end
     end
     return acc
 end
@@ -237,43 +334,15 @@ end
 -- Sums the modifiers of each attribute id in a list (for add_modifier effects).
 local function SumAddModifiers(list, modifier)
     local total = 0
-    for _, attrId in ipairs(list or {}) do total = total + (modifier[attrId] or 0) end
+    for _, attrId in ipairs(AsList(list)) do total = total + (modifier[attrId] or 0) end
     return total
 end
 
 -- Builds a set { id = true } from a list of ids.
 local function ListToSet(list)
     local set = {}
-    for _, id in ipairs(list or {}) do set[id] = true end
+    for _, id in ipairs(AsList(list)) do set[id] = true end
     return set
-end
-
--- Returns x when it is a table, else an empty table. Used for char.inventory
--- and its entries, which (unlike the rest of a character) can arrive straight
--- off the wire and may be any shape at all.
-local function AsList(x)
-    return type(x) == "table" and x or {}
-end
-
--- The usable value of an item bonus: a finite number, or 0. Item data is
--- hand-editable and, as a wire snapshot, hostile - a NaN or infinity here would
--- poison every total it reaches.
-local function BonusValue(value)
-    local n = tonumber(value)
-    if not n or n ~= n or n == math.huge or n == -math.huge then return 0 end
-    return n
-end
-
--- Coerces an item's ac_mod_cap into a usable cap: a whole number in [0, 99],
--- or nil when the field is absent or unusable. Reads the same hand-editable
--- and wire data as BonusValue, so garbage must coerce, never throw. A negative
--- cap reads as 0 - a cap limits the modifier's benefit, a penalty belongs in
--- ac_bonus.
-local function CapValue(value)
-    if value == nil then return nil end
-    local n = tonumber(value)
-    if not n or n ~= n or n == math.huge or n == -math.huge then return nil end
-    return math.max(0, math.min(99, math.floor(n)))
 end
 
 -- The bare attack total for one system weapon: the best of its governing
@@ -324,10 +393,18 @@ local function ResolveInventory(char, system, itemLib, weaponAttack)
         local item, source = ns.Items.Resolve(raw, itemLib)
         local kind = item.kind
         local entry = {
-            index = index, name = item.name, icon = item.icon,
+            index = index, name = DisplayName(item.name), icon = item.icon,
             description = item.description, kind = kind,
             source = source, missing = (source == "missing") or nil,
         }
+
+        -- The item's effect list rides along on equippable kinds for display
+        -- (the sheet's tooltips list what a worn piece changes); the folding
+        -- into totals happened in Compute, before the attribute pass.
+        if kind == "weapon" or kind == "equipment" then
+            entry.effects = type(item.effects) == "table" and #item.effects > 0
+                and item.effects or nil
+        end
 
         if kind == "weapon" then
             entry.equipped = state.equipped and true or false
@@ -392,7 +469,7 @@ function CharacterSheet.Compute(char, system, itemLib)
     if type(char) ~= "table" or type(system) ~= "table" then return nil end
 
     local traits = SelectedTraits(char, system)
-    local level = char.level or 1
+    local level = SheetLevel(char.level)
     local accomplishment = ns.GetAccomplishmentBonus(level)
 
     -- Homebrew feats and spells (authored in the pickers) fold their effects
@@ -403,8 +480,11 @@ function CharacterSheet.Compute(char, system, itemLib)
     -- constructor and silently skip the rest.)
     local activeCustom = {}
     for _, field in ipairs({ "custom_feats", "custom_spells" }) do
-        for _, p in ipairs(type(char[field]) == "table" and char[field] or {}) do
-            if CharacterSheet.HomebrewActive(char, p) then
+        for _, p in ipairs(AsList(char[field])) do
+            -- A shared character's homebrew is validated for shape only (there
+            -- is no sender system to check it against), so an entry may be a
+            -- scalar - it carries no effects and simply does not fold.
+            if type(p) == "table" and CharacterSheet.HomebrewActive(char, p) then
                 activeCustom[#activeCustom + 1] = p
             end
         end
@@ -441,15 +521,48 @@ function CharacterSheet.Compute(char, system, itemLib)
         end
     end
 
-    -- Effects come from traits and everything collected above (homebrew and
-    -- pack feats/spells alike).
-    local fx = AccumulateEffects(traits, activeCustom)
+    -- Equipped weapon and equipment items fold their effects too - a ring's
+    -- "+1 Alpha saving throws" counts only while worn. This runs before the
+    -- attribute pass so an item's attribute effect reaches the modifiers (and
+    -- through them skills, saves and weapon attacks). Resolution mirrors
+    -- ResolveInventory below; values are coerced and clamped like the other
+    -- item bonuses because the wire `resolved` snapshot is hostile.
+    for _, raw in ipairs(AsList(char.inventory)) do
+        local state = AsList(raw)
+        if state.equipped then
+            local item = ns.Items.Resolve(raw, itemLib)
+            if (item.kind == "weapon" or item.kind == "equipment")
+                and type(item.effects) == "table" then
+                -- `name` is optional on a wire snapshot, and it is what an
+                -- attribute effect's provenance line concatenates: a nameless
+                -- item folds under the placeholder rather than throwing.
+                local rec = { name = DisplayName(item.name), effects = {} }
+                for _, e in ipairs(item.effects) do
+                    if type(e) == "table" then
+                        local copy = {}
+                        for k, v in pairs(e) do copy[k] = v end
+                        copy.value = EffectValue(e.value)
+                        rec.effects[#rec.effects + 1] = copy
+                    end
+                end
+                if #rec.effects > 0 then activeCustom[#activeCustom + 1] = rec end
+            end
+        end
+    end
 
-    -- Attributes: base + trait bonus + global all-attribute adjustment.
+    -- Effects come from traits and everything collected above (homebrew, pack
+    -- feats/spells, and equipped items alike).
+    local fx = AccumulateEffects(traits, activeCustom, level)
+
+    -- Attributes: base + trait bonus + global all-attribute adjustment. A base
+    -- score is coerced: the wire path validates that `attributes` is a table,
+    -- not what its values are, and a table (or a NaN) there would break the
+    -- arithmetic every other total is built on.
+    local baseScores = AsList(char.attributes)
     local modifier = {}
     local attributes = {}
     for _, attr in ipairs(system.attributes or {}) do
-        local base = (char.attributes or {})[attr.id] or 0
+        local base = FiniteNumber(baseScores[attr.id]) or 0
         local bonus = (fx.attr[attr.id] or 0) + fx.allAttr
         local value = base + bonus
         modifier[attr.id] = ns.GetModifier(value)
@@ -572,19 +685,26 @@ function CharacterSheet.Compute(char, system, itemLib)
     -- classic "2 x modifier"; an AIAS-style "3 + half level + cast modifier"
     -- is mana_base 3, mana_per_level 0.5, mana_multiplier 1. This is the
     -- fx-free base (trait/homebrew effects are added as `mana.max` in derived).
-    local manaBase = char.max_mana or math.max(0,
+    -- The stored maxima and the current/temp pools are coerced for the same
+    -- reason the base scores are: they are numbers on a character the wire
+    -- checked only the shape of.
+    local manaBase = FiniteNumber(char.max_mana) or math.max(0,
         cfg.mana_base + math.ceil(level * cfg.mana_per_level) + cfg.mana_multiplier * spellMod)
 
     local derived = {
         accomplishment = accomplishment,
         primary_attribute = primary,
         hit_dice = level .. ns.GetHitDie(hitDieMod),
-        hp = { current = char.current_hp, max = (char.max_hp or 0) + fx.maxHP, temp = char.temp_hp },
+        hp = {
+            current = FiniteNumber(char.current_hp),
+            max = (FiniteNumber(char.max_hp) or 0) + fx.maxHP,
+            temp = FiniteNumber(char.temp_hp),
+        },
         -- `base` is the stored (fx-free) maximum; `max` adds the live trait/homebrew
         -- effect on top. Creation persists `base`, never `max`, so an effect is
         -- not baked into the stored value and then re-added on every Compute.
         mana = {
-            current = char.current_mana,
+            current = FiniteNumber(char.current_mana),
             base = manaBase,
             max = manaBase + fx.maxMana,
         },
@@ -639,8 +759,9 @@ function CharacterSheet.Compute(char, system, itemLib)
     end
 
     return {
-        name = char.name, player = char.player, race = char.race,
-        level = level, quote = char.quote, notes = char.notes,
+        name = DisplayName(char.name), player = DisplayText(char.player),
+        race = DisplayText(char.race),
+        level = level, quote = DisplayText(char.quote), notes = DisplayText(char.notes),
         attributes = attributes,
         skills = skills,
         saves = saves,

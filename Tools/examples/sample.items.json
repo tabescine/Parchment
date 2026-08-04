@@ -30,6 +30,18 @@
       "ac_mod_cap": 0,
       "version": 1
     },
+    "itm_5": {
+      "id": "itm_5",
+      "name": "Ring of the Owl",
+      "kind": "equipment",
+      "description": "A worn silver band, cool against the skin. The owl sees what others miss.",
+      "icon": "inv_jewelry_ring_03",
+      "effects": [
+        { "type": "skill", "skill": "perception", "value": 1 },
+        { "type": "save", "id": "spirit", "value": 1 }
+      ],
+      "version": 1
+    },
     "itm_3": {
       "id": "itm_3",
       "name": "Arrows",

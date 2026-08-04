@@ -86,3 +86,44 @@ wire.receive("Parchment", W({ t = "DMROLE", v = {}, ver = "0.1.0" }), "PARTY", "
 wire.receive("Parchment", W({ t = "SYSTEM", v = { system_name = "EVIL2" }, ver = "0.1.0" }),
     "PARTY", "Mallory")
 assert(sys == 1, "a rival DMROLE claim silently transferred authority to the claimant")
+
+-- Group membership. DMROLE is not authoritative (it is what ESTABLISHES the
+-- DM), so on a client that recognizes nobody the first claim wins - which means
+-- a stranger whispering one would take the seat. A fresh client with a real
+-- roster: only Alice is in the group, Mallory is any other player on the realm.
+GetNumGroupMembers = function() return 2 end
+UnitExists = function(u) return u == "party1" end
+UnitName = function(u)
+    if u == "party1" then return "Alice-OtherRealm" end
+    return "Me"
+end
+
+local ns2, wire2 = boot("0.1.0")
+local init2 = 0
+ns2.Comm.On("INIT", function() init2 = init2 + 1 end)
+assert(ns2.Comm.InGroup("Alice") and ns2.Comm.InGroup("Me"), "group members must pass InGroup")
+assert(not ns2.Comm.InGroup("Mallory"), "a player outside the group must fail InGroup")
+
+-- A whispered DMROLE from outside the group must not claim the empty DM seat.
+wire2.receive("Parchment", W({ t = "DMROLE", v = {}, ver = "0.1.0" }), "WHISPER", "Mallory")
+assert(ns2.Comm.RecognizedDM() == nil, "a stranger's whispered DMROLE became the recognized DM")
+
+-- Nor may a stranger whisper group state directly (the trust gate is wide open
+-- while no DM is recognized - membership is what closes it).
+wire2.receive("Parchment", W({ t = "INIT", v = { combatants = {} }, ver = "0.1.0" }),
+    "WHISPER", "Mallory")
+assert(init2 == 0, "a stranger's whispered INIT was dispatched")
+
+-- A real group member still claims the role normally, and is then authoritative.
+wire2.receive("Parchment", W({ t = "DMROLE", v = {}, ver = "0.1.0" }), "PARTY", "Alice")
+assert(ns2.Comm.SameName(ns2.Comm.RecognizedDM(), "Alice"), "a group member's DMROLE was blocked")
+wire2.receive("Parchment", W({ t = "INIT", v = { combatants = {} }, ver = "0.1.0" }),
+    "PARTY", "Alice")
+assert(init2 == 1, "the recognized DM's INIT was blocked by the membership gate")
+
+-- Without the roster APIs the gate cannot decide and stays lenient (documented
+-- test-only leniency). Clearing them also keeps them out of the files that run
+-- after this one, which boot Comm without a roster of their own.
+GetNumGroupMembers, UnitExists = nil, nil
+UnitName = function() return "Me" end
+assert(ns2.Comm.InGroup("Mallory"), "an unknown roster must not block anyone")

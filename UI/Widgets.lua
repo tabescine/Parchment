@@ -5,10 +5,11 @@
 -- ns.Dialogs.Pick; the builders turn system records into Pick items
 -- ({ id, name, tooltip? }). The only custom control is a numeric Stepper.
 --
--- Reads from: ns.UI (palette), ns.FindById.
+-- Reads from: ns.UI (palette), ns.FindById, ns.AttrName, ns.GetSystem,
+--   ns.CharacterSheet.EffectType (at call time - Widgets loads first).
 -- Exposes on ns.Widgets: .Stepper, .ScrollingEdit, .ListItems, .AttrItems,
 --   .TraitItems, .RacialItems, .SaveItems, .TraitName, .CandidateSet,
---   .AttrPickText
+--   .AttrPickText, .EffectSummary
 
 local ADDON, ns = ...
 
@@ -133,6 +134,47 @@ end
 function Widgets.AttrPickText(pick, effective)
     if pick then return ns.AttrName(pick) end
     return ns.AttrName(effective) .. " |cff9e998c(auto)|r"
+end
+
+-- One line describing an effect record from the shared vocabulary ("Saving
+-- throw: Alpha +1", "Armor Class +2"), with targets resolved against the
+-- loaded system's names (raw ids when it does not define them - item effects
+-- can arrive on a sheet authored under another system). Shared by the item
+-- wizard, the library rows and the sheet's inventory tooltips.
+function Widgets.EffectSummary(e)
+    if type(e) ~= "table" then return "?" end
+    local spec = ns.CharacterSheet.EffectType(e.type)
+    -- An unknown type is echoed back so the player can see what an import
+    -- carried; it is wire text, so it is sanitized and capped first.
+    if not spec then return ns.SafeText(e.type) .. " (not applied)" end
+
+    -- The target's display name, by target family.
+    local text = spec.label
+    if spec.target == "attribute" then
+        text = text .. ": " .. ns.AttrName(e[spec.target_key] or "?")
+    elseif spec.target == "skill" then
+        local id = e.skill or e.id
+        local rec = ns.FindById(ns.GetSystem().skills, id)
+        text = text .. ": " .. tostring(rec and rec.name or id or "?")
+    elseif spec.target == "school" and e.school then
+        local name = tostring(e.school)
+        for _, s in ipairs(ns.GetSystem().spell_schools or {}) do
+            if (type(s) == "table" and s.id or s) == e.school then
+                name = (type(s) == "table" and s.name) or tostring(s)
+            end
+        end
+        text = text .. ": " .. name
+    end
+
+    -- The numbers: accomplishment grants are on/off, everything else signed.
+    if spec.id ~= "accomplish_skill" then
+        text = text .. "  " .. ns.UI.Signed(tonumber(e.value) or 0)
+        if e.per_level then text = text .. " per level" end
+        if e.add_modifier then
+            text = text .. "  and " .. ns.AttrName(e.add_modifier) .. " modifier"
+        end
+    end
+    return text
 end
 
 -- A stepper click's signed delta: 5 while Shift is held, so allocating an
