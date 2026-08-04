@@ -496,11 +496,33 @@ local function PrintHelp()
     Print("  " .. C_GOLD .. "/pmt cached|r  - browse cached sheets (|cffc8a868/pmt cached clear|r to wipe)")
     Print("  " .. C_GOLD .. "/pmt minimap|r - toggle the minimap button")
     Print("  " .. C_GOLD .. "/pmt save|r    - write all data to disk (reloads the UI)")
+    Print("  " .. C_GOLD .. "/pmt version|r - the running version and what it syncs with")
     Print("  " .. C_GOLD .. "/pmt who|r     - list known characters")
     Print("  " .. C_GOLD .. "/pmt validate|r- check the loaded system, characters and item library")
 end
 
 -- Prints the known characters and marks the active one.
+-- Reports the running version and what it will and will not talk to. Exists
+-- because "why did nothing arrive?" is almost always a version answer, and the
+-- alternative was asking people to read an addon list. While the major is 0 the
+-- wire gate demands the MINOR match too, so 0.4.x and 0.3.x are deaf to each
+-- other by design - printing the sync key makes that checkable at a glance
+-- rather than inferred from silence.
+local function PrintVersion()
+    local version = (ns.Comm and ns.Comm.Version and ns.Comm.Version()) or "unknown"
+    local maj, min = tostring(version):match("^(%d+)%.(%d+)")
+    Print(C_GOLD .. "Parchment " .. version .. "|r")
+    if maj then
+        local key = maj .. "." .. min
+        Print("  syncs with: " .. C_GOLD .. (tonumber(maj) > 0 and (maj .. ".x") or (key .. ".x"))
+            .. "|r (same version key; everyone in the group needs it to sync)")
+    end
+    -- The same build can still differ if it was not installed from one zip, so
+    -- point at the check that actually settles it.
+    Print("  compare with a group member's " .. C_GOLD .. "/pmt version|r"
+        .. " - a mismatch means no sync at all, with a notice in chat.")
+end
+
 local function PrintRoster()
     local _, activeKey = ns.GetActiveCharacter()
     local found = false
@@ -672,6 +694,8 @@ local function HandleSlash(input)
     elseif cmd == "cached" then
         if arg and strtrim(arg):lower() == "clear" then ns.Sharing.ClearCache()
         else ns.Sharing.OpenCache() end
+    elseif cmd == "version" then
+        PrintVersion()
     elseif cmd == "who" then
         PrintRoster()
     elseif cmd == "validate" then

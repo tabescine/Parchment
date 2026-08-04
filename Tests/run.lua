@@ -24,6 +24,7 @@ local MANIFEST = {
     "test_dice.lua",
     "test_initiative.lua",
     "test_init_adopt.lua",
+    "test_init_scale.lua",
     "test_widgets.lua",
     "test_widgets_debounce.lua",
     "test_characterform.lua",
