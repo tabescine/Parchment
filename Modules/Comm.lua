@@ -25,16 +25,18 @@
 -- priority so a system share cannot stall vitals/sheet traffic. See Encode.
 --
 -- The inbound edge is hardened centrally in OnReceive (not per handler): own
--- group echoes are filtered once, the decode chain is fully pcall-guarded, and
--- accepted messages are rate-limited per sender+type so one peer cannot flood
--- the main thread (SYSTEM decompress, VITALS churn). Per-sender bookkeeping is
--- pruned when the group roster changes.
+-- group echoes are filtered once, the decode chain is fully pcall-guarded,
+-- group-only types are dropped from senders outside our group (a whisper is not
+-- a membership proof - see GROUP_ONLY), and accepted messages are rate-limited
+-- per sender+type so one peer cannot flood the main thread (SYSTEM decompress,
+-- VITALS churn). Per-sender bookkeeping is pruned when the group roster changes.
 --
 -- Reads from: ns.Addon (the AceAddon object with Comm/Serializer mixins), its
---   db, ns.Print, ns.Party (guarded; vitals push on role change), and
---   LibDeflate via LibStub (optional).
--- Exposes on ns.Comm: IsDM, IsSelf, NormalizeName, SameName, SetDM, RecognizedDM,
---   SetRecognizedDM, ClearRecognizedDM, IsAuthoritative, Send, Whisper, On, Init.
+--   db, ns.Print, ns.Party (guarded; vitals push on role change, vitals prune on
+--   roster change), and LibDeflate via LibStub (optional).
+-- Exposes on ns.Comm: IsDM, IsSelf, InGroup, NormalizeName, SameName, SetDM,
+--   RecognizedDM, SetRecognizedDM, ClearRecognizedDM, IsAuthoritative, Send,
+--   Whisper, On, Init.
 
 local ADDON, ns = ...
 
@@ -50,6 +52,19 @@ local handlers = {}
 -- handlers.
 local AUTHORITATIVE = { SYSTEM = true, INIT = true, FEATS = true, SPELLS = true }
 
+-- Message types that only make sense from a player we share a group with: they
+-- drive group state (system/initiative/pack adoption, DM recognition, party
+-- vitals), so a sender outside the group has no business sending them. Without
+-- this any stranger on the realm could WHISPER a DMROLE claim and - since
+-- DMROLE is not AUTHORITATIVE - silently become the recognized DM, then whisper
+-- INIT/SYSTEM through the trust gate they just walked past.
+-- REQ/CHAR/VITREQ/LINKQ/LINKA are deliberately NOT listed: sheet sharing and
+-- chat-link lookups legitimately work by whisper between any two players
+-- (guild, friends, a linked sheet in say), so gating them would break the
+-- feature. They write no group state, and the rate gate caps their cost.
+local GROUP_ONLY = { SYSTEM = true, INIT = true, FEATS = true, SPELLS = true, DMROLE = true,
+    RELEASE = true, INITSUBMIT = true, TURNEND = true, VITALS = true }
+
 -- This client's recognized DM (canonical name; session memory only). Distinct
 -- from db.profile.dm. nil means "no DM recognized yet" - the bootstrap state in
 -- which authoritative messages are accepted from anyone until the first claim
@@ -63,9 +78,17 @@ local GROUP_DIST = { PARTY = true, RAID = true, INSTANCE_CHAT = true }
 -- Inbound rate limit: the minimum seconds between two ACCEPTED messages of a
 -- given type from one sender. Caps the cost a single peer can impose - SYSTEM
 -- decompresses ~100 KB on the main thread, VITALS arrives at edit frequency.
--- Types absent here are unlimited (REQ/CHAR are self-throttled by `pending`).
+-- Every type that costs us work on arrival is listed; types absent here are
+-- unlimited. The listed cost is not only CPU: REQ is an amplifier (a ~20 byte
+-- request makes us copy, serialize and compress a whole sheet - up to ~100 KB -
+-- back to the asker, with no UI the player could dismiss), and DMROLE prints,
+-- pops up a switch prompt, and - when we are the DM - whispers a counter-claim
+-- per claim received, i.e. a flood the sender can reflect off us at their own
+-- rate. (Sharing's `pending` map does NOT cover this: it throttles the requests
+-- we SEND, never the ones we receive.)
 local MIN_INTERVAL = { SYSTEM = 3, VITALS = 0.5, INIT = 0.25, CHAR = 2, FEATS = 3, SPELLS = 3,
-    LINKQ = 0.3, LINKA = 0.3 }
+    LINKQ = 0.3, LINKA = 0.3, REQ = 2, VITREQ = 3, DMROLE = 5, RELEASE = 5,
+    INITSUBMIT = 1, TURNEND = 1 }
 -- [sender][type] = GetTime() of the last accepted message (pruned on roster
 -- change). Nested by sender so a departing member's row drops in one step.
 local recvAt = {}
@@ -137,6 +160,38 @@ end
 -- This player's own name.
 local function MyName()
     return (UnitName and UnitName("player")) or ""
+end
+
+-- The canonical names of everyone currently in our group, as a set, always
+-- including our own. Returns nil - "the roster cannot be determined" - when the
+-- roster APIs are absent, which in practice only happens in the out-of-client
+-- tests; callers must stay lenient in that case, the same way RateOK skips
+-- limiting when there is no GetTime.
+local function GroupRoster()
+    if not (GetNumGroupMembers and UnitExists and UnitName) then return nil end
+    local roster = {}
+    local me = Comm.NormalizeName(MyName())
+    if me then roster[me] = true end
+    local n = GetNumGroupMembers() or 0
+    local prefix = (IsInRaid and IsInRaid()) and "raid" or "party"
+    for i = 1, n do
+        local unit = prefix .. i
+        if UnitExists(unit) then
+            local who = Comm.NormalizeName(UnitName(unit) or "")
+            if who then roster[who] = true end
+        end
+    end
+    return roster
+end
+
+-- True when sender shares our group (or is us). Lenient when the roster is
+-- unknown: with no roster APIs there is nothing to check against, and refusing
+-- everything would silently disable sync instead of hardening it.
+function Comm.InGroup(sender)
+    local roster = GroupRoster()
+    if not roster then return true end
+    local who = Comm.NormalizeName(sender)
+    return who ~= nil and roster[who] == true
 end
 
 -- True when two names refer to the same player (realm-suffix tolerant).
@@ -323,6 +378,12 @@ local function OnReceive(prefix, text, distribution, sender)
         if not Comm.IsSelf(sender) then WarnMismatch(sender, env.ver) end
         return
     end
+    -- Membership gate: group-state types are applied only from someone actually
+    -- in our group, so a stranger cannot whisper past the trust model (a
+    -- whispered DMROLE used to claim the DM seat on a client that recognizes
+    -- nobody yet). It runs after the version gate so a peer who has just left
+    -- can still be warned about a mismatch exactly once.
+    if GROUP_ONLY[env.t] and not Comm.InGroup(sender) then return end
     -- Trust gate: a DM-authoritative message is applied only from the recognized
     -- DM. This is the central fix for DM-broadcast spoofing - a non-DM group
     -- member can no longer push a fake system or initiative state.
@@ -335,25 +396,20 @@ end
 
 -- Drops per-sender bookkeeping for players no longer in the group, so a long
 -- session cannot accumulate unbounded version-warning and rate-limit rows (and a
--- player who leaves and rejoins can be re-warned). The recognized DM is NOT
+-- player who leaves and rejoins can be re-warned). The party vitals cache is
+-- keyed by sender too, so Party prunes alongside us - otherwise a departed or
+-- foreign member's row lingers in the overview. The recognized DM is NOT
 -- touched - a disconnect must not unseat the DM (see the trust model).
 local function PruneDepartedSenders()
-    local keep = { [Comm.NormalizeName(MyName()) or ""] = true }
-    local n = (GetNumGroupMembers and GetNumGroupMembers()) or 0
-    local prefix = (IsInRaid and IsInRaid()) and "raid" or "party"
-    for i = 1, n do
-        local unit = prefix .. i
-        if UnitExists and UnitExists(unit) then
-            local who = Comm.NormalizeName((UnitName and UnitName(unit)) or "")
-            if who then keep[who] = true end
-        end
-    end
+    local keep = GroupRoster()
+    if not keep then return end
     for who in pairs(versionWarned) do
         if not keep[Comm.NormalizeName(who) or ""] then versionWarned[who] = nil end
     end
     for who in pairs(recvAt) do
         if not keep[Comm.NormalizeName(who) or ""] then recvAt[who] = nil end
     end
+    if ns.Party and ns.Party.PruneDeparted then ns.Party.PruneDeparted(keep) end
 end
 
 -- Registers the comm prefix and the roster-change prune. Called once the addon

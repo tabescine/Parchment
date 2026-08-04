@@ -6,9 +6,13 @@
 -- outgoing one. A picker (/pmt systems) chooses the active system from the
 -- library. Parchment ships no system, so the library starts empty.
 --
+-- The library is bounded before it reaches SavedVariables (see MAX_ENTRIES /
+-- MAX_SYSTEM_BYTES below), and every remote-derived name printed or shown in a
+-- popup goes through ns.SafeText.
+--
 -- Reads from: ns.Addon.db.global (systemLibrary), ns.Comm, ns.ImportExport
---   (StripMeta), ns.Print, ns.DeepCopy, ns.HubUI, ns.CharacterSheetUI,
---   ns.FeatsUI, ns.SpellbookUI, ns.ItemWizardUI.
+--   (StripMeta), ns.JSON (size bound), ns.Print, ns.SafeText, ns.DeepCopy,
+--   ns.HubUI, ns.CharacterSheetUI, ns.FeatsUI, ns.SpellbookUI, ns.ItemWizardUI.
 --   Owns ParchmentSystemDB swaps. The library is browsed/managed in the
 --   hub's Systems panel (UI/HubPanels.lua).
 -- Exposes on ns.Systems: Store, SetActive, GetLibrary, ConfirmDelete,
@@ -19,11 +23,39 @@ local ADDON, ns = ...
 ns.Systems = ns.Systems or {}
 local Sys = ns.Systems
 
+-- Bounds on the library, in the spirit of Modules/Sharing.lua's received-sheet
+-- cache: a system over MAX_SYSTEM_BYTES (encoded) is refused before it touches
+-- SavedVariables, and the library holds at most MAX_ENTRIES systems. The comm
+-- path stores whatever a recognized DM sends, keyed by an attacker-chosen name,
+-- so unbounded these two are permanent saved-file growth on a share flood.
+-- The cap is roomier than Sharing's (a whole ruleset, not one character) and
+-- the entry count tighter - nobody keeps dozens of systems.
+-- Unlike a cached sheet (re-requestable), a library entry is the player's own
+-- imported content, so a full library REFUSES the newcomer with a notice
+-- instead of evicting anything.
+local MAX_SYSTEM_BYTES = 512 * 1024
+local MAX_ENTRIES = 25
+
 -- The cache of known systems, keyed by system_name.
 local function Library()
     local g = ns.Addon.db.global
     g.systemLibrary = g.systemLibrary or {}
     return g.systemLibrary
+end
+
+-- The encoded byte size of a value, or nil when it cannot be encoded. Runs
+-- under pcall so a pathologically shaped payload cannot throw here.
+local function EncodedSize(value)
+    local ok, enc = pcall(ns.JSON.encode, value)
+    if not ok or type(enc) ~= "string" then return nil end
+    return #enc
+end
+
+-- How many entries a name-keyed table holds (`#` says nothing about these).
+local function Count(t)
+    local n = 0
+    for _ in pairs(t) do n = n + 1 end
+    return n
 end
 
 -- Refreshes any open windows that depend on the system. Also exposed as
@@ -39,17 +71,40 @@ local function RefreshAll()
 end
 Sys.RefreshAll = RefreshAll
 
--- Caches a system into the library (latest wins per name).
+-- Caches a system into the library (latest wins per name), within the bounds
+-- above. Returns true when it was stored, false when it is not a system or a
+-- bound refused it - a refusal prints its own notice and keeps the library as
+-- it was.
 function Sys.Store(system, from)
-    if type(system) ~= "table" or not system.system_name then return end
-    Library()[system.system_name] = {
-        name = system.system_name, system = ns.DeepCopy(system),
+    if type(system) ~= "table" or not system.system_name then return false end
+    local lib, name = Library(), system.system_name
+
+    -- Refuse an oversized system outright, and refuse a NEW name once the
+    -- library is full - an update of a name already stored always goes through,
+    -- so "latest wins" still holds for systems the player already keeps.
+    local size = EncodedSize(system)
+    if not size or size > MAX_SYSTEM_BYTES then
+        ns.Print("system '" .. ns.SafeText(name) .. "' is too large to store; ignored.")
+        return false
+    end
+    if lib[name] == nil and Count(lib) >= MAX_ENTRIES then
+        ns.Print("your system library is full (" .. MAX_ENTRIES .. "). Delete one in "
+            .. "/pmt systems to make room for '" .. ns.SafeText(name) .. "'.")
+        return false
+    end
+
+    lib[name] = {
+        name = name, system = ns.DeepCopy(system),
         from = from, time = (time and time()) or 0,
     }
+    return true
 end
 
 -- Makes a system the active one, preserving the outgoing system in the library
--- (if not already there) so nothing is lost.
+-- (if not already there) so nothing is lost. Preservation is best-effort: a
+-- library already at MAX_ENTRIES refuses the outgoing system, and Sys.Store
+-- says so - the swap still happens, so the user is told rather than silently
+-- losing it.
 function Sys.SetActive(system, from)
     if type(system) ~= "table" then return end
     if type(ParchmentSystemDB) == "table" and ParchmentSystemDB.system_name
@@ -83,21 +138,23 @@ function Sys.Delete(name)
     Library()[name] = nil
     if IsActiveName(name) then
         ParchmentSystemDB = {}
-        ns.Print("deleted system '" .. name .. "'. It was active - no system is loaded now.")
+        ns.Print("deleted system '" .. ns.SafeText(name)
+            .. "'. It was active - no system is loaded now.")
     else
-        ns.Print("deleted system '" .. name .. "' from your library.")
+        ns.Print("deleted system '" .. ns.SafeText(name) .. "' from your library.")
     end
     RefreshAll()
 end
 
 -- Opens the delete confirmation for a library entry (the hub's Systems
--- panel calls this from its per-row delete button).
+-- panel calls this from its per-row delete button). The name is sanitized for
+-- display only; the popup's data keeps the exact key deletion looks up.
 function Sys.ConfirmDelete(name)
     if not Library()[name] then return end
     local note = IsActiveName(name)
         and "It is your ACTIVE system - Parchment returns to the no-system state."
         or "Your characters are not affected."
-    StaticPopup_Show("PARCHMENT_DELETE_SYSTEM", name, note, name)
+    StaticPopup_Show("PARCHMENT_DELETE_SYSTEM", ns.SafeText(name), note, name)
 end
 
 -- Confirm dialog for deleting a system (destructive once saved to disk).
@@ -122,7 +179,7 @@ StaticPopupDialogs["PARCHMENT_ADOPT_SYSTEM"] = {
     OnAccept = function(_, entry)
         if entry and entry.system then
             Sys.SetActive(entry.system, entry.from)
-            ns.Print("now using system '" .. entry.name .. "'.")
+            ns.Print("now using system '" .. ns.SafeText(entry.name) .. "'.")
         end
     end,
     timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
@@ -131,6 +188,9 @@ StaticPopupDialogs["PARCHMENT_ADOPT_SYSTEM"] = {
 -- Receive handler: cache the shared system and prompt, rather than overwriting.
 -- Remote data is schema-validated first - the local import path validates, and
 -- the comm path must hold the same line or a bad share breaks every window.
+-- Everything the handler shows the player (sender, system name) is remote text,
+-- so it goes through ns.SafeText: a raw "|" escape would render as a forged
+-- item link, and an unbounded name would hang the chat frame.
 if ns.Comm then
     ns.Comm.On("SYSTEM", function(system, sender)
         -- Our own broadcast echoes back; a DM must not be prompted to adopt
@@ -145,13 +205,18 @@ if ns.Comm then
         end
         local ok = ns.Schema.ValidateSystem(system)
         if not ok then
-            ns.Print((sender or "someone") .. " shared system '" .. system.system_name
-                .. "' but it failed validation; ignored.")
+            ns.Print(ns.SafeText(sender, nil, "someone") .. " shared system '"
+                .. ns.SafeText(system.system_name) .. "' but it failed validation; ignored.")
             return
         end
-        Sys.Store(system, sender)
-        ns.Print((sender or "a DM") .. " shared system '" .. system.system_name .. "'.")
-        StaticPopup_Show("PARCHMENT_ADOPT_SYSTEM", tostring(sender), system.system_name,
+        -- A refused store (oversized, or a full library) already said why; do
+        -- not follow it with a "shared" line and an adopt prompt for something
+        -- we did not keep - that popup is exactly what a flood would spam.
+        if not Sys.Store(system, sender) then return end
+        ns.Print(ns.SafeText(sender, nil, "a DM") .. " shared system '"
+            .. ns.SafeText(system.system_name) .. "'.")
+        StaticPopup_Show("PARCHMENT_ADOPT_SYSTEM", ns.SafeText(sender, nil, "someone"),
+            ns.SafeText(system.system_name),
             { system = ns.DeepCopy(system), from = sender, name = system.system_name })
     end)
 end

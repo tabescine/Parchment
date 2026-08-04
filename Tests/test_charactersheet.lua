@@ -157,6 +157,127 @@ char.inventory = {}
 T.assert_deepeq(sheet, ns.CharacterSheet.Compute(char, system, lib), "empty inventory")
 char.inventory = nil
 
+-- An equipped item's effects fold BEFORE the attribute pass, so an item's
+-- attribute bonus reaches the modifier and everything riding it - skills,
+-- saves, weapon attacks, the hit die - exactly as a trait's would.
+local ringLib = { ring = { id = "ring", name = "Ring of Alpha", kind = "equipment",
+    effects = { { type = "attribute", id = "a", value = 1 } } } }
+char.inventory = { { item_id = "ring", equipped = true } }
+local ringed = ns.CharacterSheet.Compute(char, system, ringLib)
+local rBy = {}
+for _, a in ipairs(ringed.attributes) do rBy[a.id] = a end
+assert(rBy.a.final == 3 and rBy.a.modifier == 1, "the ring must shift a's modifier")
+assert(rBy.a.sources[2] == "+1 Ring of Alpha", "the attribute bonus names the item")
+for _, s in ipairs(ringed.skills) do
+    if s.id == "s1" then
+        assert(s.total == 6, "the shifted modifier must reach skills, got " .. s.total)
+    end
+end
+for _, s in ipairs(ringed.saves) do
+    if s.id == "a" then assert(s.total == 4, "the shifted modifier must reach saves") end
+end
+for _, w in ipairs(ringed.weapons) do
+    if w.id == "w1" then
+        assert(w.attack_total == 4, "the shifted modifier must reach weapon attacks")
+    end
+end
+assert(ringed.derived.hit_dice == "2d10", "the shifted modifier must reach the hit die")
+char.inventory = nil
+
+-- Hostile-but-schema-valid characters. A shared sheet is validated for shape
+-- only (no sender system to cross-reference), several fields are optional, and
+-- the receiver caches it before rendering it - so a payload that throws in
+-- Compute would throw on every later view. Compute must stay total: a sane
+-- sheet with finite numbers, never an error.
+local function Finite(n)
+    return type(n) == "number" and n == n and n ~= math.huge and n ~= -math.huge
+end
+local function Hostile(fields)
+    local c = { name = "Hostile", level = 1, attributes = { a = 1, b = 3, c = 4 } }
+    for k, v in pairs(fields) do c[k] = v end
+    return c
+end
+-- Computes a hostile character, asserting it neither throws nor produces a
+-- non-finite derived number. Returns the sheet for further assertions.
+local function Computes(label, fields)
+    local ok, result = pcall(ns.CharacterSheet.Compute, Hostile(fields), system, {})
+    assert(ok, label .. " must not throw: " .. tostring(result))
+    assert(type(result) == "table", label .. " must still return a sheet")
+    local der = result.derived
+    assert(Finite(der.ac) and Finite(der.initiative) and Finite(der.movement)
+        and Finite(der.actions), label .. " left a non-finite derived stat")
+    assert(Finite(der.hp.max) and Finite(der.mana.max) and Finite(der.mana.base),
+        label .. " left a non-finite resource maximum")
+    for _, a in ipairs(result.attributes) do
+        assert(Finite(a.final) and Finite(a.modifier), label .. " left a non-finite attribute")
+    end
+    for _, s in ipairs(result.skills) do assert(Finite(s.total), label .. " left a non-finite skill") end
+    for _, s in ipairs(result.saves) do assert(Finite(s.total), label .. " left a non-finite save") end
+    return result
+end
+
+-- List fields that are not lists: ipairs would throw on every one of them.
+Computes("a scalar origin_traits", { origin_traits = 5 })
+Computes("scalar accomplishment lists", {
+    accomplished_skills = 5, accomplished_saves = "s1", accomplished_weapons = true,
+})
+Computes("a scalar custom list", { custom_feats = 7, custom_spells = "none" })
+
+-- Attribute scores that are not numbers: everything on the sheet is built on
+-- this arithmetic.
+Computes("non-numeric attributes", { attributes = { a = {}, b = "many", c = 1 / 0 } })
+Computes("a scalar attributes block", { attributes = 5 })
+
+-- Homebrew records that are not tables, whose effects are not a list, and whose
+-- effect values are not numbers.
+local junkHb = Computes("junk homebrew", { custom_feats = {
+    5, "feat", true,
+    { name = "No effects", effects = 9 },
+    { name = "Junk effects", effects = { 5, "e", { type = "max_hp", value = {} },
+        { type = "max_hp", value = "lots" }, { type = "max_hp", value = 0 / 0 } } },
+} })
+assert(junkHb.derived.hp.max == 0, "unusable effect values must contribute nothing")
+
+-- An absurd homebrew value is clamped like an item's (+/- 99), so wire homebrew
+-- cannot poison a total the way an item bonus cannot.
+local huge = Computes("an absurd homebrew value", { custom_feats = {
+    { name = "Greedy", effects = { { type = "max_hp", value = 1e12 },
+        { type = "ac", value = -1e308 } } },
+} })
+assert(huge.derived.hp.max == 99, "an absurd effect value must clamp to 99, got " .. huge.derived.hp.max)
+assert(huge.derived.ac == 12 + 1 - 99, "an absurd negative value must clamp to -99, got "
+    .. huge.derived.ac)                             -- 12 base + best candidate b's mod 1 - 99
+
+-- Stored maxima that are not numbers.
+local maxima = Computes("non-numeric maxima", { max_hp = {}, max_mana = "plenty",
+    current_hp = {}, temp_hp = 0 / 0, current_mana = "x" })
+assert(maxima.derived.hp.max == 0 and maxima.derived.hp.current == nil)
+assert(maxima.derived.mana.base == 6, "an unusable max_mana falls to the formula (3 x c's mod 2)")
+
+-- Level: attacker-influenced, and per_level effects multiply by it. Both the
+-- level and the product stay finite (level is bounded to MAX_LEVEL = 1000).
+local scaled = Computes("an enormous level", { level = 1e308, custom_feats = {
+    { name = "Per level", effects = { { type = "max_hp", value = 5, per_level = true } } },
+} })
+assert(scaled.derived.hp.max == 5000, "per_level must scale by a bounded level, got "
+    .. scaled.derived.hp.max)
+assert(scaled.level == 1000, "the sheet's level is bounded too, got " .. tostring(scaled.level))
+Computes("a non-numeric level", { level = {}, custom_feats = {
+    { name = "Per level", effects = { { type = "max_hp", value = 5, per_level = true } } },
+} })
+Computes("a negative level", { level = -1e12 })
+
+-- An equipped item with effects but no name: `name` is optional in the schema,
+-- and it is what an attribute effect's provenance line concatenates.
+local nameless = Computes("a nameless equipped item", { inventory = { {
+    item_id = "x", equipped = true,
+    resolved = { kind = "equipment", effects = { { type = "attribute", id = "a", value = 1 } } },
+} } })
+local nBy = {}
+for _, a in ipairs(nameless.attributes) do nBy[a.id] = a end
+assert(nBy.a.bonus == 1, "a nameless item's effect must still fold")
+assert(type(nBy.a.sources[1]) == "string", "the provenance line needs a name to concatenate")
+
 -- An out-of-list pick is ignored in favour of the best candidate.
 local char3 = { name = "O", level = 1, attributes = { a = 1, b = 3, c = 4 },
     primary_attribute = "b", ac_attribute = "c", init_attribute = "a" }

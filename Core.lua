@@ -18,7 +18,7 @@
 --   library API GetItemLibrary/GetItem/SetItem/DeleteItem/NextItemKey and the
 --   shared MISSING_ITEM sentinel, the pack API GetPackLibrary/GetActivePack/
 --   GetFeatPack/GetSpellPack, ...), the module registry (RegisterModule,
---   OpenModule), shared helpers (Print, DeepCopy, FindById, AttrName,
+--   OpenModule), shared helpers (Print, SafeText, DeepCopy, FindById, AttrName,
 --   SaveToDisk, ShareSystem), and ns.Addon.
 
 local ADDON, ns = ...
@@ -105,13 +105,45 @@ end
 -- Exposed so other modules can print prefixed chat lines.
 ns.Print = Print
 
+-- Makes an untrusted string safe to put in a chat line, a popup or a
+-- FontString. Remote names (a shared character, a system/pack title, a
+-- combatant) reach the screen through ns.Print and StaticPopup_Show, where a
+-- raw "|" escape would render as a clickable hyperlink or an inline texture -
+-- a forged item link is a social-engineering primitive, and an unbounded name
+-- freezes the chat frame. So: strip every pipe, collapse control characters,
+-- and cap the length. Mirrors ChatLinks' CleanText, which holds the same line
+-- for link payloads. Callers pass the remote value; the fallback names what it
+-- was ("?" unless told otherwise).
+local SAFE_TEXT_MAX = 64
+function ns.SafeText(value, maxLen, fallback)
+    local s = (type(value) == "string") and value or tostring(value or "")
+    s = s:gsub("|", ""):gsub("%c", " ")
+    local cap = maxLen or SAFE_TEXT_MAX
+    if #s > cap then s = s:sub(1, cap) .. "..." end
+    if s == "" then return fallback or "?" end
+    return s
+end
+
+-- The deepest table nesting DeepCopy will walk. Remote payloads are copied
+-- (Systems/Packs adopt snapshots) before any validation runs, and AceSerializer
+-- happily deserializes thousands of levels, so an unbounded recursive copy is a
+-- stack overflow reachable from the wire. No legitimate Parchment record nests
+-- anywhere near this deep - a system is 4-5 levels, a character with inventory
+-- and homebrew effects about 6.
+local MAX_COPY_DEPTH = 32
+
 -- Returns a deep copy of a value (tables copied recursively; non-tables pass
 -- through). Used wherever stored data must not alias a live table, e.g. the
--- system library and adopt-prompt snapshots in Modules/Systems.lua.
-function ns.DeepCopy(value)
+-- system library and adopt-prompt snapshots in Modules/Systems.lua. Nesting
+-- past MAX_COPY_DEPTH is dropped rather than copied (see above): the branch
+-- becomes nil, so a hostile payload loses its abusive depth instead of
+-- overflowing the stack.
+function ns.DeepCopy(value, depth)
     if type(value) ~= "table" then return value end
+    depth = (depth or 0) + 1
+    if depth > MAX_COPY_DEPTH then return nil end
     local out = {}
-    for k, v in pairs(value) do out[k] = ns.DeepCopy(v) end
+    for k, v in pairs(value) do out[k] = ns.DeepCopy(v, depth) end
     return out
 end
 

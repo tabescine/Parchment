@@ -6,10 +6,14 @@
 -- its `for_system` name (advisory - a pack imports fine without its system);
 -- switching the active system re-resolves which pack of each kind is active.
 --
+-- Pack libraries are bounded before they reach SavedVariables (see MAX_ENTRIES
+-- / MAX_PACK_BYTES below, the same line Modules/Systems.lua holds), and every
+-- remote-derived name printed or shown in a popup goes through ns.SafeText.
+--
 -- Reads from: the ns pack data API (GetPackLibrary, GetActivePackName,
 --   SetActivePackName, GetActivePack - Core.lua owns the ParchmentPackDB
---   global), ns.Comm, ns.Schema, ns.ImportExport (StripMeta), ns.Print,
---   ns.DeepCopy, ns.Systems (RefreshAll).
+--   global), ns.Comm, ns.Schema, ns.ImportExport (StripMeta), ns.JSON (size
+--   bound), ns.Print, ns.SafeText, ns.DeepCopy, ns.Systems (RefreshAll).
 -- Exposes on ns.Packs: Store, Activate, Deactivate, Import, Delete,
 --   ConfirmDelete, SyncToSystem, Share, PairedSystem, Label.
 
@@ -17,6 +21,16 @@ local ADDON, ns = ...
 
 ns.Packs = ns.Packs or {}
 local Packs = ns.Packs
+
+-- Bounds on each kind's library, mirroring Modules/Systems.lua: a pack over
+-- MAX_PACK_BYTES (encoded) never lands, and a library holds at most
+-- MAX_ENTRIES packs. The comm path stores whatever a recognized DM sends,
+-- keyed by an attacker-chosen pack_name, so unbounded these are permanent
+-- saved-file growth on a share flood. A full library refuses the newcomer with
+-- a notice rather than evicting: the entries are the player's own imported
+-- content, not a re-fetchable cache.
+local MAX_PACK_BYTES = 512 * 1024
+local MAX_ENTRIES = 25
 
 local KINDS = { "feats", "spells" }
 local KIND_LABEL = { feats = "feats pack", spells = "spells pack" }
@@ -29,6 +43,21 @@ end
 
 local function Validator(kind)
     return kind == "feats" and ns.Schema.ValidateFeatPack or ns.Schema.ValidateSpellPack
+end
+
+-- The encoded byte size of a value, or nil when it cannot be encoded. Runs
+-- under pcall so a pathologically shaped payload cannot throw here.
+local function EncodedSize(value)
+    local ok, enc = pcall(ns.JSON.encode, value)
+    if not ok or type(enc) ~= "string" then return nil end
+    return #enc
+end
+
+-- How many entries a name-keyed table holds (`#` says nothing about these).
+local function Count(t)
+    local n = 0
+    for _ in pairs(t) do n = n + 1 end
+    return n
 end
 
 -- Refreshes every window that renders system or pack data. Pack contents feed
@@ -58,19 +87,41 @@ local function PairsWithActive(pack)
     return ns.HasSystem() and ns.GetSystem().system_name == pack.for_system
 end
 
--- Caches a pack into its kind's library (latest wins per pack_name).
+-- Caches a pack into its kind's library (latest wins per pack_name), within
+-- the bounds above. Returns true when it was stored, false when it is not a
+-- pack or a bound refused it - a refusal prints its own notice and leaves the
+-- library exactly as it was.
 function Packs.Store(kind, pack, from)
-    if type(pack) ~= "table" or type(pack.pack_name) ~= "string" then return end
-    ns.GetPackLibrary(kind)[pack.pack_name] = {
-        name = pack.pack_name, pack = ns.DeepCopy(pack),
+    if type(pack) ~= "table" or type(pack.pack_name) ~= "string" then return false end
+    local lib, name = ns.GetPackLibrary(kind), pack.pack_name
+
+    -- Refuse an oversized pack outright, and refuse a NEW name once the library
+    -- is full - an update of a name already stored always goes through, so
+    -- "latest wins" still holds for packs the player already keeps.
+    local size = EncodedSize(pack)
+    if not size or size > MAX_PACK_BYTES then
+        ns.Print(Packs.Label(kind) .. " '" .. ns.SafeText(name)
+            .. "' is too large to store; ignored.")
+        return false
+    end
+    if lib[name] == nil and Count(lib) >= MAX_ENTRIES then
+        ns.Print("your " .. Packs.Label(kind) .. " library is full (" .. MAX_ENTRIES
+            .. "). Delete one in /pmt systems to make room for '" .. ns.SafeText(name) .. "'.")
+        return false
+    end
+
+    lib[name] = {
+        name = name, pack = ns.DeepCopy(pack),
         from = from, time = (time and time()) or 0,
     }
+    return true
 end
 
 -- Makes a stored pack the active one of its kind. Returns ok, err.
 function Packs.Activate(kind, name)
     if not ns.SetActivePackName(kind, name) then
-        return false, "no " .. Packs.Label(kind) .. " named '" .. tostring(name) .. "' in your library."
+        return false, "no " .. Packs.Label(kind) .. " named '" .. ns.SafeText(name)
+            .. "' in your library."
     end
     RefreshAll()
     return true
@@ -83,16 +134,17 @@ function Packs.Deactivate(kind)
 end
 
 -- The import seam (local paste and converter alike): stores the pack, then
--- activates it when it pairs with the active system. Returns true when the
--- pack was activated, false when it was only stored.
+-- activates it when it pairs with the active system. Returns activated, stored:
+-- `stored` is false when a library bound refused the pack (Store printed why),
+-- in which case nothing was activated either.
 function Packs.Import(kind, pack, from)
-    Packs.Store(kind, pack, from)
+    if not Packs.Store(kind, pack, from) then return false, false end
     local activated = false
     if PairsWithActive(pack) then
         activated = ns.SetActivePackName(kind, pack.pack_name)
     end
     RefreshAll()
-    return activated
+    return activated, true
 end
 
 -- Deletes a pack from its library. Deleting the active pack deactivates it
@@ -104,7 +156,7 @@ function Packs.Delete(kind, name)
     local wasActive = ns.GetActivePackName(kind) == name
     lib[name] = nil
     if wasActive then ns.SetActivePackName(kind, nil) end
-    ns.Print("deleted " .. Packs.Label(kind) .. " '" .. name .. "'"
+    ns.Print("deleted " .. Packs.Label(kind) .. " '" .. ns.SafeText(name) .. "'"
         .. (wasActive and ". It was active - none is now." or " from your library."))
     RefreshAll()
 end
@@ -121,10 +173,11 @@ StaticPopupDialogs["PARCHMENT_DELETE_PACK"] = {
     timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
 }
 
--- Opens the delete confirmation for a library entry.
+-- Opens the delete confirmation for a library entry. The name is sanitized for
+-- display only; the popup's data keeps the exact key deletion looks up.
 function Packs.ConfirmDelete(kind, name)
     if not ns.GetPackLibrary(kind)[name] then return end
-    StaticPopup_Show("PARCHMENT_DELETE_PACK", Packs.Label(kind), name,
+    StaticPopup_Show("PARCHMENT_DELETE_PACK", Packs.Label(kind), ns.SafeText(name),
         { kind = kind, name = name })
 end
 
@@ -151,10 +204,11 @@ local function SyncKind(kind)
     end
     if pick then
         ns.SetActivePackName(kind, pick)
-        ns.Print("now using " .. Packs.Label(kind) .. " '" .. pick .. "' with this system.")
+        ns.Print("now using " .. Packs.Label(kind) .. " '" .. ns.SafeText(pick)
+            .. "' with this system.")
     elseif activeName then
         ns.SetActivePackName(kind, nil)
-        ns.Print(Packs.Label(kind) .. " '" .. activeName
+        ns.Print(Packs.Label(kind) .. " '" .. ns.SafeText(activeName)
             .. "' does not pair with this system; deactivated.")
     end
 end
@@ -192,7 +246,8 @@ StaticPopupDialogs["PARCHMENT_ADOPT_PACK"] = {
     button2 = "Not now",
     OnAccept = function(_, data)
         if data and Packs.Activate(data.kind, data.name) then
-            ns.Print("now using " .. Packs.Label(data.kind) .. " '" .. data.name .. "'.")
+            ns.Print("now using " .. Packs.Label(data.kind) .. " '"
+                .. ns.SafeText(data.name) .. "'.")
         end
     end,
     timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
@@ -201,6 +256,9 @@ StaticPopupDialogs["PARCHMENT_ADOPT_PACK"] = {
 -- Receive handler factory: cache the shared pack and prompt, never overwrite
 -- silently. Remote data is schema-validated first - the same line as the
 -- local import path, or a bad share breaks every window that renders packs.
+-- Sender and pack name are remote text, so everything shown goes through
+-- ns.SafeText: a raw "|" escape would render as a forged item link, and an
+-- unbounded name would hang the chat frame.
 local function OnPackShared(kind)
     return function(pack, sender)
         if ns.Comm.IsSelf(sender) then return end
@@ -210,14 +268,19 @@ local function OnPackShared(kind)
         end
         local ok = Validator(kind)(pack, Packs.PairedSystem(pack))
         if not ok then
-            ns.Print((sender or "someone") .. " shared " .. Packs.Label(kind) .. " '"
-                .. pack.pack_name .. "' but it failed validation; ignored.")
+            ns.Print(ns.SafeText(sender, nil, "someone") .. " shared " .. Packs.Label(kind)
+                .. " '" .. ns.SafeText(pack.pack_name) .. "' but it failed validation; ignored.")
             return
         end
-        Packs.Store(kind, pack, sender)
-        ns.Print((sender or "a DM") .. " shared " .. Packs.Label(kind) .. " '" .. pack.pack_name .. "'.")
+        -- A refused store (oversized, or a full library) already said why; do
+        -- not follow it with a "shared" line and an adopt prompt for something
+        -- we did not keep - that popup is exactly what a flood would spam.
+        if not Packs.Store(kind, pack, sender) then return end
+        ns.Print(ns.SafeText(sender, nil, "a DM") .. " shared " .. Packs.Label(kind)
+            .. " '" .. ns.SafeText(pack.pack_name) .. "'.")
         StaticPopup_Show("PARCHMENT_ADOPT_PACK",
-            tostring(sender) .. " shared the " .. Packs.Label(kind) .. " \"" .. pack.pack_name .. "\". Use it now?",
+            ns.SafeText(sender, nil, "someone") .. " shared the " .. Packs.Label(kind)
+                .. " \"" .. ns.SafeText(pack.pack_name) .. "\". Use it now?",
             nil, { kind = kind, name = pack.pack_name })
     end
 end

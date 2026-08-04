@@ -7,7 +7,13 @@
 -- Refresh asks the whole group to re-send; rows dim when their snapshot goes
 -- stale. Clicking a row requests that member's full sheet via Sharing.
 --
--- Reads from: ns.Party, ns.Sharing, ns.UI.
+-- Our own row is prepended from ns.Party.OwnSnapshot and tagged "(you)": the
+-- roster holds only RECEIVED vitals and our own broadcasts are filtered as
+-- echoes, so without it the overview would list everyone but the viewer. It is
+-- rebuilt every render (never stale, no age line) and clicking it opens our own
+-- sheet rather than requesting it from ourselves.
+--
+-- Reads from: ns.Party, ns.Sharing, ns.SafeText, ns.UI.
 -- Exposes on ns.PartyUI: Open, Toggle, RefreshIfShown.
 -- Registers the "party" module opener with Core.
 
@@ -46,17 +52,25 @@ local function CreateRow(content)
     row.init = fs("RIGHT");  row.init:SetPoint("LEFT", row, "LEFT", 398, 0); row.init:SetWidth(34)
 
     row:SetScript("OnClick", function(self)
-        if self.sender and ns.Sharing then ns.Sharing.Request(self.sender) end
+        -- Our own row opens our own sheet directly; asking ourselves for it over
+        -- the comm would work, but it is a pointless round trip.
+        if self.isSelf then
+            if ns.CharacterSheetUI then ns.CharacterSheetUI.Open() end
+        elseif self.sender and ns.Sharing then
+            ns.Sharing.Request(self.sender)
+        end
     end)
     row:SetScript("OnEnter", function(self)
         if not self.sender then return end
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetText(self.charName or "?", UI.GOLD[1], UI.GOLD[2], UI.GOLD[3])
-        GameTooltip:AddLine("Played by " .. self.sender, 0.9, 0.9, 0.9)
+        GameTooltip:AddLine(self.isSelf and "Your character"
+            or ("Played by " .. self.sender), 0.9, 0.9, 0.9)
         if self.age then
             GameTooltip:AddLine(string.format("Updated %ds ago", self.age), 0.62, 0.60, 0.55)
         end
-        GameTooltip:AddLine("Click to view the full sheet.", 0.56, 0.78, 1)
+        GameTooltip:AddLine(self.isSelf and "Click to open your sheet."
+            or "Click to view the full sheet.", 0.56, 0.78, 1)
         GameTooltip:Show()
     end)
     row:SetScript("OnLeave", GameTooltip_Hide)
@@ -73,7 +87,21 @@ local function RenderRows(self)
     for sender, v in pairs(ns.Party.GetRoster()) do
         list[#list + 1] = { sender = sender, v = v }
     end
-    table.sort(list, function(a, b) return (a.v.name or "") < (b.v.name or "") end)
+    -- The roster holds only what we RECEIVED, and our own broadcasts are
+    -- filtered as echoes - so we are never in it. Add our own live snapshot, or
+    -- the overview would show everyone in the group except the one person
+    -- looking at it (the initiative tracker merges it the same way).
+    local own = ns.Party.OwnSnapshot()
+    if own then
+        list[#list + 1] = { sender = (UnitName and UnitName("player")) or "You",
+            v = own, isSelf = true }
+    end
+    -- Ourselves first, then by character name: you should not have to hunt for
+    -- your own row.
+    table.sort(list, function(a, b)
+        if a.isSelf ~= b.isSelf then return a.isSelf == true end
+        return (a.v.name or "") < (b.v.name or "")
+    end)
 
     local now = GetTime and GetTime() or 0
     local y = -2
@@ -81,8 +109,14 @@ local function RenderRows(self)
         local row = content.rows[i] or CreateRow(content)
         content.rows[i] = row
         local v = entry.v
-        row.sender, row.charName = entry.sender, v.name
-        row.age = v.time and math.floor(now - v.time) or nil
+        -- The character name comes off the wire in a VITALS snapshot: sanitize
+        -- it before it reaches the row or the tooltip, or a "|H...|h" name
+        -- renders as a forged, clickable link (and a huge one hangs the frame).
+        local name = ns.SafeText(v.name)
+        row.sender, row.charName, row.isSelf = entry.sender, name, entry.isSelf
+        -- Our own snapshot is built fresh on every render, so it has no `time`
+        -- and can never be stale.
+        row.age = (not entry.isSelf) and v.time and math.floor(now - v.time) or nil
 
         -- Coerce every numeric field here too: vitals are coerced on receipt, but
         -- an own-snapshot or future caller must never make a concat/compare throw.
@@ -94,7 +128,8 @@ local function RenderRows(self)
         row:SetPoint("TOPLEFT", content, "TOPLEFT", 2, y)
         row:SetPoint("TOPRIGHT", content, "TOPRIGHT", -2, y)
 
-        row.name:SetText(v.name .. (v.dm and "  |cffc8a868(DM)|r" or ""))
+        row.name:SetText(name .. (v.dm and "  |cffc8a868(DM)|r" or "")
+            .. (entry.isSelf and "  |cff8ec6ff(you)|r" or ""))
         row.level:SetText(tostring(tonumber(v.level) or 0))
         row.hp:SetText(hp .. " / " .. hpmax .. (temp > 0 and (" |cff8ec6ff+" .. temp .. "|r") or ""))
         row.mana:SetText(manamax > 0 and (mana .. " / " .. manamax) or "-")

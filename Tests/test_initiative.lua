@@ -1,6 +1,9 @@
 -- InitiativeTracker: turn-order mechanics, NPC hit-point bookkeeping
 -- (AdjustHP), and the privacy guarantee that WireState/SetState never let
--- NPC HP cross the wire.
+-- NPC HP cross the wire. The tail of the file adds the wire-facing limits the
+-- comm layer cannot enforce - SetState's combatant-count cap, the UI's render
+-- ceiling, and the sanitising of remote strings on their way to chat - by
+-- driving UI/InitiativeUI.lua's sync handlers with stubbed frames.
 local T = dofile((TEST_ROOT or "") .. "Tests/wow_stubs.lua")
 strtrim = function(s) return (s:gsub("^%s*(.-)%s*$", "%1")) end
 
@@ -210,3 +213,128 @@ assert(#IT.GetState().combatants[1].name == 64, "SetState must cap combatant nam
 IT.Reset()
 assert(IT.Add(LONG, 5, true))
 assert(#IT.GetState().combatants[1].name == 64, "Add must cap combatant name length")
+
+-- Wire-sourced COUNTS need the same line as the lengths: the comm layer bounds
+-- a payload's decompressed bytes, not its element count, and combatants
+-- compress far enough that thousands of them fit under every wire cap. Each one
+-- persists in the SavedVariables and becomes a frame the UI can never destroy,
+-- so SetState truncates and reports what it dropped.
+IT.Reset()
+local FLOOD = {}
+for i = 1, 5000 do FLOOD[i] = { name = "Mob" .. i, init = i } end
+local dropped = IT.SetState({ combatants = FLOOD, current = 5000, round = 1 })
+local CAP = #IT.GetState().combatants
+assert(CAP > 0 and CAP < 5000, "SetState must cap the combatant count (kept " .. CAP .. ")")
+assert(dropped == 5000 - CAP, "SetState must report how many combatants it dropped")
+assert(IT.GetState().current == CAP, "the turn pointer must clamp to the truncated list")
+
+-- An order that fits still applies whole, and leaves no truncated rows behind.
+assert(IT.SetState({ combatants = { { name = "Solo", init = 1 } }, current = 1, round = 1 }) == 0)
+assert(#IT.GetState().combatants == 1, "a later state must replace the truncated one")
+
+-- The sync handlers in UI/InitiativeUI.lua. That file only registers handlers
+-- and popups at load time, so stubbed globals are enough to drive it here.
+T.InstallWowStubs()
+ACCEPT = "Accept"
+
+-- Core's ns.SafeText, mirrored: this file never loads Core.lua.
+ns.SafeText = function(value, maxLen, fallback)
+    local str = (type(value) == "string") and value or tostring(value or "")
+    str = str:gsub("|", ""):gsub("%c", " ")
+    local cap = maxLen or 64
+    if #str > cap then str = str:sub(1, cap) .. "..." end
+    if str == "" then return fallback or "?" end
+    return str
+end
+
+local printed = {}
+ns.Print = function(msg) printed[#printed + 1] = msg end
+ns.RegisterModule = function() end
+ns.Addon.db.profile = {}
+ns.UI = { HILITE = { 0, 0, 0, 0 }, DIM = { 0, 0, 0 }, GOLD = { 1, 1, 1 },
+    TEXT = { 1, 1, 1 }, RED = { 1, 0, 0 } }
+
+local handlers, isDM = {}, true
+ns.Comm = {
+    On = function(msgType, fn) handlers[msgType] = fn end,
+    IsDM = function() return isDM end,
+    RecognizedDM = function() return "Dm" end,
+    SetRecognizedDM = function() end,
+    NormalizeName = function(n) return type(n) == "string" and n:lower() or nil end,
+    IsSelf = function() return false end,
+    Send = function() return true end,
+}
+T.load(ns, "UI/InitiativeUI.lua")
+assert(handlers.INIT and handlers.INITSUBMIT and handlers.TURNEND, "sync handlers not registered")
+
+-- Everything printed since the last checkpoint, as one string.
+local function chat() return table.concat(printed, "\n") end
+
+-- Remote strings must never reach chat with their escape codes intact: a
+-- "|H...|h[...]|h" name renders as a CLICKABLE forged link in the victim's chat
+-- frame and "|T...|t" injects an arbitrary texture.
+local EVIL = "|Hitem:6948:0|h[Hearthstone]|h"
+IT.Reset()
+printed = {}
+handlers.INITSUBMIT({ name = EVIL, init = 12 }, "Mallory")
+assert(#IT.GetState().combatants == 1, "the DM must accept the submission")
+assert(#printed == 1 and chat():find("Hearthstone", 1, true), chat())
+assert(not chat():find("|", 1, true), "escape codes reached chat: " .. chat())
+
+-- The end-of-turn notice prints the combatant's name, so it holds the same line.
+IT.SetCurrent(1)
+printed = {}
+handlers.TURNEND({ name = IT.GetState().combatants[1].name }, "Mallory")
+assert(#printed == 1 and chat():find("ended", 1, true), chat())
+assert(not chat():find("|", 1, true), "escape codes reached chat: " .. chat())
+
+-- A truncated INIT is announced rather than applied quietly, and the sender's
+-- name is sanitised on the way (the notice's own colour codes are ours, so only
+-- the remote escapes are asserted gone).
+isDM = false
+IT.Reset()
+printed = {}
+handlers.INIT({ combatants = FLOOD, current = 0, round = 1 }, "|Hplayer:Eve|hEve|h")
+assert(#IT.GetState().combatants == CAP, "the INIT handler must apply the capped order")
+assert(chat():find("dropped", 1, true), "a truncated order must be announced: " .. chat())
+assert(not chat():find("|H", 1, true), "the sender name reached chat as a link: " .. chat())
+
+-- The render ceiling. State also reaches the window from the persisted DB - a
+-- hand-edited SavedVariables file never passes through SetState - and WoW
+-- cannot destroy a frame, so the list must refuse to build rows without bound.
+local frames = 0
+-- Widget stand-in: WoW methods are CapitalCase, while the UI's own fields are
+-- lowercase and must read as nil until it sets them (the code branches on them).
+local function fakeFrame()
+    return setmetatable({}, { __index = function(_, key)
+        if not key:match("^%u") then return nil end
+        if key == "IsShown" then return function() return true end end
+        if key:match("^Get") then return function() return 0 end end
+        return function() return fakeFrame() end
+    end })
+end
+CreateFrame = function() frames = frames + 1 return fakeFrame() end
+GetTime = function() return 0 end
+IsInGroup = function() return false end
+
+local frame = fakeFrame()
+for _, key in ipairs({ "titleFS", "addBtn", "rollBtn", "npcCheck", "startBtn", "nextBtn",
+    "resetBtn", "meBtn", "publicCheck", "timerBtn", "timerText", "scroll", "content" }) do
+    frame[key] = fakeFrame()
+end
+frame.content.rows = {}
+ns.InitiativeUI.frame = frame
+
+local hacked = IT.GetState()
+hacked.combatants = {}
+for i = 1, 5000 do hacked.combatants[i] = { name = "Mob" .. i, init = i } end
+hacked.current, hacked.round = 1, 1
+ns.InitiativeUI.RefreshIfShown()
+local rows = #frame.content.rows
+assert(rows > 0 and rows < 5000, "the UI must cap the rows it builds (built " .. rows .. ")")
+assert(frame.content.overflow, "the rows past the ceiling must be announced in the list")
+
+-- Rows stay pooled: re-rendering the same order creates no further frames.
+local built = frames
+ns.InitiativeUI.RefreshIfShown()
+assert(#frame.content.rows == rows and frames == built, "rows must be reused, not re-created")

@@ -303,3 +303,109 @@ local wireCapped = ns.CharacterSheet.Compute(Nimble({
 }), system, {})
 assert(wireCapped.derived.ac == 12 and wireCapped.derived.ac_mod_cap.source == "Borrowed Plate")
 system.modifier_table = { 0 }
+
+-- Item effects: an equipped weapon/equipment item folds its effect list like
+-- a trait (saves, attributes, initiative, ...) - but only while equipped, and
+-- never from gear. The ordering guarantee (an item's attribute effect reaching
+-- modifiers and weapon attacks) lives in test_charactersheet.lua.
+local charmed = Library()
+charmed.itm_7 = { id = "itm_7", name = "Sentry Ring", kind = "equipment",
+    effects = {
+        { type = "save", id = "a", value = 2 },
+        { type = "initiative", value = 1 },
+        { type = "attribute", id = "a", value = 3 },
+    } }
+local worn = ns.CharacterSheet.Compute(Char({ { item_id = "itm_7", equipped = true } }),
+    system, charmed)
+assert(worn.saves[1].total == 2, "an equipped item's save effect must fold")
+assert(worn.saves[1].sources[1] == "Sentry Ring", "the save names its source")
+assert(worn.derived.initiative == 1, "an equipped item's initiative effect must fold")
+assert(worn.attributes[1].final == 4 and worn.attributes[1].bonus == 3,
+    "an item's attribute effect lands like a trait's")
+local pocketed = ns.CharacterSheet.Compute(Char({ { item_id = "itm_7", equipped = false } }),
+    system, charmed)
+assert(pocketed.saves[1].total == 0 and pocketed.derived.initiative == 0
+    and pocketed.attributes[1].final == 1, "a stashed item's effects must not fold")
+assert(type(pocketed.inventory.equipment[1].effects) == "table",
+    "the display entry still lists the effects for the tooltip")
+
+-- Gear never applies effects, even when a hand-edit smuggles a list (and an
+-- equipped flag) onto it.
+charmed.itm_8 = { id = "itm_8", name = "Odd Pebble", kind = "gear",
+    effects = { { type = "save", id = "a", value = 5 } } }
+local pebbled = ns.CharacterSheet.Compute(Char({
+    { item_id = "itm_8", count = 1, equipped = true },
+}), system, charmed)
+assert(pebbled.saves[1].total == 0, "gear effects must never fold")
+
+-- Wire-resolved effects fold exactly like library ones, and hostile values
+-- (non-finite numbers, scalar entries) coerce to nothing instead of poisoning
+-- the totals or throwing.
+local borrowed = ns.CharacterSheet.Compute(Char({
+    { item_id = "their_ring", equipped = true,
+      resolved = { name = "Borrowed Ring", kind = "equipment",
+        effects = { { type = "save", id = "a", value = 1 },
+                    { type = "initiative", value = 1 / 0 },
+                    "junk" } } },
+}), system, {})
+assert(borrowed.saves[1].total == 1, "a wire effect must fold while equipped")
+assert(borrowed.derived.initiative == 0, "a non-finite wire value must coerce to 0")
+
+-- A wire snapshot may carry effects and no name at all (the schema calls `name`
+-- optional, so this passes validation and is cached before it is ever
+-- displayed): the item's name is what an attribute effect's provenance line
+-- concatenates, so it needs a fallback or the whole sheet throws - on every
+-- view, until the cache is cleared.
+local ok, nameless = pcall(ns.CharacterSheet.Compute, Char({
+    { item_id = "their_nameless", equipped = true,
+      resolved = { kind = "equipment",
+        effects = { { type = "attribute", id = "a", value = 1 } } } },
+}), system, {})
+assert(ok, "a nameless equipped item must not throw: " .. tostring(nameless))
+assert(nameless.attributes[1].bonus == 1, "a nameless item's effect must still fold")
+assert(type(nameless.attributes[1].sources[1]) == "string", "the bonus source names something")
+assert(type(nameless.inventory.equipment[1].name) == "string", "a nameless row still has a label")
+
+-- Absurd wire effect values clamp to the item-bonus limit (+/- 99) instead of
+-- reaching a total, and an equipped item whose whole effect list is junk simply
+-- folds nothing.
+local greedy = ns.CharacterSheet.Compute(Char({
+    { item_id = "their_greedy", equipped = true,
+      resolved = { name = "Greedy Band", kind = "equipment",
+        effects = { { type = "save", id = "a", value = 1e12 },
+                    { type = "ac", value = -1e308 } } } },
+    { item_id = "their_junk", equipped = true,
+      resolved = { name = "Junk Band", kind = "equipment", effects = { 5, "e", true } } },
+}), system, {})
+assert(greedy.saves[1].total == 99, "an absurd wire value must clamp to 99, got "
+    .. greedy.saves[1].total)
+assert(greedy.derived.ac == 10 - 99, "an absurd negative value must clamp to -99, got "
+    .. greedy.derived.ac)
+
+-- Item ids are library-local: ns.NextItemKey hands out "itm_1", "itm_2", ... per
+-- library, so EVERY player's first item is "itm_1". A foreign sheet's ids
+-- therefore collide with ours by construction, and resolving them against our
+-- library would show our items on their sheet - and fold our item effects into
+-- their totals. The sheet UI computes a viewed character with no library at all,
+-- so the wire snapshot is the only thing that can answer.
+local collide = Library()
+collide.itm_1 = { id = "itm_1", name = "My Dagger", kind = "weapon", weapon_id = "w1",
+    bonus = 5, effects = { { type = "ac", value = 7 } } }
+local theirs = Char({
+    { item_id = "itm_1", equipped = true,
+      resolved = { name = "Her Axe", kind = "weapon", weapon_id = "w1", bonus = 1 } },
+})
+local ours = ns.CharacterSheet.Compute(theirs, system, collide)
+assert(ours.inventory.weapons[1].name == "My Dagger",
+    "sanity: with a library, a colliding id resolves to OUR item")
+local foreign = ns.CharacterSheet.Compute(theirs, system, nil)
+assert(foreign.inventory.weapons[1].name == "Her Axe",
+    "a foreign sheet must show the sender's item, not ours")
+assert(foreign.inventory.weapons[1].source == "wire")
+-- Their axe carries no effects, so their AC must match a bare character's -
+-- proving our "+7 AC" item contributed nothing to their sheet.
+local bare = ns.CharacterSheet.Compute(Char({}), system, nil)
+assert(foreign.derived.ac == bare.derived.ac,
+    "our item's effects must not fold into their totals")
+assert(ours.derived.ac ~= foreign.derived.ac,
+    "the two paths must genuinely differ, or this test proves nothing")

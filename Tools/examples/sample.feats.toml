@@ -103,3 +103,10 @@ type = "active"
 cost = { ap = 1, mana = 1 }
 range = "10m"
 description = "An ally you can see gains +2 on their next saving throw."
+
+[[lines.ranks]]
+name = "Enduring Soul"
+type = "passive"
+description = "Your resolve hardens with experience: +1 maximum HP per character level."
+# per_level scales the value by character level (see the system file's footer).
+effects = [{ type = "max_hp", value = 1, per_level = true }]

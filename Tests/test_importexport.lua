@@ -153,15 +153,19 @@ assert(not ok and msg and msg:find("must be a string"), "a non-string _key must 
 
 -- Item library.
 
--- Shallow-copies every record (item records are flat) so a library can be
--- compared before and after an import.
+-- Copies every record so a library can be compared before and after an import.
+-- Recursive: an equippable item's `effects` list is a table of tables, and a
+-- snapshot that aliased it could not show an import writing through it.
+local function copyItem(value)
+    if type(value) ~= "table" then return value end
+    local out = {}
+    for k, v in pairs(value) do out[k] = copyItem(v) end
+    return out
+end
+
 local function copyLib(lib)
     local out = {}
-    for id, item in pairs(lib) do
-        local copy = {}
-        for k, v in pairs(item) do copy[k] = v end
-        out[id] = copy
-    end
+    for id, item in pairs(lib) do out[id] = copyItem(item) end
     return out
 end
 
@@ -177,13 +181,21 @@ end
 local str, err = IE.ExportItems("json")
 assert(str == nil and err and err:find("no items"), "an empty library must refuse to export")
 
--- Seed one item of each kind, exercising every optional field.
+-- Seed one item of each kind, exercising every optional field. Both equippable
+-- kinds carry effects (gear may not), so the round-trip below covers a nested
+-- list of records, its optional target keys, and a per_level boolean - the only
+-- boolean an item record has.
 library.itm_1 = { id = "itm_1", name = "Hunter's Bow", kind = "weapon",
     description = "Ash and sinew.", icon = "inv_weapon_bow_08",
-    weapon_id = "bow", bonus = 1, version = 3 }
+    weapon_id = "bow", bonus = 1, version = 3,
+    effects = { { type = "skill", skill = "survival", value = 1, add_modifier = "sen" } } }
 library.itm_2 = { id = "itm_2", name = "Traveller's Leathers", kind = "equipment",
     description = "Oiled against the weather.", icon = "inv_chest_leather_09",
-    ac_bonus = 1, version = 1 }
+    ac_bonus = 1, version = 1,
+    effects = {
+        { type = "attribute", id = "agi", value = 1 },
+        { type = "max_hp", value = 1, per_level = true },
+    } }
 library.itm_3 = { id = "itm_3", name = "Arrows", kind = "gear",
     icon = "inv_misc_ammo_arrow_01", default_count = 20, version = 1 }
 
@@ -196,6 +208,11 @@ for _, format in ipairs({ "json", "toml" }) do
     assert(ok, tostring(msg))
     assert(msg:find("3 item"), "the import should report how many items landed: " .. msg)
     T.assert_deepeq(roundBefore, copyLibBare(library), format .. " item round-trip")
+    -- Spelled out as well as deep-compared: a boolean silently arriving as the
+    -- string "true" would still make the record "an item with effects".
+    local perLevel = library.itm_2.effects[2].per_level
+    assert(perLevel == true, format .. " must round-trip per_level as a boolean, got "
+        .. type(perLevel) .. " " .. tostring(perLevel))
     for id, item in pairs(library) do
         assert(item.id == id, "every stored item must carry its own key as `id`")
         assert(item.version == 1, "an import into an empty library starts the version at 1")

@@ -7,8 +7,10 @@
 -- character, and we open the sheet in view mode.
 --
 -- Received sheets are bounded before they reach SavedVariables: a sheet over a
--- size cap is refused, and the cache keeps only the newest MAX_ENTRIES (oldest
--- evicted by time). Name matching goes through the shared Comm normalizer.
+-- size cap is refused, one that does not compute is refused (what we cache, we
+-- can render - the cache outlives the reload that a display error does not), and
+-- the cache keeps only the newest MAX_ENTRIES (oldest evicted by time). Name
+-- matching goes through the shared Comm normalizer.
 --
 -- An inventory is a list of references into the sender's item library, which
 -- the receiver does not have, so the send path enriches each entry with a small
@@ -17,8 +19,8 @@
 -- the cached view copy alone - ns.SetCharacter strips it from stored characters.
 --
 -- Reads from: ns.Comm (send/normalize), ns.Addon (event registration),
---   ns.GetActiveCharacter, ns.GetItemLibrary, ns.DeepCopy, ns.Schema, ns.JSON,
---   ns.CharacterSheetUI, ns.Print.
+--   ns.GetActiveCharacter, ns.GetSystem, ns.GetItemLibrary, ns.DeepCopy,
+--   ns.Schema, ns.JSON, ns.CharacterSheet, ns.CharacterSheetUI, ns.Print.
 -- Exposes on ns.Sharing: Request, GetCache, OpenCache, RemoveCached,
 --   ConfirmRemoveCached, ClearCache.
 
@@ -41,9 +43,12 @@ local MAX_CHAR_BYTES = 256 * 1024
 local MAX_ENTRIES = 50
 
 -- The item fields a shared inventory entry carries as its display snapshot:
--- what the receiver needs to render the row and apply its bonuses, and nothing
--- else (no description, no version - the item itself is not being transferred).
-local RESOLVED_FIELDS = { "name", "kind", "icon", "weapon_id", "bonus", "ac_bonus", "ac_mod_cap" }
+-- what the receiver needs to render the row and apply its bonuses (`effects`
+-- included - an equipped item's modifiers are part of the sheet's totals), and
+-- nothing else (no description, no version - the item itself is not being
+-- transferred).
+local RESOLVED_FIELDS = { "name", "kind", "icon", "weapon_id", "bonus", "ac_bonus", "ac_mod_cap",
+    "effects" }
 
 -- Targets we are awaiting a reply from (prevents request pile-ups).
 local pending = {}
@@ -73,6 +78,24 @@ local function EncodedSize(char)
     local ok, enc = pcall(ns.JSON.encode, char)
     if not ok or type(enc) ~= "string" then return nil end
     return #enc
+end
+
+-- True when a received sheet can actually be computed: the same
+-- CharacterSheet.Compute the sheet UI runs, under pcall. A payload that passes
+-- the schema but throws here must never be cached - the cache is written before
+-- the sheet is displayed and read again by every later open (a re-request, the
+-- Cached Sheets panel), where the render is not guarded, so it would throw on
+-- every view, out of SavedVariables, until the player cleared the cache. A
+-- sheet is dropped only for throwing: Compute returning nil is our state (no
+-- system yet), not the sender's fault.
+--
+-- No item library is passed, matching how the sheet UI renders a foreign
+-- character: their item ids are library-local and mean nothing here, so the
+-- inventory resolves against the wire snapshot alone.
+local function Computable(char)
+    local Compute = ns.CharacterSheet and ns.CharacterSheet.Compute
+    if not Compute then return true end
+    return (pcall(Compute, char, ns.GetSystem and ns.GetSystem() or nil, nil))
 end
 
 -- Evicts the oldest entries (by `time`) until the cache is within MAX_ENTRIES.
@@ -227,10 +250,22 @@ if ns.Comm then
             ns.Print((sender or "?") .. " sent an oversized character sheet; ignored.")
             return
         end
+
+        -- Last gate before SavedVariables: a sheet we cannot compute is dropped
+        -- rather than persisted (see Computable) - what we cache, we can render.
+        if not Computable(payload.char) then
+            ns.Print((sender or "?") .. " sent a malformed character sheet; ignored.")
+            return
+        end
+
         local cache = Cache()
         cache[sender] = { char = payload.char, name = payload.char.name, time = (time and time()) or 0 }
         EvictOldest(cache)
-        ns.Print("received " .. (payload.char.name or "a character") .. " from " .. (sender or "?") .. ".")
+        -- The name came off the wire: strip escape codes and cap it before it
+        -- reaches a chat line, or a "|H...|h" in it renders as a clickable
+        -- forged link (see ns.SafeText).
+        ns.Print("received " .. ns.SafeText(payload.char.name, nil, "a character")
+            .. " from " .. ns.SafeText(sender, nil, "?") .. ".")
         -- A refetch updates the entry's time; re-render the Cached Sheets panel
         -- so its "cached N ago" line reflects the new copy, not the stale one.
         if ns.HubUI then ns.HubUI.RefreshIfShown("cached") end
@@ -277,7 +312,9 @@ StaticPopupDialogs["PARCHMENT_REMOVE_CACHED"] = {
 -- Prompts to remove a cached sheet; removal is keyed by the exact `key`, while
 -- `name` (the character name) is what the prompt shows.
 function S.ConfirmRemoveCached(key, name)
-    StaticPopup_Show("PARCHMENT_REMOVE_CACHED", name or key, nil, { key = key })
+    -- Display text is sanitized; the popup's data keeps the raw key so the
+    -- accept handler still removes the right entry.
+    StaticPopup_Show("PARCHMENT_REMOVE_CACHED", ns.SafeText(name or key), nil, { key = key })
 end
 
 -- Clears all cached sheets.

@@ -37,6 +37,12 @@ local function BuildFrame()
         title = "Link", width = 360, height = 280,
         minW = 280, minH = 160, maxW = 600, maxH = 800, dbKey = "chatLinkWindow",
     })
+    -- The linked item's icon, sitting left of the title (payloads without one
+    -- - feats, spells, notices - render exactly as before, title at the edge).
+    f.iconTex = f:CreateTexture(nil, "ARTWORK")
+    f.iconTex:SetSize(20, 20)
+    f.iconTex:SetPoint("TOPLEFT", 16, -14)
+    f.iconTex:Hide()
     local scroll = CreateFrame("ScrollFrame", "ParchmentChatLinkScroll", f, "UIPanelScrollFrameTemplate")
     scroll:SetPoint("TOPLEFT", 14, -44)
     scroll:SetPoint("BOTTOMRIGHT", -32, 14)
@@ -69,12 +75,34 @@ local function AcquireLine(content)
     return fs
 end
 
+-- The texture path for a payload's icon, or nil when it has none or the name
+-- is not a plain texture name (re-checked here: SanitizeAnswer bounds received
+-- icons, but our own Render calls skip it, and the guard is one line).
+local function IconPath(icon)
+    if type(icon) == "string" and icon:match("^[%w_%-]+$") then
+        return "Interface\\Icons\\" .. icon
+    end
+    return nil
+end
+
 -- Lays the payload's lines into the window (pooled FontStrings, measured
 -- heights so wrapped text stacks naturally).
 function ChatLinkUI.Render(payload, senderText)
     local f = GetFrame()
     f.payload, f.senderText = payload, senderText
     f.titleFS:SetText(payload.title or "Link")
+
+    -- Icon left of the title when the payload carries one; the title slides
+    -- back to the window edge when it does not.
+    local iconPath = IconPath(payload.icon)
+    f.iconTex:SetShown(iconPath ~= nil)
+    f.titleFS:ClearAllPoints()
+    if iconPath then
+        f.iconTex:SetTexture(iconPath)
+        f.titleFS:SetPoint("TOPLEFT", 42, -16)
+    else
+        f.titleFS:SetPoint("TOPLEFT", 16, -16)
+    end
     local content = f.content
     content.used = 0
     local width = content:GetWidth()

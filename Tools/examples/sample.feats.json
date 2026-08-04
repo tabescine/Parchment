@@ -92,6 +92,18 @@
           "name": "Shared Calm",
           "range": "10m",
           "type": "active"
+        },
+        {
+          "description": "Your resolve hardens with experience: +1 maximum HP per character level.",
+          "effects": [
+            {
+              "per_level": true,
+              "type": "max_hp",
+              "value": 1
+            }
+          ],
+          "name": "Enduring Soul",
+          "type": "passive"
         }
       ]
     }

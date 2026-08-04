@@ -29,7 +29,7 @@
 --
 -- Reads from: ns.GetActiveCharacter, ns.GetSystem, ns.GetItemLibrary,
 --   ns.CharacterSheet.Compute, ns.Items, ns.SetCharacter, ns.Systems.RefreshAll,
---   ns.ItemWizardUI (the
+--   ns.Widgets.EffectSummary (item-effect tooltip lines), ns.ItemWizardUI (the
 --   inventory headers' add flow).
 -- Exposes on ns.CharacterSheetUI: Open, Toggle, RefreshIfShown, and
 --   ShowCharacter (read-only view of a received/cached character).
@@ -58,11 +58,13 @@ local C_LINE = ns.UI.LINE
 local C_STRIPE = { 1.0, 0.95, 0.85, 0.04 }
 
 -- Inventory rows: one 16px icon showing (and toggling) the item's state, and
--- (gear) a counter whose parts sit at these right-edge offsets. The item's own
--- icon is deliberately NOT repeated here - a second, inert picture beside the
--- state icon reads as a duplicate; item icons belong to the library browser and
--- the wizard, where they identify a record rather than a state. Textures are
--- Blizzard's own; Parchment ships no art.
+-- (gear) a counter whose parts sit at these right-edge offsets. An EQUIPPED
+-- item's slot shows the item's own icon (the library record identifies what is
+-- worn or held); a stashed one shows the backpack, so state stays readable at
+-- a glance. The held/worn glyphs remain the fallback for items without an
+-- icon. Still one icon per row - a second, inert picture beside a state glyph
+-- would read as a duplicate. Textures are Blizzard's own; Parchment ships no
+-- art.
 local ICON_SIZE = 16
 local INV_ROW_H = 18
 local ICON_PATH = "Interface\\Icons\\"
@@ -719,15 +721,32 @@ StaticPopupDialogs["PARCHMENT_ITEM_REMOVE"] = {
 -- reference that did not resolve names itself (the sentinel is called "Missing
 -- item"), so it needs nothing appended - the dimmed row and its tooltip say it.
 local function ItemLabel(entry, kind)
-    local text = entry.name or "?"
+    -- An item name on a VIEWED sheet came off the wire with the resolved
+    -- snapshot: escape codes in it would render a texture or a forged link in
+    -- the row, so sanitize here (our own library names pass through unchanged).
+    local text = ns.SafeText(entry.name)
     if entry.missing then return text end
     if kind == "weapon" then
         if entry.bonus ~= 0 then text = text .. " " .. Signed(entry.bonus) end
-        if entry.weapon_name then text = text .. "  |cff9e998c" .. entry.weapon_name .. "|r" end
+        if entry.weapon_name then
+            text = text .. "  |cff9e998c" .. ns.SafeText(entry.weapon_name) .. "|r"
+        end
     elseif kind == "equipment" then
         if entry.ac_bonus ~= 0 then text = text .. " " .. Signed(entry.ac_bonus) .. " AC" end
     end
     return text
+end
+
+-- The effect lines an equippable item's tooltip carries: one per effect,
+-- resolved to display names by the shared formatter. Folded into the totals
+-- only while equipped, and the header says which state the row is in.
+local function AddEffectLines(tt, entry)
+    if type(entry.effects) ~= "table" or #entry.effects == 0 then return end
+    tt:AddLine(entry.equipped and "While equipped:" or "Would grant while equipped:",
+        C_GOLD[1], C_GOLD[2], C_GOLD[3])
+    for _, e in ipairs(entry.effects) do
+        tt:AddLine("  " .. ns.Widgets.EffectSummary(e), 0.9, 0.9, 0.9, true)
+    end
 end
 
 -- Hover breakdown for an inventory row: what the item is, what it does, and
@@ -735,7 +754,7 @@ end
 -- true on the player's own sheet, where the row can also be dropped.
 local function ItemTip(entry, kind, own)
     return function(tt)
-        tt:AddLine(entry.name or "?", C_GOLD[1], C_GOLD[2], C_GOLD[3])
+        tt:AddLine(ns.SafeText(entry.name), C_GOLD[1], C_GOLD[2], C_GOLD[3])
         if entry.missing then
             tt:AddLine("Missing from your item library.", 0.9, 0.45, 0.45, true)
             tt:AddLine("It was deleted, or this sheet came from a player whose items you"
@@ -765,6 +784,7 @@ local function ItemTip(entry, kind, own)
                     .. (entry.weapon_name or "weapon") .. " skill " .. Signed(parts.base or 0)
                     .. " " .. Signed(parts.bonus or 0) .. " item)", 0.9, 0.9, 0.9)
             end
+            AddEffectLines(tt, entry)
             tt:AddLine(entry.equipped and "Equipped." or "Stashed.", 0.56, 0.78, 1)
         elseif kind == "equipment" then
             if entry.ac_bonus ~= 0 then
@@ -774,6 +794,7 @@ local function ItemTip(entry, kind, own)
                 tt:AddLine("Caps the AC attribute modifier at " .. Signed(entry.ac_mod_cap)
                     .. " while equipped (the lowest worn cap wins).", 0.9, 0.9, 0.9, true)
             end
+            AddEffectLines(tt, entry)
             tt:AddLine(entry.equipped and "Equipped." or "Stashed.", 0.56, 0.78, 1)
         else
             tt:AddLine("Carried: " .. (entry.count or 0), 0.9, 0.9, 0.9)
@@ -788,7 +809,17 @@ local function ItemTip(entry, kind, own)
     end
 end
 
--- The state icon: held/worn when equipped, the backpack when stashed, and a
+-- The texture for an item's own icon, or nil when it has none or the name is
+-- not a plain texture name (the schema's restriction, re-checked here because
+-- a viewed sheet's icons arrive off the wire and must never reach into a
+-- texture path).
+local function ItemIconPath(icon)
+    if type(icon) == "string" and icon:match("^[%w_%-]+$") then return ICON_PATH .. icon end
+    return nil
+end
+
+-- The state icon: the item's own icon when equipped (falling back to the
+-- held/worn glyph for an item without one), the backpack when stashed, and a
 -- plain backpack for gear (nothing to toggle). Clicking equips or stashes on
 -- the own sheet; a viewed sheet still explains the state it shows.
 local function StateIcon(content, entry, kind, ctx, y)
@@ -800,7 +831,9 @@ local function StateIcon(content, entry, kind, ctx, y)
         b:EnableMouse(false)                     -- the row tooltip shows through
         return
     end
-    b.tex:SetTexture(entry.equipped and (kind == "weapon" and ICON_HELD or ICON_WORN) or ICON_STASHED)
+    b.tex:SetTexture(entry.equipped
+        and (ItemIconPath(entry.icon) or (kind == "weapon" and ICON_HELD or ICON_WORN))
+        or ICON_STASHED)
     b.tex:Show()
     local equipped, index = entry.equipped, entry.index
     b.tip = function(tt)
@@ -1408,10 +1441,22 @@ local function Refresh(self)
         return
     end
     ns.UI.HideEmpty(self)
-    self.sheet = ns.CharacterSheet.Compute(char, ns.GetSystem(), ns.GetItemLibrary())
-    self.title:SetText((self.sheet.name or "Character")
+    -- Item ids are library-local ("itm_1" is whatever WE imported first), so a
+    -- viewed sheet's ids mean nothing in our namespace - resolving them against
+    -- our library would silently show OUR items, and fold OUR item effects into
+    -- THEIR totals. A foreign sheet therefore resolves only against the wire
+    -- snapshot that travelled with it (Items.Resolve falls through to `resolved`
+    -- when there is no library), and an item the sender could not resolve either
+    -- honestly shows as missing.
+    local lib = (not viewing) and ns.GetItemLibrary() or nil
+    self.sheet = ns.CharacterSheet.Compute(char, ns.GetSystem(), lib)
+    -- A viewed sheet's name and quote came off the wire, so they are sanitized
+    -- at this seam (ns.SafeText strips "|" escape codes and caps the length);
+    -- our own character's text is unchanged by the same call.
+    self.title:SetText(ns.SafeText(self.sheet.name, nil, "Character")
         .. (viewing and self.viewFrom and ("  |cff8ec6ff(from " .. self.viewFrom .. ")|r") or ""))
-    self.subtitle:SetText(self.sheet.quote and ('"' .. self.sheet.quote .. '"') or "")
+    self.subtitle:SetText(self.sheet.quote
+        and ('"' .. ns.SafeText(self.sheet.quote, 256) .. '"') or "")
 
     -- Read-only when viewing someone else's sheet: disable resource edits and
     -- hide the Edit button.

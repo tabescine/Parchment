@@ -21,7 +21,10 @@
 #               and `ac_mod_cap` (optional) caps the wearer's AC attribute
 #               modifier (see itm_4)
 #   gear      - not equippable; carries the per-character counter instead
-# Everything else is optional.
+# Weapon and equipment items may also carry `effects` (see itm_5): modifiers
+# from the shared effect vocabulary - saving throws, skills, attributes, AC,
+# initiative and more - that fold into the sheet only while the item is
+# equipped. Everything else is optional.
 # =============================================================================
 
 # A weapon item. `weapon_id` links it to a weapon in the loaded system
@@ -65,6 +68,31 @@ icon = "inv_chest_plate04"
 ac_bonus = 3
 ac_mod_cap = 0
 version = 1
+
+# An equipment item with `effects`: modifiers that apply only while the piece
+# is equipped. Each effect names a `type` from the shared vocabulary (the same
+# one traits and homebrew use): "save" (target attribute in `id`), "skill"
+# (target in `skill`), "attribute" (target in `id`), plus target-free types
+# like "ac", "initiative", "attack_rolls", "max_hp". `value` is the signed
+# bonus (at most +/-99, up to 10 effects). Targets are ids from the loaded
+# system; one the system does not define simply never lands.
+[items.itm_5]
+id = "itm_5"
+name = "Ring of the Owl"
+kind = "equipment"
+description = "A worn silver band, cool against the skin. The owl sees what others miss."
+icon = "inv_jewelry_ring_03"
+version = 1
+
+[[items.itm_5.effects]]
+type = "skill"
+skill = "perception"
+value = 1
+
+[[items.itm_5.effects]]
+type = "save"
+id = "spirit"
+value = 1
 
 # A gear item: no mechanics at all, just a name and the counter each character
 # keeps. `default_count` seeds that counter when the item is added to someone

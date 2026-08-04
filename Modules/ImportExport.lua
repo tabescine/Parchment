@@ -33,14 +33,34 @@ local function NormalizeKeys(value)
     return out
 end
 
+-- The deepest table nesting StripMeta will walk, matching ns.DeepCopy's
+-- MAX_COPY_DEPTH in Core.lua. This runs on remote payloads BEFORE validation
+-- (the comm handlers in Modules/Systems.lua and Modules/Packs.lua strip first),
+-- and AceSerializer happily deserializes thousands of levels, so an unbounded
+-- recursion is a stack overflow reachable from the wire. No legitimate
+-- Parchment record nests anywhere near this deep.
+local MAX_STRIP_DEPTH = 32
+
 -- Returns a deep copy of a table with every key beginning with '_' removed at
 -- all depths (metadata such as _key, which is converter/import-only and never
 -- stored). Recursive so a nested record cannot smuggle a _-field into storage.
-local function StripMeta(t)
+-- Nesting past MAX_STRIP_DEPTH is dropped rather than copied (see above): the
+-- branch becomes nil, so a hostile payload loses its abusive depth instead of
+-- overflowing the stack. `depth` is internal - callers pass the table only.
+local function StripMeta(t, depth)
+    depth = (depth or 0) + 1
+    if depth > MAX_STRIP_DEPTH then return nil end
     local out = {}
     for k, v in pairs(t) do
         if not (type(k) == "string" and k:sub(1, 1) == "_") then
-            out[k] = (type(v) == "table") and StripMeta(v) or v
+            -- Never `and StripMeta(v, depth) or v`: a dropped over-deep branch
+            -- returns nil, which that idiom would turn back into the original
+            -- table - re-attaching the very nesting the cap just refused.
+            if type(v) == "table" then
+                out[k] = StripMeta(v, depth)
+            else
+                out[k] = v
+            end
         end
     end
     return out
@@ -227,7 +247,14 @@ function IE.Import(text)
         if not ok then
             return false, ns.Packs.Label(kind) .. " invalid: " .. SummarizeIssues(issues)
         end
-        local activated = ns.Packs.Import(kind, clean, "import")
+        -- A pack library refuses an oversized pack, and a full one refuses new
+        -- names (Modules/Packs.lua); Store printed the reason, so report the
+        -- import as failed rather than claiming it was stored.
+        local activated, stored = ns.Packs.Import(kind, clean, "import")
+        if not stored then
+            return false, ns.Packs.Label(kind) .. " '" .. clean.pack_name
+                .. "' could not be stored - see the chat notice."
+        end
         return true, "imported " .. ns.Packs.Label(kind) .. " '" .. clean.pack_name .. "'"
             .. (activated and " (now active)."
                 or (" (stored; it pairs with system '" .. tostring(clean.for_system) .. "')."))

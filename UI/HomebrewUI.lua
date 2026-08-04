@@ -142,8 +142,19 @@ local function TargetItems(spec, system)
     return nil
 end
 
+-- The id an effect points at, or nil when it has none yet. Skill-targeted types
+-- take the generic `id` as an alias for `skill` (ns.CharacterSheet's skill and
+-- accomplish_skill both apply `e.skill or e.id`), so an imported record written
+-- as { type = "skill", id = "s1" } reads here exactly as the sheet folds it.
+-- Mirrors the item wizard's helper of the same name.
+local function TargetId(spec, e)
+    local id = spec.target_key and e[spec.target_key] or nil
+    if id == nil and spec.target == "skill" then return e.id end
+    return id
+end
+
 local function TargetName(spec, e)
-    local id = e[spec.target_key]
+    local id = TargetId(spec, e)
     if spec.target == "attribute" then return id and ns.AttrName(id) or "(choose)" end
     if spec.target == "skill" then
         local rec = ns.FindById(ns.GetSystem().skills, id)
@@ -163,10 +174,11 @@ end
 
 local function EffectSummary(e)
     local spec = CS.EffectType(e.type)
-    if not spec then return tostring(e.type or "?") .. " (not applied)" end
+    if not spec then return ns.SafeText(e.type) .. " (not applied)" end
     local text = spec.label
     if spec.target ~= "none" then text = text .. ": " .. TargetName(spec, e) end
     text = text .. "  " .. UI.Signed(e.value or 0)
+    if e.per_level then text = text .. " per level" end
     if e.add_modifier then text = text .. "  and " .. ns.AttrName(e.add_modifier) .. " modifier" end
     return text
 end
@@ -210,8 +222,9 @@ local function Warnings(f, d)
     for i, e in ipairs(d.effects) do
         local spec = CS.EffectType(e.type)
         if not spec then
-            out[#out + 1] = "effect " .. i .. " has no type"
-        elseif spec.target ~= "none" and spec.target ~= "school" and not e[spec.target_key] then
+            out[#out + 1] = "effect " .. i .. " has an unknown type '"
+                .. tostring(e.type or "?") .. "' (not applied)"
+        elseif spec.target ~= "none" and spec.target ~= "school" and not TargetId(spec, e) then
             out[#out + 1] = "effect " .. i .. " (" .. spec.label .. ") has no target"
         end
     end
@@ -288,9 +301,12 @@ local function CreateEffectRow(f, index)
             ns.Print("the loaded system defines no " .. spec.target .. "s to target.")
             return
         end
-        PickInto(f, row, spec.label, "Choose a target", items, { e[spec.target_key] },
+        PickInto(f, row, spec.label, "Choose a target", items, { TargetId(spec, e) },
             function(eff, id)
                 eff[spec.target_key] = (id and id ~= NONE_ID) and id or nil
+                -- Drop the `id` alias an import may have used, so a stale one
+                -- cannot outrank the pick just made (see TargetId).
+                if spec.target == "skill" and spec.target_key ~= "id" then eff.id = nil end
             end)
     end)
 

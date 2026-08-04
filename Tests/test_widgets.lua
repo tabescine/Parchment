@@ -51,3 +51,40 @@ assert(saves[1].name == "Alpha  (primary)" and saves[1].tooltip ~= nil)
 assert(saves[2].name == "Beta" and saves[2].tooltip == nil)
 assert(W.TraitName(sys, "racial_traits", "h") == "H")
 assert(W.TraitName(sys, "racial_traits", "nope") == "nope")
+
+-- EffectSummary: one display line per effect record, targets resolved against
+-- the loaded system (raw ids when it does not define them), signed values,
+-- per_level and add_modifier spelled out, unknown types marked inert.
+ParchmentSystemDB = {
+    system_name = "W",
+    attributes = { { id = "a", name = "Alpha" } },
+    skills = { { id = "s1", name = "Skill One", attribute = "a" } },
+    spell_schools = { { id = "ev", name = "Evocation" } },
+}
+assert(W.EffectSummary({ type = "save", id = "a", value = 1 }) == "Saving throw: Alpha  +1")
+assert(W.EffectSummary({ type = "skill", skill = "s1", value = -2 }) == "Skill: Skill One  -2")
+assert(W.EffectSummary({ type = "skill", skill = "ghost", value = 1 }) == "Skill: ghost  +1",
+    "an unresolved target shows its raw id")
+assert(W.EffectSummary({ type = "ac", value = 2 }) == "Armor Class  +2")
+assert(W.EffectSummary({ type = "max_hp", value = 1, per_level = true })
+    == "Maximum HP  +1 per level")
+assert(W.EffectSummary({ type = "skill", skill = "s1", add_modifier = "a" })
+    == "Skill: Skill One  +0  and Alpha modifier")
+assert(W.EffectSummary({ type = "spell_attack", school = "ev", value = 1 })
+    == "Spell attack: Evocation  +1")
+assert(W.EffectSummary({ type = "spell_attack", value = 1 }) == "Spell attack  +1",
+    "no school means every school - no target shown")
+assert(W.EffectSummary({ type = "accomplish_skill", skill = "s1" })
+    == "Accomplished skill: Skill One", "accomplishment is on/off, no value shown")
+assert(W.EffectSummary({ type = "wild_notion", value = 3 }) == "wild_notion (not applied)")
+assert(W.EffectSummary(5) == "?" and W.EffectSummary(nil) == "?")
+
+-- An unknown type is echoed back to show what an import carried, but it is wire
+-- text: a "|H...|h" in it would render a forged link (or "|T...|t" a texture) in
+-- the tooltip that shows this line, so it is stripped and capped first.
+local forged = W.EffectSummary({ type = "|Hitem:6948:0|h[Hearthstone]|h", value = 1 })
+assert(not forged:find("|", 1, true), "no raw escape code may survive into a summary")
+assert(forged:find("Hearthstone", 1, true), "the text itself should still be shown")
+assert(#W.EffectSummary({ type = string.rep("x", 5000), value = 1 }) < 200,
+    "an unbounded type must be capped before it reaches a tooltip")
+ParchmentSystemDB = nil
