@@ -18,7 +18,10 @@ end
 local ns = { Addon = { db = { global = {}, profile = {} } } }
 ns.Print = function() end
 ns.RegisterModule = function() end
-ns.UI = {}
+-- Sync is built at load time from UI.Debounce, so the stub must exist before
+-- the module is loaded. Fires immediately here: the debounce is about
+-- collapsing bursts on the wire, not about what a single change does.
+ns.UI = { Debounce = function(_, fn) return fn end }
 
 -- Core's remote-text sanitizer, mirrored here because this file loads the
 -- module under test without Core.lua: combatant names arrive over the wire and

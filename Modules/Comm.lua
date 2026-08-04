@@ -3,6 +3,11 @@
 -- Player-to-player sync over the addon channel (AceComm + AceSerializer). The
 -- DM broadcasts the system definition and the initiative state to the group;
 -- players receive them read-only and can submit their own initiative back.
+-- Initiative also flows on demand in both directions: a player opening their
+-- combat window PULLS the current order (INITREQ, which the DM answers with a
+-- whisper to that one asker, not a group push), and the DM can call for a roll
+-- (INITCALL, a prompt on every group member's screen). Both are paced by the
+-- rate gate below - the pull is an amplifier, the call is a popup.
 --
 -- A single role flag (db.profile.dm) decides whether this client BROADCASTS as
 -- the DM. Separately, each client records the DM it RECOGNIZES (recognizedDM,
@@ -36,7 +41,7 @@
 --   roster change), and LibDeflate via LibStub (optional).
 -- Exposes on ns.Comm: IsDM, IsSelf, InGroup, NormalizeName, SameName, SetDM,
 --   RecognizedDM, SetRecognizedDM, ClearRecognizedDM, IsAuthoritative, Send,
---   Whisper, On, Init.
+--   Whisper, On, Init, Version.
 
 local ADDON, ns = ...
 
@@ -50,7 +55,10 @@ local handlers = {}
 -- recognized DM (see IsAuthoritative). Player-to-DM types (INITSUBMIT, TURNEND,
 -- VITALS, ...) are not gated here; they are bound to the sender by their own
 -- handlers.
-local AUTHORITATIVE = { SYSTEM = true, INIT = true, FEATS = true, SPELLS = true }
+-- INITCALL is listed because it puts a dialog on every group member's screen:
+-- only the DM the client already recognizes may do that.
+local AUTHORITATIVE = { SYSTEM = true, INIT = true, FEATS = true, SPELLS = true,
+    INITCALL = true }
 
 -- Message types that only make sense from a player we share a group with: they
 -- drive group state (system/initiative/pack adoption, DM recognition, party
@@ -63,7 +71,8 @@ local AUTHORITATIVE = { SYSTEM = true, INIT = true, FEATS = true, SPELLS = true 
 -- (guild, friends, a linked sheet in say), so gating them would break the
 -- feature. They write no group state, and the rate gate caps their cost.
 local GROUP_ONLY = { SYSTEM = true, INIT = true, FEATS = true, SPELLS = true, DMROLE = true,
-    RELEASE = true, INITSUBMIT = true, TURNEND = true, VITALS = true }
+    RELEASE = true, INITSUBMIT = true, TURNEND = true, VITALS = true,
+    INITREQ = true, INITCALL = true }
 
 -- This client's recognized DM (canonical name; session memory only). Distinct
 -- from db.profile.dm. nil means "no DM recognized yet" - the bootstrap state in
@@ -85,10 +94,13 @@ local GROUP_DIST = { PARTY = true, RAID = true, INSTANCE_CHAT = true }
 -- pops up a switch prompt, and - when we are the DM - whispers a counter-claim
 -- per claim received, i.e. a flood the sender can reflect off us at their own
 -- rate. (Sharing's `pending` map does NOT cover this: it throttles the requests
--- we SEND, never the ones we receive.)
+-- we SEND, never the ones we receive.) INITREQ is an amplifier of the same shape
+-- as REQ - an empty request makes the DM serialize and whisper back the whole
+-- turn order - and INITCALL raises a dialog on every receiver; this table is the
+-- only thing bounding how often one peer can trigger either.
 local MIN_INTERVAL = { SYSTEM = 3, VITALS = 0.5, INIT = 0.25, CHAR = 2, FEATS = 3, SPELLS = 3,
     LINKQ = 0.3, LINKA = 0.3, REQ = 2, VITREQ = 3, DMROLE = 5, RELEASE = 5,
-    INITSUBMIT = 1, TURNEND = 1 }
+    INITSUBMIT = 1, TURNEND = 1, INITREQ = 3, INITCALL = 5 }
 -- [sender][type] = GetTime() of the last accepted message (pruned on roster
 -- change). Nested by sender so a departing member's row drops in one step.
 local recvAt = {}
@@ -96,6 +108,13 @@ local recvAt = {}
 -- Our addon version, from the .toc (single source of truth).
 local VERSION = (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(ADDON, "Version"))
     or (GetAddOnMetadata and GetAddOnMetadata(ADDON, "Version")) or "0.0.0"
+
+-- Our version, and the "MAJOR.MINOR" prefix two clients must share to sync
+-- (see Compatible). Exposed so /pmt version reports the same string the wire
+-- gate actually compares, rather than reading the .toc a second time.
+function Comm.Version()
+    return VERSION
+end
 
 -- Parses "MAJOR.MINOR[.PATCH...]" into numbers; nil, nil when unparsable.
 local function MajorMinor(v)

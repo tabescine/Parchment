@@ -11,6 +11,13 @@
 -- "End turn", is enabled only on their character's turn, and sends TURNEND -
 -- the DM's client verifies and advances (DM-authoritative).
 --
+-- Sync is DM-push (an INIT broadcast on every state change) plus two on-demand
+-- paths, so a player who reloaded or joined mid-combat is not stranded on stale
+-- state: opening this window PULLS the order from the recognized DM (INITREQ,
+-- which the DM answers by whispering INIT back to that one asker - never a group
+-- push), and the DM's "Roll call" button asks everyone to roll (INITCALL, which
+-- prompts each receiver and routes the accept straight through AddSelf).
+--
 -- Each row also shows hit points. Player rows render the live vitals their
 -- owner broadcasts (current+temp/max; respects the share-vitals opt-out and
 -- updates as edits arrive). NPC rows show the DM's private HP bookkeeping:
@@ -380,8 +387,41 @@ end
 
 -- Broadcasts the current order to the group when acting as DM. WireState
 -- strips the NPC hit points - they never leave this client.
-Sync = function()
+--
+-- DEBOUNCED, and that is load-bearing rather than tidiness. Every broadcast
+-- carries the FULL state, so a receiver that misses one and catches the next
+-- loses nothing - but the receiving side rate-limits INIT to one per 0.25s per
+-- sender and DROPS what arrives inside that window. Sending per change is
+-- therefore fine at two players and wrong at twelve: a roll call puts a popup
+-- on everyone's screen at once, adjacent submissions land milliseconds apart,
+-- each one made the DM re-broadcast, and whichever broadcast fell inside a
+-- receiver's window was discarded. When the LAST one was the casualty - a tight
+-- burst, or the DM clicking Start right after the final submission - every
+-- player silently kept a short turn order with no error anywhere and no way
+-- back until the DM touched the order again. Measured with 12 simulated clients
+-- (Tests/test_init_scale.lua): submissions 40ms apart left all 11 players
+-- holding 8 of 11 combatants.
+--
+-- Collapsing a burst into one trailing send fixes it at the source: the single
+-- broadcast carries the settled state, and one message per burst can never
+-- collide with the rate limit. SYNC_DELAY is well under a human's notice and
+-- far above the gap between two clicks.
+local SYNC_DELAY = 0.35
+local SyncNow = function()
     if ns.Comm and ns.Comm.IsDM() then ns.Comm.Send("INIT", IT.WireState()) end
+end
+Sync = UI.Debounce(SYNC_DELAY, SyncNow)
+
+-- Asks the DM for the current order (the pull that balances Sync's push). The
+-- tracker is otherwise only ever pushed, so a player who reloaded or joined
+-- mid-combat would sit on stale state until the DM next changed something.
+-- Silent unless there is actually a DM to ask: as the DM, solo, or before any
+-- DM is recognized this sends nothing. How often it may be asked is bounded on
+-- the DM's side, by Comm's per-sender rate gate.
+local function RequestSync()
+    if not ns.Comm then return end
+    if ns.Comm.IsDM() or not IsInGroup() or not ns.Comm.RecognizedDM() then return end
+    ns.Comm.Send("INITREQ", {})
 end
 
 -- Scrolls the current turn back into view after a re-render. Only when the
@@ -460,6 +500,13 @@ function Refresh(self)
     self.nextBtn:SetText(editable and "Next" or "End turn")
     self.resetBtn:SetEnabled(editable)
     self.meBtn:SetText(editable and "Me" or "Submit")
+    -- The roll call is a DM control, so it stays hidden for a player in a group
+    -- (only the DM may put a prompt on everyone's screen). It does NOT hide
+    -- when there is simply nobody to call: a control that vanishes teaches the
+    -- user nothing, and its neighbours (Start, Reset) grey out rather than
+    -- disappear. Solo, it shows disabled and the tooltip says why.
+    self.callBtn:SetShown(editable and true or false)
+    self.callBtn:SetEnabled(editable and IsInGroup() and true or false)
     if self.publicCheck and ns.Addon and ns.Addon.db then
         self.publicCheck:SetChecked(ns.Addon.db.profile.publicRolls)
     end
@@ -536,11 +583,12 @@ end
 -- Builds the window and its controls once.
 local function BuildFrame()
     local f = UI.CreateWindow("ParchmentInitFrame", {
-        title = "Combat", width = 340, height = 440,
-        minW = 320, minH = 260, maxW = 560, maxH = 900, dbKey = "initiativeWindow",
+        title = "Combat", width = 380, height = 440,
+        minW = 380, minH = 260, maxW = 560, maxH = 900, dbKey = "initiativeWindow",
     })
-    -- Restored geometry may predate the wider input row (NPC checkbox).
-    if f:GetWidth() < 320 then f:SetWidth(320) end
+    -- Restored geometry may predate the wider action row (Roll call), which
+    -- would otherwise run under the public-roll checkbox in the corner.
+    if f:GetWidth() < 380 then f:SetWidth(380) end
 
     -- Turn/round stopwatch (shown once combat has a current turn).
     local timerBtn = CreateFrame("Button", nil, f)
@@ -640,21 +688,28 @@ local function BuildFrame()
     end)
     f.npcCheck:SetScript("OnLeave", GameTooltip_Hide)
 
-    -- Action row: Me/Submit, Start, Next, Reset.
+    -- Action row: Me/Submit, Start, Next, Reset, Roll call. Widths are tuned to
+    -- leave the public-roll checkbox its corner at the window's minimum width.
     f.meBtn = MakeButton(f, "Me", 42,
         "DM/solo: add your active character (rolled). Player: submit your initiative to the DM.")
     f.meBtn:SetPoint("BOTTOMLEFT", 18, 14)
-    f.startBtn = MakeButton(f, "Start", 50,
+    f.startBtn = MakeButton(f, "Start", 46,
         "Start combat: round 1 begins at the top of the order. Add everyone "
         .. "first - nothing runs (no round, no timers) until combat starts.")
     f.startBtn:SetPoint("BOTTOMLEFT", 64, 14)
     f.nextBtn = MakeButton(f, "Next", 54,
         "DM/solo: advance to the next turn. Player: end your own turn "
         .. "(enabled only while it is your character's turn).")
-    f.nextBtn:SetPoint("BOTTOMLEFT", 118, 14)
-    f.resetBtn = MakeButton(f, "Reset", 54,
+    f.nextBtn:SetPoint("BOTTOMLEFT", 114, 14)
+    f.resetBtn = MakeButton(f, "Reset", 50,
         "Reset the tracker: removes all combatants and ends combat (asks for confirmation).")
-    f.resetBtn:SetPoint("BOTTOMLEFT", 176, 14)
+    f.resetBtn:SetPoint("BOTTOMLEFT", 172, 14)
+    -- DM only (shown in Refresh); disabled with no group to call.
+    f.callBtn = MakeButton(f, "Roll call", 58,
+        "Ask everyone in the group to roll initiative: each of them gets a "
+        .. "prompt that rolls their active character in.\n\n"
+        .. "Needs a party or raid - there is nobody to ask when solo.")
+    f.callBtn:SetPoint("BOTTOMLEFT", 226, 14)
 
     -- Public-roll toggle: route Roll/Me through the in-game dice roller so the
     -- whole party sees the result, instead of a hidden local d20.
@@ -697,6 +752,12 @@ local function BuildFrame()
             local ok, err = ns.Comm.Send("TURNEND", { name = c and c.name })
             ns.Print(ok and "ending your turn..." or (err or "could not reach the DM."))
         end
+    end)
+    f.callBtn:SetScript("OnClick", function()
+        if not (CanEdit() and ns.Comm) then return end
+        local ok, err = ns.Comm.Send("INITCALL", {})
+        ns.Print(ok and "asked the group to roll initiative."
+            or (err or "could not reach the group."))
     end)
     f.resetBtn:SetScript("OnClick", function()
         if not CanEdit() then return end
@@ -746,6 +807,7 @@ function InitiativeUI.Open()
     local f = GetFrame()
     Refresh(f)
     f:Show()
+    RequestSync()
 end
 
 function InitiativeUI.Toggle()
@@ -836,6 +898,18 @@ StaticPopupDialogs["PARCHMENT_RESET_COMBAT"] = {
     timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
 }
 
+-- The DM's roll call, as it lands on a player's screen. Only the recognized DM
+-- can reach it (Comm gates INITCALL as authoritative), and rolling is entirely
+-- AddSelf's job: it owns the no-system / no-character / already-entered checks
+-- and the DM-vs-player submit split, so there is nothing to duplicate here.
+StaticPopupDialogs["PARCHMENT_INIT_CALL"] = {
+    text = "%s is asking everyone to roll initiative.%s",
+    button1 = "Roll",
+    button2 = "Ignore",
+    OnAccept = function() InitiativeUI.AddSelf() end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
 -- Announces an order that did not fit the tracker's combatant cap (the count
 -- IT.SetState returns). A DM whose legitimate encounter got clipped has to find
 -- out, and a peer flooding the order should be loud rather than silent.
@@ -911,6 +985,52 @@ if ns.Comm then
             ns.Print(Safe(sender, 32, "a player") .. " re-submitted initiative; ignored - "
                 .. Safe(err, 128))
         end
+    end)
+    -- A player pulled the order (their combat window just opened). Only the DM
+    -- answers, and only to the asker: a WHISPER, never Send - one window opening
+    -- must not push a full state at the whole group. No payload is read, so
+    -- there is nothing to validate; Comm's rate gate (per sender + type) is what
+    -- stops a peer making us serialize the order over and over.
+    -- A pull is answered by whisper so one player opening their window does not
+    -- push a full state at the whole group. But at a full table everyone opens
+    -- it within the same few seconds, and eleven whispers of the same state cost
+    -- eleven times the bytes of one broadcast on a channel that moves about
+    -- 690 bytes a second. So a second asker arriving while an answer is still
+    -- pending upgrades the reply to a single group broadcast, and the rest of
+    -- the burst rides along on it. Mirrors Party's VITREQ coalescing.
+    local pullTo, pullPending = nil, false
+    local function AnswerPull()
+        pullPending = false
+        if not ns.Comm.IsDM() then return end
+        if pullTo then
+            ns.Comm.Whisper("INIT", IT.WireState(), pullTo)
+        else
+            ns.Comm.Send("INIT", IT.WireState())
+        end
+        pullTo = nil
+    end
+    ns.Comm.On("INITREQ", function(_, sender)
+        if not ns.Comm.IsDM() then return end
+        if pullPending then
+            -- More than one asker in the window: answer the group once instead.
+            if pullTo and not ns.Comm.SameName(pullTo, sender) then pullTo = nil end
+            return
+        end
+        pullPending, pullTo = true, sender
+        if C_Timer and C_Timer.After then
+            C_Timer.After(SYNC_DELAY, AnswerPull)
+        else
+            AnswerPull()
+        end
+    end)
+    -- The DM called for initiative. Comm has already established that this is
+    -- the recognized DM and a group member, and our own broadcast never echoes
+    -- back to us (the central self-echo filter on group distributions), so the
+    -- calling DM is never prompted by their own call.
+    ns.Comm.On("INITCALL", function(_, sender)
+        local char = ns.GetActiveCharacter and ns.GetActiveCharacter()
+        local who = (char and char.name) and ("\n\nRolling for " .. Safe(char.name) .. ".") or ""
+        StaticPopup_Show("PARCHMENT_INIT_CALL", Safe(sender, 32, "your DM"), who)
     end)
     -- A player ended their own turn: EndTurnFor advances only when the active
     -- combatant is the one this sender submitted (a stale, duplicate, or

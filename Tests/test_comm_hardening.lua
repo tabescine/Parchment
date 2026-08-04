@@ -139,6 +139,50 @@ assert(#printed == base + 2, "a departed peer can be warned again after pruning"
 assert(pruned and pruned.friend and pruned.me, "the roster prune must reach Party's vitals cache")
 assert(not pruned.ghost, "a departed sender must not be in the keep set")
 
+-- The initiative pull and the roll call are group state like the rest of the
+-- sync: a stranger must not be able to whisper the DM into re-serializing the
+-- whole order, or to raise a roll prompt on everyone's screen. Both are
+-- rate-limited for the same reason - the pull is an amplifier (empty request in,
+-- a full turn order back out), the call is a dialog per receiver.
+local pulls, calls = 0, 0
+ns.Comm.On("INITREQ", function() pulls = pulls + 1 end)
+ns.Comm.On("INITCALL", function() calls = calls + 1 end)
+NOW = 200
+wire.receive("Parchment", W({ t = "INITREQ", v = {}, ver = "0.1.0" }), "WHISPER", "Ghost")
+wire.receive("Parchment", W({ t = "INITCALL", v = {}, ver = "0.1.0" }), "WHISPER", "Ghost")
+assert(pulls == 0 and calls == 0, "a non-member must not reach the pull/call handlers")
+
+wire.receive("Parchment", W({ t = "INITREQ", v = {}, ver = "0.1.0" }), "WHISPER", "Friend")
+wire.receive("Parchment", W({ t = "INITREQ", v = {}, ver = "0.1.0" }), "WHISPER", "Friend")
+assert(pulls == 1, "a second INITREQ within the interval must be rate-limited")
+wire.receive("Parchment", W({ t = "INITCALL", v = {}, ver = "0.1.0" }), "PARTY", "Friend")
+wire.receive("Parchment", W({ t = "INITCALL", v = {}, ver = "0.1.0" }), "PARTY", "Friend")
+assert(calls == 1, "a second INITCALL within the interval must be rate-limited")
+NOW = 210
+wire.receive("Parchment", W({ t = "INITREQ", v = {}, ver = "0.1.0" }), "WHISPER", "Friend")
+wire.receive("Parchment", W({ t = "INITCALL", v = {}, ver = "0.1.0" }), "PARTY", "Friend")
+assert(pulls == 2 and calls == 2, "after the interval the next pull/call is accepted")
+
+-- The call is DM-authoritative on top of the group gate: it puts a dialog on
+-- every receiver's screen, so a group member who is not the recognized DM must
+-- not be able to fire it. (The pull is deliberately not gated this way - it is
+-- player-to-DM, and its handler answers only when we are the DM.)
+GetNumGroupMembers = function() return 2 end
+UnitExists = function(u) return u == "party1" or u == "party2" end
+UnitName = function(u)
+    if u == "player" then return "Me" end
+    if u == "party1" then return "Friend" end
+    if u == "party2" then return "Other" end
+    return nil
+end
+ns.Comm.SetRecognizedDM("Friend")
+NOW = 300
+wire.receive("Parchment", W({ t = "INITCALL", v = {}, ver = "0.1.0" }), "PARTY", "Other")
+assert(calls == 2, "a group member who is not the recognized DM must not raise a roll call")
+wire.receive("Parchment", W({ t = "INITCALL", v = {}, ver = "0.1.0" }), "PARTY", "Friend")
+assert(calls == 3, "the recognized DM's roll call must be delivered")
+ns.Comm.ClearRecognizedDM()
+
 -- Leave the roster APIs as the later test files expect to find them (absent):
 -- every file installs the globals it needs itself.
 GetNumGroupMembers, UnitExists = nil, nil

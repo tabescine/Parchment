@@ -251,21 +251,35 @@ local printed = {}
 ns.Print = function(msg) printed[#printed + 1] = msg end
 ns.RegisterModule = function() end
 ns.Addon.db.profile = {}
+-- Debounce must be present before the module loads: Sync is built from it at
+-- load time. It fires straight through here, so the existing assertions about
+-- what a single change broadcasts still read as written; the burst-collapsing
+-- behaviour it exists for is measured in test_init_scale.lua.
 ns.UI = { HILITE = { 0, 0, 0, 0 }, DIM = { 0, 0, 0 }, GOLD = { 1, 1, 1 },
-    TEXT = { 1, 1, 1 }, RED = { 1, 0, 0 } }
+    TEXT = { 1, 1, 1 }, RED = { 1, 0, 0 },
+    Debounce = function(_, fn) return fn end }
 
-local handlers, isDM = {}, true
+-- Comm stub: the role and the recognized DM are flippable (both decide whether
+-- the window pulls on open), and every outbound message is recorded so the
+-- push/pull distinction - group Send vs. targeted Whisper - can be asserted.
+local handlers, isDM, recognizedDM = {}, true, "Dm"
+local sends, whispers = {}, {}
 ns.Comm = {
     On = function(msgType, fn) handlers[msgType] = fn end,
     IsDM = function() return isDM end,
-    RecognizedDM = function() return "Dm" end,
+    RecognizedDM = function() return recognizedDM end,
     SetRecognizedDM = function() end,
     NormalizeName = function(n) return type(n) == "string" and n:lower() or nil end,
     IsSelf = function() return false end,
-    Send = function() return true end,
+    Send = function(t, v) sends[#sends + 1] = { t = t, v = v } return true end,
+    Whisper = function(t, v, target)
+        whispers[#whispers + 1] = { t = t, v = v, target = target }
+        return true
+    end,
 }
 T.load(ns, "UI/InitiativeUI.lua")
 assert(handlers.INIT and handlers.INITSUBMIT and handlers.TURNEND, "sync handlers not registered")
+assert(handlers.INITREQ and handlers.INITCALL, "the pull/roll-call handlers were not registered")
 
 -- Everything printed since the last checkpoint, as one string.
 local function chat() return table.concat(printed, "\n") end
@@ -305,13 +319,18 @@ assert(not chat():find("|H", 1, true), "the sender name reached chat as a link: 
 local frames = 0
 -- Widget stand-in: WoW methods are CapitalCase, while the UI's own fields are
 -- lowercase and must read as nil until it sets them (the code branches on them).
+-- SetScript records into the widget's own `scripts` table, so a test can invoke
+-- a button's handler the way a click would.
 local function fakeFrame()
-    return setmetatable({}, { __index = function(_, key)
+    local f
+    f = setmetatable({ scripts = {} }, { __index = function(_, key)
         if not key:match("^%u") then return nil end
         if key == "IsShown" then return function() return true end end
+        if key == "SetScript" then return function(_, event, fn) f.scripts[event] = fn end end
         if key:match("^Get") then return function() return 0 end end
         return function() return fakeFrame() end
     end })
+    return f
 end
 CreateFrame = function() frames = frames + 1 return fakeFrame() end
 GetTime = function() return 0 end
@@ -319,7 +338,7 @@ IsInGroup = function() return false end
 
 local frame = fakeFrame()
 for _, key in ipairs({ "titleFS", "addBtn", "rollBtn", "npcCheck", "startBtn", "nextBtn",
-    "resetBtn", "meBtn", "publicCheck", "timerBtn", "timerText", "scroll", "content" }) do
+    "resetBtn", "meBtn", "callBtn", "publicCheck", "timerBtn", "timerText", "scroll", "content" }) do
     frame[key] = fakeFrame()
 end
 frame.content.rows = {}
@@ -338,3 +357,94 @@ assert(frame.content.overflow, "the rows past the ceiling must be announced in t
 local built = frames
 ns.InitiativeUI.RefreshIfShown()
 assert(#frame.content.rows == rows and frames == built, "rows must be reused, not re-created")
+
+-- The on-demand halves of the sync: the pull a player's window performs when it
+-- opens, and the roll call the DM broadcasts. Sync itself is push-only, so
+-- without the pull a player who reloaded or joined mid-combat sees nothing
+-- until the DM next changes something.
+IT.Reset()
+
+-- Opens the window in a given role/group/recognition state and returns what it
+-- put on the wire.
+local function opened(dm, grouped, recognized)
+    isDM, recognizedDM = dm, recognized
+    IsInGroup = function() return grouped end
+    sends, whispers = {}, {}
+    ns.InitiativeUI.Open()
+    return sends
+end
+
+assert(#opened(false, true, "Dm") == 1 and sends[1].t == "INITREQ",
+    "a player opening the window must pull the order from the DM")
+
+-- Nobody to ask (or asking ourselves): all three cases must stay silent, or
+-- every solo /pmt combat would spam the channel.
+assert(#opened(true, true, "Dm") == 0, "the DM must not pull their own state")
+assert(#opened(false, false, "Dm") == 0, "solo play must not send anything")
+assert(#opened(false, true, nil) == 0, "with no recognized DM there is nobody to ask")
+
+-- The DM answers a pull by WHISPERING the order back to that one asker: a
+-- single window opening must not push a full state at the whole group.
+isDM = true
+IT.Add("Wolf", 8, true)
+sends, whispers = {}, {}
+handlers.INITREQ({}, "Wren")
+assert(#whispers == 1 and whispers[1].t == "INIT" and whispers[1].target == "Wren",
+    "the DM must whisper INIT back to the asker")
+assert(whispers[1].v and #whispers[1].v.combatants == 1, "the answer must carry the wire state")
+assert(#sends == 0, "answering a pull must not broadcast to the group")
+
+-- Only the DM answers - a player receiving a stray pull does nothing at all.
+isDM = false
+sends, whispers = {}, {}
+handlers.INITREQ({}, "Wren")
+assert(#whispers == 0 and #sends == 0, "a non-DM must not answer a pull")
+
+-- The roll call button. Building the REAL window (rather than the stand-in
+-- above) is what puts its OnClick within reach.
+ns.UI.CreateWindow = function()
+    local w = fakeFrame()
+    w.titleFS = fakeFrame()
+    return w
+end
+ns.UI.SetPlaceholder = function() end
+ns.UI.Debounce = function(_, fn) return fn end
+
+IT.Reset()
+isDM = true
+IsInGroup = function() return true end
+ns.InitiativeUI.frame = nil
+sends = {}
+ns.InitiativeUI.Open()
+local window = ns.InitiativeUI.frame
+assert(window and window.callBtn, "the action row must carry a roll call button")
+assert(#sends == 0, "the DM's own window must not pull")
+window.callBtn.scripts.OnClick()
+assert(#sends == 1 and sends[1].t == "INITCALL", "the button must call the group to roll")
+
+-- The call as it lands on a player: a prompt naming the caller (sanitised - the
+-- name is remote) and the character it would roll, whose accept path is AddSelf
+-- itself, which owns the no-system / no-character / already-entered checks.
+local shown
+StaticPopup_Show = function(which, a, b, data)
+    shown = { which = which, a = a, b = b, data = data }
+end
+isDM = false
+ns.GetActiveCharacter = function() return { name = "Wren" } end
+handlers.INITCALL({}, "|Hplayer:Eve|hEve|h")
+assert(shown and shown.which == "PARCHMENT_INIT_CALL", "the roll call must prompt the player")
+assert(not shown.a:find("|", 1, true), "the caller's name reached the popup unsanitised")
+assert(shown.b:find("Wren", 1, true), "the prompt must name the character it would roll")
+
+local rolled = false
+local realAddSelf = ns.InitiativeUI.AddSelf
+ns.InitiativeUI.AddSelf = function() rolled = true end
+StaticPopupDialogs["PARCHMENT_INIT_CALL"].OnAccept(nil, shown.data)
+ns.InitiativeUI.AddSelf = realAddSelf
+assert(rolled, "accepting the roll call must go through AddSelf")
+
+-- No active character: still a usable prompt, just without the name line.
+shown = nil
+ns.GetActiveCharacter = function() return nil end
+handlers.INITCALL({}, "Dm")
+assert(shown and shown.b == "", "a character-less client must still get the prompt")
