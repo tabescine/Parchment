@@ -16,7 +16,9 @@
 -- state: opening this window PULLS the order from the recognized DM (INITREQ,
 -- which the DM answers by whispering INIT back to that one asker - never a group
 -- push), and the DM's "Roll call" button asks everyone to roll (INITCALL, which
--- prompts each receiver and routes the accept straight through AddSelf).
+-- prompts each receiver and routes the accept straight through AddSelf). Every
+-- INITSUBMIT is answered with an INITACK whisper - added or refused, with the
+-- reason - so a player's submission can never vanish without a trace.
 --
 -- Each row also shows hit points. Player rows render the live vitals their
 -- owner broadcasts (current+temp/max; respects the share-vitals opt-out and
@@ -557,22 +559,23 @@ function InitiativeUI.AddSelf()
     if not char then return end
     local sheet = ns.CharacterSheet.Compute(char, ns.GetSystem(), ns.GetItemLibrary())
     if not sheet then return end
-    -- One entry per character: re-rolling means asking the DM to remove the
-    -- old entry first. The local state mirrors the DM's last sync, so this
-    -- also stops a player double-submitting; the DM-side INITSUBMIT guard
-    -- stays authoritative for the race window before the sync lands.
-    if IT.HasPlayer(sheet.name) then
-        ns.Print(sheet.name .. " is already in the turn order.")
-        return
-    end
     local tb = MyTiebreak(sheet)
     if CanEdit() then
+        -- One entry per character: re-rolling means asking the DM to remove the
+        -- old entry first. AddRolled refuses the duplicate BEFORE rolling, so a
+        -- public roll the group can see never fires for a rejected add.
         IT.AddRolled(sheet.name, sheet.derived.initiative, false, tb, function(combatant, _, _, err)
             if err then ns.Print(err) end
             RefreshIfShown()
             if combatant then Sync() end
         end)
     else
+        -- Deliberately NOT guarded by IT.HasPlayer: the local order is only a
+        -- mirror of the DM's last sync and can be stale - a leftover entry from
+        -- an earlier session used to block the submit right here, silently for
+        -- the DM, who saw neither a roll nor a refusal. The DM-side SubmitFor
+        -- guard is the authoritative duplicate check, and its verdict comes
+        -- back either way as an INITACK whisper (handler below).
         IT.RequestRoll(sheet.derived.initiative, function(total)
             local ok, err = ns.Comm.Send("INITSUBMIT", { name = sheet.name, init = total, tb = tb })
             ns.Print(ok and ("submitted initiative " .. total .. " to the DM.") or (err or "submit failed."))
@@ -967,8 +970,9 @@ if ns.Comm then
     end)
     -- A player submitted their own initiative. SubmitFor binds the entry to the
     -- sender (so only they can later end its turn), refuses a second entry from
-    -- the same player, and clamps the wire values - the DM-side notice is the
-    -- only feedback on a refused resubmit.
+    -- the same player, and clamps the wire values. The verdict - added, or the
+    -- refusal reason - is whispered back as an INITACK, so no submission can
+    -- end with silence on the submitter's side.
     ns.Comm.On("INITSUBMIT", function(payload, sender)
         if not ns.Comm.IsDM() then return end
         if type(payload) ~= "table" or type(payload.name) ~= "string" then return end
@@ -981,9 +985,31 @@ if ns.Comm then
                 .. " at initiative " .. combatant.init .. ".")
             RefreshIfShown()
             Sync()
-        elseif err then
-            ns.Print(Safe(sender, 32, "a player") .. " re-submitted initiative; ignored - "
+        else
+            -- Add can also refuse without a message (a name that trims to
+            -- empty); give that a reason too rather than dropping silently.
+            err = err or "the submitted name was empty."
+            ns.Print(Safe(sender, 32, "a player") .. "'s initiative was refused - "
                 .. Safe(err, 128))
+        end
+        ns.Comm.Whisper("INITACK", combatant
+            and { ok = true, name = combatant.name, init = combatant.init }
+            or { ok = false, reason = err }, sender)
+    end)
+    -- The DM's verdict on our own submission (the INITACK answering an
+    -- INITSUBMIT). Informational - the row itself arrives via the INIT
+    -- broadcast - but without it a refused or lost submission is
+    -- indistinguishable from one that worked, and the player waits on an order
+    -- they will never appear in. Comm gates the sender centrally (AUTHORITATIVE
+    -- + group + rate), so only the recognized DM can put this line in our chat.
+    ns.Comm.On("INITACK", function(payload)
+        if type(payload) ~= "table" then return end
+        if payload.ok then
+            ns.Print("the DM added " .. Safe(payload.name, 64, "you")
+                .. " to the turn order at initiative " .. (tonumber(payload.init) or 0) .. ".")
+        else
+            ns.Print("|cffffcc00the DM did not add you:|r "
+                .. Safe(payload.reason, 128, "no reason given."))
         end
     end)
     -- A player pulled the order (their combat window just opened). Only the DM

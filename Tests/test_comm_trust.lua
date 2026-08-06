@@ -87,6 +87,17 @@ wire.receive("Parchment", W({ t = "SYSTEM", v = { system_name = "EVIL2" }, ver =
     "PARTY", "Mallory")
 assert(sys == 1, "a rival DMROLE claim silently transferred authority to the claimant")
 
+-- INITACK claims to be the DM's verdict on a submitted roll, so it holds the
+-- same line: only the recognized DM may put that notice in a player's chat.
+local ack = 0
+ns.Comm.On("INITACK", function() ack = ack + 1 end)
+wire.receive("Parchment", W({ t = "INITACK", v = { ok = true }, ver = "0.1.0" }),
+    "WHISPER", "Mallory")
+assert(ack == 0, "a non-DM sender's INITACK was dispatched (verdict spoofing)")
+wire.receive("Parchment", W({ t = "INITACK", v = { ok = true }, ver = "0.1.0" }),
+    "WHISPER", "Alice")
+assert(ack == 1, "the recognized DM's INITACK was blocked")
+
 -- Group membership. DMROLE is not authoritative (it is what ESTABLISHES the
 -- DM), so on a client that recognizes nobody the first claim wins - which means
 -- a stranger whispering one would take the seat. A fresh client with a real

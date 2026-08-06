@@ -2,7 +2,9 @@
 --
 -- Player-to-player sync over the addon channel (AceComm + AceSerializer). The
 -- DM broadcasts the system definition and the initiative state to the group;
--- players receive them read-only and can submit their own initiative back.
+-- players receive them read-only and can submit their own initiative back
+-- (every submission is answered with an INITACK whisper - accepted or refused -
+-- so a submitter is never left guessing what the DM's side did with it).
 -- Initiative also flows on demand in both directions: a player opening their
 -- combat window PULLS the current order (INITREQ, which the DM answers with a
 -- whisper to that one asker, not a group push), and the DM can call for a roll
@@ -56,9 +58,11 @@ local handlers = {}
 -- VITALS, ...) are not gated here; they are bound to the sender by their own
 -- handlers.
 -- INITCALL is listed because it puts a dialog on every group member's screen:
--- only the DM the client already recognizes may do that.
+-- only the DM the client already recognizes may do that. INITACK is listed
+-- because it claims to be the DM's verdict on a submitted roll - a peer must
+-- not be able to fake an "added you" (or "refused you") line in a player's chat.
 local AUTHORITATIVE = { SYSTEM = true, INIT = true, FEATS = true, SPELLS = true,
-    INITCALL = true }
+    INITCALL = true, INITACK = true }
 
 -- Message types that only make sense from a player we share a group with: they
 -- drive group state (system/initiative/pack adoption, DM recognition, party
@@ -72,7 +76,7 @@ local AUTHORITATIVE = { SYSTEM = true, INIT = true, FEATS = true, SPELLS = true,
 -- feature. They write no group state, and the rate gate caps their cost.
 local GROUP_ONLY = { SYSTEM = true, INIT = true, FEATS = true, SPELLS = true, DMROLE = true,
     RELEASE = true, INITSUBMIT = true, TURNEND = true, VITALS = true,
-    INITREQ = true, INITCALL = true }
+    INITREQ = true, INITCALL = true, INITACK = true }
 
 -- This client's recognized DM (canonical name; session memory only). Distinct
 -- from db.profile.dm. nil means "no DM recognized yet" - the bootstrap state in
@@ -97,10 +101,11 @@ local GROUP_DIST = { PARTY = true, RAID = true, INSTANCE_CHAT = true }
 -- we SEND, never the ones we receive.) INITREQ is an amplifier of the same shape
 -- as REQ - an empty request makes the DM serialize and whisper back the whole
 -- turn order - and INITCALL raises a dialog on every receiver; this table is the
--- only thing bounding how often one peer can trigger either.
+-- only thing bounding how often one peer can trigger either. INITACK prints a
+-- line in the receiver's chat, so it is paced like the submit it answers.
 local MIN_INTERVAL = { SYSTEM = 3, VITALS = 0.5, INIT = 0.25, CHAR = 2, FEATS = 3, SPELLS = 3,
     LINKQ = 0.3, LINKA = 0.3, REQ = 2, VITREQ = 3, DMROLE = 5, RELEASE = 5,
-    INITSUBMIT = 1, TURNEND = 1, INITREQ = 3, INITCALL = 5 }
+    INITSUBMIT = 1, TURNEND = 1, INITREQ = 3, INITCALL = 5, INITACK = 1 }
 -- [sender][type] = GetTime() of the last accepted message (pruned on roster
 -- change). Nested by sender so a departing member's row drops in one step.
 local recvAt = {}
