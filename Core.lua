@@ -44,17 +44,31 @@ local DB_DEFAULTS = {
 -- The stamp lives in ParchmentDB.global (NOT inside the data tables, which
 -- are exactly what export produces - a format key there would leak into
 -- every exported file).
-local DB_FORMAT = 1
+local DB_FORMAT = 2
 
 -- MIGRATIONS[n] upgrades stored data from format n-1 to format n. Steps run
 -- in order, so any old version passes through every intermediate shape. Each
 -- step must be idempotent (WoW only flushes SavedVariables on logout/reload,
 -- so a crash can re-run a step against already-migrated data) and must cover
 -- every stored copy of the shape it changes: ParchmentSystemDB,
--- ParchmentCharDB.characters, db.global.systemLibrary (full system copies),
--- and db.global.sharedCache (full character copies).
+-- ParchmentCharDB.characters, ParchmentItemDB.items,
+-- db.global.systemLibrary (full system copies), and db.global.sharedCache
+-- (full character copies).
 local MIGRATIONS = {
-    -- [2] = function(db) ... end,
+    -- Equipment +AC moved from the ac_bonus field into an "ac" entry in the
+    -- item's effects list (the wizard no longer offers the field). Only the
+    -- library converts: sharedCache `resolved` snapshots are foreign wire
+    -- data, which the sheet's legacy ac_bonus fold keeps reading as-is.
+    -- In the client Modules/Items.lua is always loaded before OnInitialize
+    -- fires; the guard covers tests that boot Core alone (the unconverted
+    -- field stays valid either way - the legacy fold reads it).
+    [2] = function()
+        local fold = ns.Items and ns.Items.MigrateAC
+        if not fold then return end
+        for _, item in pairs(ns.GetItemLibrary()) do
+            fold(item)
+        end
+    end,
 }
 
 -- The stand-in returned for an inventory reference the item library cannot

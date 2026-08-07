@@ -97,11 +97,28 @@ assert(held.inventory[2].count == 2, "per-character state is untouched")
 
 -- Migration scaffold: fresh installs are stamped with the current format.
 local _, db = boot({}, nil, nil)
-assert(db.global.dataFormat == 1, "fresh install not stamped")
+assert(db.global.dataFormat == 2, "fresh install not stamped")
 
 -- Current-format data is untouched.
-_, db = boot({ dataFormat = 1 }, { characters = {} }, nil)
-assert(db.global.dataFormat == 1)
+_, db = boot({ dataFormat = 2 }, { characters = {} }, nil)
+assert(db.global.dataFormat == 2)
+
+-- Format-1 data runs MIGRATIONS[2]: a stored equipment item's legacy ac_bonus
+-- is folded into an "ac" effect. Items.lua joins the load (the step calls
+-- ns.Items.MigrateAC, exactly as in the client, where every file is loaded
+-- before OnInitialize fires).
+local db3 = T.InstallLifecycleStubs({ dataFormat = 1 })
+ParchmentCharDB, ParchmentSystemDB = {}, nil
+ParchmentItemDB = { items = {
+    mail = { id = "mail", name = "Chainmail", kind = "equipment", ac_bonus = 2, version = 1 },
+} }
+local ns3 = T.load({}, "Core.lua")
+T.load(ns3, "Modules/Items.lua")
+ns3.Addon:OnInitialize()
+assert(db3.global.dataFormat == 2, "format-1 data not stamped forward")
+local mail = ns3.GetItemLibrary().mail
+assert(mail.ac_bonus == nil and mail.effects[1].type == "ac" and mail.effects[1].value == 2,
+    "MIGRATIONS[2] must fold ac_bonus into an ac effect")
 
 -- Newer-format data (downgrade): warn, never stamp down.
 local warned = {}

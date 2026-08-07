@@ -66,6 +66,10 @@ do
     ns.Schema.ValidateItemLibrary = schemaNs.Schema.ValidateItemLibrary
 end
 
+-- The item import folds a legacy ac_bonus via ns.Items.MigrateAC, so the real
+-- Items module joins the load (it is pure).
+T.load(ns, "Modules/Items.lua")
+
 T.load(ns, "Modules/ImportExport.lua")
 local IE = ns.ImportExport
 
@@ -190,9 +194,10 @@ library.itm_1 = { id = "itm_1", name = "Hunter's Bow", kind = "weapon",
     weapon_id = "bow", bonus = 1, version = 3,
     effects = { { type = "skill", skill = "survival", value = 1, add_modifier = "sen" } } }
 library.itm_2 = { id = "itm_2", name = "Traveller's Leathers", kind = "equipment",
+    version = 1,
     description = "Oiled against the weather.", icon = "inv_chest_leather_09",
-    ac_bonus = 1, version = 1,
     effects = {
+        { type = "ac", value = 1 },
         { type = "attribute", id = "agi", value = 1 },
         { type = "max_hp", value = 1, per_level = true },
     } }
@@ -210,7 +215,7 @@ for _, format in ipairs({ "json", "toml" }) do
     T.assert_deepeq(roundBefore, copyLibBare(library), format .. " item round-trip")
     -- Spelled out as well as deep-compared: a boolean silently arriving as the
     -- string "true" would still make the record "an item with effects".
-    local perLevel = library.itm_2.effects[2].per_level
+    local perLevel = library.itm_2.effects[3].per_level
     assert(perLevel == true, format .. " must round-trip per_level as a boolean, got "
         .. type(perLevel) .. " " .. tostring(perLevel))
     for id, item in pairs(library) do
@@ -220,12 +225,16 @@ for _, format in ipairs({ "json", "toml" }) do
 end
 
 -- MERGE by id: the incoming item overwrites its own entry and leaves the others
--- untouched, and the save bumps its version past the local copy's.
+-- untouched, and the save bumps its version past the local copy's. The paste
+-- carries the retired ac_bonus field, which the import folds into an "ac"
+-- effect on the way in - old export files must keep their +AC.
 ok, msg = IE.Import(
     [[{"items": {"itm_2": {"id":"itm_2", "name":"Scale Mail", "kind":"equipment", "ac_bonus":3}}}]])
 assert(ok, tostring(msg))
-assert(library.itm_2.name == "Scale Mail" and library.itm_2.ac_bonus == 3,
-    "an item import must overwrite by id")
+assert(library.itm_2.name == "Scale Mail", "an item import must overwrite by id")
+assert(library.itm_2.ac_bonus == nil and library.itm_2.effects[1].type == "ac"
+    and library.itm_2.effects[1].value == 3,
+    "a legacy ac_bonus must arrive as an ac effect")
 assert(library.itm_2.description == nil, "overwriting replaces the record, it does not patch it")
 assert(library.itm_2.version == 2, "an import is a local save: the version must move forward")
 assert(library.itm_1 and library.itm_3 and library.itm_3.name == "Arrows",

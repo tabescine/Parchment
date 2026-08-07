@@ -78,7 +78,8 @@ local KINDS = {
       hint = "Carried and wielded. Its bonus adds to the attack rolls of the system weapon"
           .. " you link it to." },
     { id = "equipment", label = "Equipment",
-      hint = "Worn. Its AC bonus and modifiers count while equipped, and pieces stack." },
+      hint = "Worn. Its effects (AC, skills, saves, ...) apply while equipped;"
+          .. " armor can cap the AC attribute modifier." },
     { id = "gear", label = "Gear",
       hint = "Everything else: counted rather than equipped (rope, rations, a lantern)." },
 }
@@ -169,11 +170,18 @@ local function MechanicsText(item)
         return (item.weapon_id and (bonus .. " to " .. WeaponName(item.weapon_id) .. " attack rolls")
             or (bonus .. " attack (no weapon linked)")) .. EffectsSuffix(item)
     elseif item.kind == "equipment" then
-        local text = UI.Signed(tonumber(item.ac_bonus) or 0) .. " AC while equipped"
+        local bits = {}
+        -- Pre-effects items carried +AC as a field; anything the migration
+        -- could not fold (a full effects list) still applies it, so say so.
+        local legacy = tonumber(item.ac_bonus)
+        if legacy and legacy ~= 0 then
+            bits[#bits + 1] = UI.Signed(legacy) .. " AC while equipped"
+        end
         local cap = tonumber(item.ac_mod_cap)
         if cap then
-            text = text .. ", caps the AC attribute modifier at " .. UI.Signed(cap)
+            bits[#bits + 1] = "caps the AC attribute modifier at " .. UI.Signed(cap)
         end
+        local text = #bits > 0 and table.concat(bits, ", ") or "worn"
         return text .. EffectsSuffix(item)
     end
     return "carried in stacks of " .. (tonumber(item.default_count) or 1)
@@ -227,26 +235,29 @@ local function ClampCap(value)
 end
 
 -- Coerces a draft into the shape a library item has, dropping the fields the
--- chosen kind does not own: switching kind mid-edit must not leave an AC bonus
--- on a weapon, which no page would then show and no mechanic would read. `id`
--- and `version` are dropped too - ns.SetItem stamps both on save.
+-- chosen kind does not own: switching kind mid-edit must not leave a modifier
+-- cap on a weapon, which no page would then show and no mechanic would read.
+-- `id` and `version` are dropped too - ns.SetItem stamps both on save.
 local function Normalize(d)
     d.name = tostring(d.name or "")
     d.description = tostring(d.description or "")
     d.kind = KIND_LABEL[d.kind] and d.kind or "gear"
     if type(d.icon) ~= "string" or d.icon == "" then d.icon = nil end
     d.id, d.version = nil, nil
+    -- A draft may still carry the retired +AC field (an item imported from an
+    -- old export, a hand-edited record): fold it into the effects list, the
+    -- shape the Effects step edits, so the value stays visible and saved.
+    ns.Items.MigrateAC(d)
     if d.kind == "weapon" then
         d.bonus = ClampBonus(d.bonus)
         if type(d.weapon_id) ~= "string" then d.weapon_id = nil end
-        d.ac_bonus, d.ac_mod_cap, d.default_count = nil, nil, nil
+        d.ac_mod_cap, d.default_count = nil, nil
     elseif d.kind == "equipment" then
-        d.ac_bonus = ClampBonus(d.ac_bonus)
         d.ac_mod_cap = ClampCap(d.ac_mod_cap)
         d.bonus, d.weapon_id, d.default_count = nil, nil, nil
     else
         d.default_count = ns.Items.ClampCount(d.default_count) or 1
-        d.bonus, d.weapon_id, d.ac_bonus, d.ac_mod_cap = nil, nil, nil, nil
+        d.bonus, d.weapon_id, d.ac_mod_cap = nil, nil, nil
     end
     -- Equippable kinds keep an effects list to edit (capped like the schema);
     -- gear drops it - counted items are never worn, so nothing would apply it.
@@ -499,19 +510,16 @@ local function FillDetails(f, d)
     else
         f.linkBtn:Hide()
         f.stepperA:Show()
+        f.rowBLabel:Hide()
+        f.stepperB:Hide()
         if d.kind == "equipment" then
-            f.rowALabel:SetText("AC bonus")
-            f.stepperA:SetText(UI.Signed(d.ac_bonus or 0))
-            -- Row B is the optional modifier cap: "(none)" means the wearer
-            -- keeps their full AC attribute modifier (light armor); 0 is heavy
-            -- armor, 2/3 the usual medium-armor caps.
-            f.rowBLabel:Show()
-            f.rowBLabel:SetText("Modifier cap")
-            f.stepperB:Show()
-            f.stepperB:SetText(d.ac_mod_cap and UI.Signed(d.ac_mod_cap) or "(none)")
+            -- The optional modifier cap: "(none)" means the wearer keeps their
+            -- full AC attribute modifier (light armor); 0 is heavy armor, 2/3
+            -- the usual medium-armor caps. A +AC bonus is an effect (step 3),
+            -- like every other modifier the piece grants.
+            f.rowALabel:SetText("Modifier cap")
+            f.stepperA:SetText(d.ac_mod_cap and UI.Signed(d.ac_mod_cap) or "(none)")
         else
-            f.rowBLabel:Hide()
-            f.stepperB:Hide()
             f.rowALabel:SetText("Count per stack")
             f.stepperA:SetText(tostring(d.default_count or 1))
         end
@@ -852,7 +860,20 @@ local function WireDetails(f)
         local d = f.draft
         if not d then return end
         if d.kind == "equipment" then
-            d.ac_bonus = ClampBonus((d.ac_bonus or 0) + delta)
+            -- The cap steps through its "off" state below zero:
+            -- (none) -> +0 -> +1 -> ... and back down past 0 to (none).
+            -- Spelled as an if: `n < 0 and nil or x` would collapse to x,
+            -- which is exactly how the old stepper trapped the cap at 0.
+            if d.ac_mod_cap == nil then
+                if delta > 0 then d.ac_mod_cap = 0 end
+            else
+                local n = d.ac_mod_cap + delta
+                if n < 0 then
+                    d.ac_mod_cap = nil
+                else
+                    d.ac_mod_cap = math.min(BONUS_CAP, n)
+                end
+            end
         else
             d.default_count = ns.Items.ClampCount((d.default_count or 1) + delta) or 1
         end
@@ -861,18 +882,7 @@ local function WireDetails(f)
     f.stepperB:OnStep(function(delta)
         local d = f.draft
         if not d then return end
-        if d.kind == "equipment" then
-            -- The cap steps through its "off" state below zero:
-            -- (none) -> +0 -> +1 -> ... and back down past 0 to (none).
-            if d.ac_mod_cap == nil then
-                if delta > 0 then d.ac_mod_cap = 0 end
-            else
-                local n = d.ac_mod_cap + delta
-                d.ac_mod_cap = n < 0 and nil or math.min(BONUS_CAP, n)
-            end
-        else
-            d.bonus = ClampBonus((d.bonus or 0) + delta)
-        end
+        d.bonus = ClampBonus((d.bonus or 0) + delta)
         Refresh(f)
     end)
 
@@ -1075,7 +1085,12 @@ local function FillRowTip(row, id, item)
             lines[#lines + 1] = { "Linked weapon", WeaponName(item.weapon_id) }
         end
     elseif item.kind == "equipment" then
-        lines[#lines + 1] = { "AC bonus", UI.Signed(tonumber(item.ac_bonus) or 0) }
+        -- +AC lives in the effects list; only a legacy field the migration
+        -- could not fold (full effects list) still shows as its own line.
+        local legacy = tonumber(item.ac_bonus)
+        if legacy and legacy ~= 0 then
+            lines[#lines + 1] = { "AC bonus", UI.Signed(legacy) }
+        end
         if tonumber(item.ac_mod_cap) then
             lines[#lines + 1] = { "Modifier cap", UI.Signed(tonumber(item.ac_mod_cap)) }
         end

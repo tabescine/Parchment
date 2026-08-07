@@ -102,9 +102,12 @@ assert(#inv.weapons == 1 and #inv.equipment == 1 and #inv.gear == 1,
 local bow = inv.weapons[1]
 assert(bow.source == "library" and bow.equipped and bow.weapon_name == "Bow")
 assert(bow.attack_total == 5, "bow attack 4 + the item's +1, got " .. tostring(bow.attack_total))
-assert(inv.equipment[1].equipped and inv.equipment[1].ac_bonus == 1)
-assert(sheet.derived.ac == 12 and sheet.derived.ac_equipment.total == 1,
-    "equipped equipment must add its AC on top of the 11 above")
+assert(inv.equipment[1].equipped and inv.equipment[1].effects[1].type == "ac")
+assert(sheet.derived.ac == 12, "equipped equipment must add its AC on top of the 11 above")
+assert(sheet.derived.ac_equipment == nil, "the sample carries no legacy ac_bonus field")
+assert(sheet.derived.ac_effects.total == 1
+    and sheet.derived.ac_effects.sources[1] == "+1 Traveller's Leathers",
+    "the ac effect must fold with its provenance")
 assert(inv.gear[1].count == 12, "the character's own count wins over the item's default_count")
 
 -- The sample packs validate against the sample system, and Wren's feat,

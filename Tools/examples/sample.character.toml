@@ -68,7 +68,8 @@ spells = ["hearth_mend"]
 # your item library (/pmt items), never a copy - `item_id` is the library key,
 # and only the per-character state lives here:
 #   equipped - weapons and equipment; an equipped weapon item adds its bonus to
-#              the linked weapon's attack rolls, equipment adds its ac_bonus to AC
+#              the linked weapon's attack rolls, equipment applies its effects
+#              (an "ac" effect adds to AC) while worn
 #   count    - gear only (the editable counter on the sheet)
 # Editing the library item updates every character holding it. An item_id your
 # library does not know renders as a missing row (and /pmt validate lists it),
