@@ -42,9 +42,12 @@
 -- proficiency rows, one per weapon skill, and stay the bare skill. Instead each
 -- inventory weapon carries its OWN attack total (the linked weapon's
 -- proficiency total + the item's bonus), so a character holding two blades
--- rolls the one actually swung. Equipment ac_bonus values sum into derived.ac
--- through their own `ac_equipment` term, kept separate so the AC tooltip can
--- name the equipment share. Equipment may also cap the AC attribute's
+-- rolls the one actually swung. An item's +AC arrives as an "ac" effect (the
+-- wizard authors it that way), folded with per-source provenance into
+-- derived.ac_effects; the legacy ac_bonus field (pre-effects items, wire
+-- snapshots) still sums into derived.ac through its own `ac_equipment` term,
+-- kept separate so the AC tooltip can name the equipment share. Equipment may
+-- also cap the AC attribute's
 -- contribution while worn (ac_mod_cap - heavy armor is cap 0, medium cap 2/3,
 -- absent means the full modifier applies); the lowest worn cap binds and is
 -- surfaced as derived.ac_mod_cap. Weapon and equipment items may additionally
@@ -168,7 +171,7 @@ end
 local function NewAccumulator()
     return {
         attr = {}, attrSources = {}, allAttr = 0,
-        ac = 0, attack = 0, initiative = 0, movement = 0, actions = 0,
+        ac = 0, acSources = {}, attack = 0, initiative = 0, movement = 0, actions = 0,
         saveDC = 0, saveDCSchool = {}, spellAttack = 0, spellAttackSchool = {},
         maxHP = 0, maxMana = 0,
         skill = {}, allSkill = 0, skillAddMod = {}, skillSources = {},
@@ -215,8 +218,13 @@ local EFFECT_TYPES = {
       end },
     { id = "all_attributes", label = "All attributes", target = "none",
       apply = function(acc, _, v) acc.allAttr = acc.allAttr + v end },
+    -- AC provenance mirrors the attribute sources: the tooltip names what
+    -- granted each point ("+2 Ring of Protection"), trait or worn item alike.
     { id = "ac", label = "Armor Class", target = "none",
-      apply = function(acc, _, v) acc.ac = acc.ac + v end },
+      apply = function(acc, _, v, source)
+          acc.ac = acc.ac + v
+          acc.acSources[#acc.acSources + 1] = (v >= 0 and "+" or "") .. v .. " " .. source
+      end },
     { id = "attack_rolls", label = "Attack rolls", target = "none",
       apply = function(acc, _, v) acc.attack = acc.attack + v end },
     { id = "initiative", label = "Initiative", target = "none",
@@ -713,6 +721,11 @@ function CharacterSheet.Compute(char, system, itemLib)
         -- out ("+1 equipment (Chainmail)"). Absent when no equipped piece
         -- carries an ac_bonus - a character without equipment reads as before.
         ac_equipment = acEquipment,
+        -- The effect share of AC with its provenance ({ total, sources }, e.g.
+        -- "+2 Ring of Protection"), absent when no ac effect folded. This is
+        -- where an item's +AC lands since the wizard authors it as an effect;
+        -- ac_equipment above only carries the legacy ac_bonus field.
+        ac_effects = #fx.acSources > 0 and { total = fx.ac, sources = fx.acSources } or nil,
         ac_attribute = acAttr,       -- the EFFECTIVE attribute (pick or best candidate)
         -- The modifier term the total actually used (post-cap), plus the
         -- binding cap itself ({ value, source }) when one is worn - so the

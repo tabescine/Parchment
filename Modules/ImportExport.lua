@@ -11,7 +11,8 @@
 --
 -- Reads from: ns.JSON, ns.TOML, ns.Schema, ns.Systems, ns.Packs, ns.GetSystem,
 --   ns.GetCharacter(s), ns.SetCharacter, ns.NextCharacterKey, ns.SetActiveCharacter,
---   ns.GetItemLibrary, ns.SetItem, ns.GetFeatPack, ns.GetSpellPack.
+--   ns.GetItemLibrary, ns.SetItem, ns.Items.MigrateAC, ns.GetFeatPack,
+--   ns.GetSpellPack.
 -- Exposes on ns.ImportExport: ExportSystem, ExportCharacter, ExportItems,
 --   ExportFeatPack, ExportSpellPack, Import, StripMeta.
 
@@ -273,9 +274,12 @@ function IE.Import(text)
         -- not mention. SetItem bumps each stored item's `version` past the local
         -- copy's: an import IS a local save, and the future item transfer over
         -- comm compares versions to decide whose copy is newer.
+        -- Old exports carry equipment +AC as an ac_bonus field; fold it into
+        -- the effects list on the way in, the shape the library stores since
+        -- the field was retired (mirrors Core's load-time migration).
         local count = 0
         for id, item in pairs(incoming) do
-            ns.SetItem(id, item)
+            ns.SetItem(id, ns.Items.MigrateAC(item))
             count = count + 1
         end
         return true, "imported " .. count .. " item(s) into the library."

@@ -409,3 +409,61 @@ assert(foreign.derived.ac == bare.derived.ac,
     "our item's effects must not fold into their totals")
 assert(ours.derived.ac ~= foreign.derived.ac,
     "the two paths must genuinely differ, or this test proves nothing")
+
+-- MigrateAC: the retired equipment ac_bonus field folds into an "ac" effect -
+-- Core's load-time migration, the import path and the wizard draft all run
+-- items through this, so an old library keeps its +AC.
+local mail = { id = "m", name = "Chainmail", kind = "equipment", ac_bonus = 2,
+    effects = { { type = "initiative", value = 1 } } }
+Items.MigrateAC(mail)
+assert(mail.ac_bonus == nil and #mail.effects == 2, "ac_bonus must fold into the effects list")
+assert(mail.effects[2].type == "ac" and mail.effects[2].value == 2)
+Items.MigrateAC(mail)
+assert(#mail.effects == 2, "re-running the migration must not fold twice")
+
+-- The field starts the list on an item without one; a zero folds to nothing.
+local shirt = { id = "s", name = "Shirt", kind = "equipment", ac_bonus = 1 }
+Items.MigrateAC(shirt)
+assert(shirt.effects[1].type == "ac" and shirt.effects[1].value == 1)
+local plain = { id = "p", name = "Plain Coat", kind = "equipment", ac_bonus = 0 }
+Items.MigrateAC(plain)
+assert(plain.ac_bonus == nil and plain.effects == nil, "a zero bonus folds to nothing")
+
+-- On any other kind the field was dormant (nothing ever read it), so it is
+-- dropped rather than turned into a live effect; unusable values drop too.
+local oddKnife = { id = "k", name = "Knife", kind = "weapon", ac_bonus = 3 }
+Items.MigrateAC(oddKnife)
+assert(oddKnife.ac_bonus == nil and oddKnife.effects == nil, "a weapon's ac_bonus was dormant")
+local haunted = { id = "h", name = "Haunted Helm", kind = "equipment", ac_bonus = 0 / 0 }
+Items.MigrateAC(haunted)
+assert(haunted.ac_bonus == nil and haunted.effects == nil, "a NaN bonus folds to nothing")
+
+-- A full effects list keeps the field instead (10 is the schema's cap): the
+-- sheet's legacy fold still applies it, so nothing is silently lost.
+local crowded = { id = "c", name = "Crowded Cloak", kind = "equipment", ac_bonus = 1, effects = {} }
+for i = 1, 10 do crowded.effects[i] = { type = "initiative", value = 1 } end
+Items.MigrateAC(crowded)
+assert(crowded.ac_bonus == 1 and #crowded.effects == 10, "a full list keeps the legacy field")
+
+-- The ac effect folds into AC with provenance: derived.ac_effects names each
+-- grant for the AC tooltip, while a legacy ac_bonus keeps its own separately
+-- named ac_equipment term - the two shares never blur.
+local mixed = Library()
+mixed.itm_9 = { id = "itm_9", name = "Ring of Protection", kind = "equipment",
+    effects = { { type = "ac", value = 2 } } }
+local ringed = ns.CharacterSheet.Compute(Char({
+    { item_id = "itm_9", equipped = true },
+    { item_id = "itm_3", equipped = true },     -- legacy ac_bonus = 1
+}), system, mixed)
+assert(ringed.derived.ac == 13, "10 base + 2 effect + 1 legacy, got " .. ringed.derived.ac)
+assert(ringed.derived.ac_effects.total == 2
+    and ringed.derived.ac_effects.sources[1] == "+2 Ring of Protection",
+    "the ac effect must record its provenance")
+assert(ringed.derived.ac_equipment.total == 1
+    and ringed.derived.ac_equipment.sources[1] == "Chainmail",
+    "the legacy share keeps its own term")
+local unringed = ns.CharacterSheet.Compute(Char({
+    { item_id = "itm_9", equipped = false },
+}), system, mixed)
+assert(unringed.derived.ac == 10 and unringed.derived.ac_effects == nil,
+    "a stashed ac effect must not fold and leaves no provenance")

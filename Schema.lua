@@ -152,8 +152,8 @@ end
 -- Checks an optional ac_mod_cap field (both the library item and the wire
 -- `resolved` snapshot carry one): numeric within bounds like a bonus, and
 -- never negative - a cap limits the AC modifier's benefit, a penalty belongs
--- in ac_bonus. Out-of-range negatives are already reported by the bounds
--- check, so the negative report covers the in-range ones.
+-- in an "ac" effect. Out-of-range negatives are already reported by the
+-- bounds check, so the negative report covers the in-range ones.
 local function CheckCap(value, ctx, issues)
     CheckNumeric(value, ctx, "ac_mod_cap", MAX_BONUS, issues)
     if type(value) == "number" and value < 0 and value >= -MAX_BONUS then
@@ -332,6 +332,8 @@ local function CheckItem(item, ctx, issues)
     CheckText(item.weapon_id, ctx, "weapon_id", MAX_ITEM_NAME, issues)
     CheckIcon(item.icon, ctx, issues)
     CheckNumeric(item.bonus, ctx, "bonus", MAX_BONUS, issues)
+    -- ac_bonus is the retired +AC field (now an "ac" effect): still accepted
+    -- so old export files import, where the value is folded on the way in.
     CheckNumeric(item.ac_bonus, ctx, "ac_bonus", MAX_BONUS, issues)
     CheckCap(item.ac_mod_cap, ctx, issues)
     CheckNumeric(item.default_count, ctx, "default_count", MAX_COUNT, issues)

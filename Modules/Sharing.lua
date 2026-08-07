@@ -46,7 +46,9 @@ local MAX_ENTRIES = 50
 -- what the receiver needs to render the row and apply its bonuses (`effects`
 -- included - an equipped item's modifiers are part of the sheet's totals), and
 -- nothing else (no description, no version - the item itself is not being
--- transferred).
+-- transferred). ac_bonus is the retired +AC field: a migrated library never
+-- carries it, but the rare item the migration could not fold still does, and
+-- old senders' snapshots keep reading on our side the same way.
 local RESOLVED_FIELDS = { "name", "kind", "icon", "weapon_id", "bonus", "ac_bonus", "ac_mod_cap",
     "effects" }
 

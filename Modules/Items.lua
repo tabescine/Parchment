@@ -18,7 +18,7 @@
 --
 -- Reads from: ns.MISSING_ITEM.
 -- Exposes on ns.Items: .Resolve, .Instantiate, .ToggleEquipped, .SetCount,
---   .Remove, .ClampCount, .MAX_COUNT.
+--   .Remove, .ClampCount, .MigrateAC, .MAX_COUNT.
 
 local ADDON, ns = ...
 
@@ -29,6 +29,11 @@ local Items = ns.Items
 -- number in [0, MAX_COUNT] (mirrored by the schema's default_count check).
 local MAX_COUNT = 9999
 Items.MAX_COUNT = MAX_COUNT
+
+-- The schema's bounds an ac_bonus lives within (MAX_BONUS there) and the item
+-- effects list cap (MAX_ITEM_EFFECTS), mirrored for the legacy conversion.
+local MAX_BONUS = 99
+local MAX_EFFECTS = 10
 
 -- Returns the inventory entry at `index`, or nil when the character has no
 -- inventory or the index does not name an entry. Every mutation below goes
@@ -49,6 +54,36 @@ function Items.ClampCount(value)
     if n < 0 then return 0 end
     if n > MAX_COUNT then return MAX_COUNT end
     return math.floor(n)
+end
+
+-- Folds a legacy ac_bonus field into the item's effects list (an "ac" effect,
+-- the shape the wizard authors since the field was retired). Mutates and
+-- returns the item; idempotent, so the load-time migration re-running against
+-- already-converted data is a no-op.
+--
+-- Only equipment ever applied the field, so only equipment converts; on any
+-- other kind (where it was dormant - nothing read it) the field is simply
+-- dropped, as it is when the bonus is zero or unusable. The one item that
+-- keeps it is an equipment piece whose effects list is already full: the
+-- sheet's legacy fold still applies the field, so nothing is lost.
+function Items.MigrateAC(item)
+    if type(item) ~= "table" or item.ac_bonus == nil then return item end
+    local n = tonumber(item.ac_bonus)
+    local bonus = 0
+    if n and n == n and n ~= math.huge and n ~= -math.huge then
+        bonus = math.max(-MAX_BONUS, math.min(MAX_BONUS, math.floor(n)))
+    end
+    if item.kind ~= "equipment" or bonus == 0 then
+        item.ac_bonus = nil
+        return item
+    end
+
+    local effects = type(item.effects) == "table" and item.effects or {}
+    if #effects >= MAX_EFFECTS then return item end
+    effects[#effects + 1] = { type = "ac", value = bonus }
+    item.effects = effects
+    item.ac_bonus = nil
+    return item
 end
 
 -- Resolves an inventory entry to the item it displays.

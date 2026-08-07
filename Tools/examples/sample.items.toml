@@ -17,14 +17,15 @@
 #
 # Required fields: id, name, kind. `kind` is one of:
 #   weapon    - equippable; `bonus` adds to the linked weapon's attack rolls
-#   equipment - equippable; `ac_bonus` adds to AC while worn (bonuses stack),
-#               and `ac_mod_cap` (optional) caps the wearer's AC attribute
-#               modifier (see itm_4)
+#   equipment - equippable; `ac_mod_cap` (optional) caps the wearer's AC
+#               attribute modifier while worn (see itm_4)
 #   gear      - not equippable; carries the per-character counter instead
-# Weapon and equipment items may also carry `effects` (see itm_5): modifiers
-# from the shared effect vocabulary - saving throws, skills, attributes, AC,
-# initiative and more - that fold into the sheet only while the item is
-# equipped. Everything else is optional.
+# Weapon and equipment items may also carry `effects` (see itm_2 and itm_5):
+# modifiers from the shared effect vocabulary - saving throws, skills,
+# attributes, AC, initiative and more - that fold into the sheet only while
+# the item is equipped. A piece of armor's +AC is simply an "ac" effect.
+# Everything else is optional. (Old files with the retired `ac_bonus` field
+# still import; the value is folded into an "ac" effect on the way in.)
 # =============================================================================
 
 # A weapon item. `weapon_id` links it to a weapon in the loaded system
@@ -41,16 +42,19 @@ weapon_id = "bow"
 bonus = 1
 version = 1                  # bumped on every save; used by future item transfer
 
-# An equipment item. `ac_bonus` is added to AC for every equipped piece - they
-# stack, so a second worn item adds its own bonus on top.
+# An equipment item. Its +AC is an "ac" effect, applied for every equipped
+# piece - they stack, so a second worn item adds its own bonus on top.
 [items.itm_2]
 id = "itm_2"
 name = "Traveller's Leathers"
 kind = "equipment"
 description = "Scuffed riding leathers, oiled against the weather."
 icon = "inv_chest_leather_09"
-ac_bonus = 1
 version = 1
+
+[[items.itm_2.effects]]
+type = "ac"
+value = 1
 
 # Heavier armor may also CAP the wearer's AC attribute modifier while worn
 # (`ac_mod_cap`): the modifier counts as at most this value, so this plate
@@ -58,16 +62,19 @@ version = 1
 # all (heavy armor), 2 or 3 is a typical medium-armor cap, and leaving the
 # field out means the full modifier applies (light armor, plain clothing).
 # When several worn pieces carry a cap the lowest wins; the cap never raises a
-# modifier already below it, and `ac_bonus` still stacks on top as usual.
+# modifier already below it, and an "ac" effect still stacks on top as usual.
 [items.itm_4]
 id = "itm_4"
 name = "Guard's Plate"
 kind = "equipment"
 description = "Municipal-issue plate, sized for whoever stands the watch."
 icon = "inv_chest_plate04"
-ac_bonus = 3
 ac_mod_cap = 0
 version = 1
+
+[[items.itm_4.effects]]
+type = "ac"
+value = 3
 
 # An equipment item with `effects`: modifiers that apply only while the piece
 # is equipped. Each effect names a `type` from the shared vocabulary (the same

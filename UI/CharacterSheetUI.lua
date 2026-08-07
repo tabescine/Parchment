@@ -428,14 +428,14 @@ local function RenderOverview(content, sheet, ctx)
         cfg.hit_die_attribute and Tip("Hit Dice",
             "Level " .. sheet.level .. " x the die for the " .. aName(cfg.hit_die_attribute)
             .. " modifier (" .. Signed(aMod(cfg.hit_die_attribute)) .. ").") or nil)
-    -- Equipped equipment is named separately from the effect share, so the
-    -- points a breastplate contributes are visible as such; both fall out as
-    -- differences from the structural parts.
+    -- Equipped equipment (the legacy ac_bonus share) and the effect share are
+    -- each named: the points a breastplate or a ring contributes are visible
+    -- as such, itemized from the provenance Compute recorded.
     local acEquip = d.ac_equipment
-    local acFromGear = acEquip and acEquip.total or 0
+    local acFx = d.ac_effects
     -- The modifier term the total actually used: worn armor may have capped it
     -- (d.ac_mod_cap names the binding piece), so the raw attribute modifier
-    -- would misreport both this term and the effect residue.
+    -- would misreport this term.
     local acModUsed = d.ac_attribute_mod or aMod(d.ac_attribute)
     local acCapped = d.ac_mod_cap and acModUsed < aMod(d.ac_attribute)
     Row(content, "Armor Class", tostring(d.ac), 0, C_GOLD, Tip("Armor Class",
@@ -443,9 +443,10 @@ local function RenderOverview(content, sheet, ctx)
         .. Signed(acModUsed)
         .. (acCapped and (" (capped from " .. Signed(aMod(d.ac_attribute)) .. " by "
             .. d.ac_mod_cap.source .. ")") or "")
-        .. (acEquip and (" " .. Signed(acFromGear) .. " equipment ("
+        .. (acEquip and (" " .. Signed(acEquip.total) .. " equipment ("
             .. table.concat(acEquip.sources, ", ") .. ")") or "")
-        .. fxTerm(d.ac - cfg.ac_base - acModUsed - acFromGear)))
+        .. (acFx and (" " .. Signed(acFx.total) .. " effects ("
+            .. table.concat(acFx.sources, ", ") .. ")") or "")))
     -- Initiative is gold (interactive): clicking rolls it and joins combat,
     -- via the same path as the combat window's Me/Submit button.
     Row(content, "Initiative", Signed(d.initiative), 0, C_GOLD, Tip("Initiative",
