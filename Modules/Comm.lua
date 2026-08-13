@@ -70,10 +70,12 @@ local AUTHORITATIVE = { SYSTEM = true, INIT = true, FEATS = true, SPELLS = true,
 -- this any stranger on the realm could WHISPER a DMROLE claim and - since
 -- DMROLE is not AUTHORITATIVE - silently become the recognized DM, then whisper
 -- INIT/SYSTEM through the trust gate they just walked past.
--- REQ/CHAR/VITREQ/LINKQ/LINKA are deliberately NOT listed: sheet sharing and
--- chat-link lookups legitimately work by whisper between any two players
+-- REQ/CHAR/VITREQ/LINKQ/LINKA and the item-transfer types (ITEM/ITEMACK/
+-- ITEMQ/ITEMA) are deliberately NOT listed: sheet sharing, chat-link lookups
+-- and item offers legitimately work by whisper between any two players
 -- (guild, friends, a linked sheet in say), so gating them would break the
--- feature. They write no group state, and the rate gate caps their cost.
+-- feature. They write no group state (an ITEM offer stores nothing without
+-- the receiver's popup consent), and the rate gate caps their cost.
 local GROUP_ONLY = { SYSTEM = true, INIT = true, FEATS = true, SPELLS = true, DMROLE = true,
     RELEASE = true, INITSUBMIT = true, TURNEND = true, VITALS = true,
     INITREQ = true, INITCALL = true, INITACK = true }
@@ -103,9 +105,15 @@ local GROUP_DIST = { PARTY = true, RAID = true, INSTANCE_CHAT = true }
 -- turn order - and INITCALL raises a dialog on every receiver; this table is the
 -- only thing bounding how often one peer can trigger either. INITACK prints a
 -- line in the receiver's chat, so it is paced like the submit it answers.
+-- ITEM raises an accept/decline popup on the receiver, so it is paced like
+-- the other popup-raisers (DMROLE, INITCALL). ITEMQ is a small amplifier (a
+-- ~20 byte request makes us whisper back an item record); ITEMA and ITEMACK
+-- only act while a matching request/offer is pending, but both print, so
+-- they get the LINKA pacing.
 local MIN_INTERVAL = { SYSTEM = 3, VITALS = 0.5, INIT = 0.25, CHAR = 2, FEATS = 3, SPELLS = 3,
     LINKQ = 0.3, LINKA = 0.3, REQ = 2, VITREQ = 3, DMROLE = 5, RELEASE = 5,
-    INITSUBMIT = 1, TURNEND = 1, INITREQ = 3, INITCALL = 5, INITACK = 1 }
+    INITSUBMIT = 1, TURNEND = 1, INITREQ = 3, INITCALL = 5, INITACK = 1,
+    ITEM = 5, ITEMQ = 1, ITEMA = 0.3, ITEMACK = 0.3 }
 -- [sender][type] = GetTime() of the last accepted message (pruned on roster
 -- change). Nested by sender so a departing member's row drops in one step.
 local recvAt = {}

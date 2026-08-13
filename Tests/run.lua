@@ -37,6 +37,7 @@ local MANIFEST = {
     "test_comm_hardening.lua",
     "test_comm_compress.lua",
     "test_sharing.lua",
+    "test_itemshare.lua",
     "test_party.lua",
     "test_menu.lua",
     "test_samples.lua",

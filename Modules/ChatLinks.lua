@@ -27,15 +27,22 @@
 -- anywhere itself: the user finishes the message and picks the channel,
 -- exactly like linking a regular item.
 --
+-- Item links can additionally be IMPORTABLE: PostItemLink asks the author
+-- (per link) whether others may copy the item into their library. An
+-- importable link's registry payload carries the full record in `item`, its
+-- LINKA answer carries `importable = true` (so the viewer's window offers an
+-- Import button), and the record itself moves over a separate ITEMQ/ITEMA
+-- fetch owned by Modules/ItemShare.lua - never inside the LINKA.
+--
 -- Reads from: ns.Comm (On/Whisper), ns.Print, ns.FormatCost, ns.AttrName,
 --   ns.Spells (school names), ns.Widgets.EffectSummary (item effect lines,
 --   call-time - Widgets loads later), ns.ChatLinkUI (render, guarded - loads
---   later).
+--   later), ns.GetItemLibrary, ns.DeepCopy, ns.SafeText.
 -- Exposes on ns.ChatLinks: Store, Get, MakeToken, Rewrite, ParseHref,
---   PostLink, Request, SanitizeAnswer, the payload builders (FeatRank,
---   Spell, Homebrew, Item - Item payloads also carry an optional `icon`
---   texture name, sanitized on receive) and the LINK_TYPE/FIND_PATTERN
---   constants.
+--   PostLink, PostItemLink, Request, SanitizeAnswer, the payload builders
+--   (FeatRank, Spell, Homebrew, Item - Item payloads also carry an optional
+--   `icon` texture name, sanitized on receive) and the LINK_TYPE/
+--   FIND_PATTERN constants.
 
 local ADDON, ns = ...
 
@@ -59,7 +66,9 @@ local MAX_LINE = 600
 local MAX_ICON = 64
 local ICON_PATTERN = "^[%w_%-]+$"
 
--- Session registry of links WE sent: identifier -> { title, lines }.
+-- Session registry of links WE sent: identifier -> { title, lines, icon,
+-- item }, `item` being the full record behind an importable item link (nil
+-- on view-only links; only ever leaves via ItemShare's ITEMQ answer).
 local sent = {}
 
 -- Strips characters that would break the token or smuggle escape codes into
@@ -155,6 +164,43 @@ function CL.PostLink(payload)
     end
     ns.Print("no chat input to put the link into.")
     return false
+end
+
+-- The importable-or-view-only choice for an item link. Escape posts nothing
+-- (noCancelOnEscape); either button posts the link, with the record attached
+-- only on "Importable".
+StaticPopupDialogs["PARCHMENT_LINK_IMPORTABLE"] = {
+    text = "Link \"%s\" as importable?\n\nImportable: anyone clicking the link can copy the"
+        .. " item into their library.\nView only: the link shows its details, nothing more.",
+    button1 = "Importable",
+    button2 = "View only",
+    OnAccept = function(_, data)
+        data.payload.item = ns.DeepCopy(data.record)
+        CL.PostLink(data.payload)
+    end,
+    OnCancel = function(_, data, reason)
+        if reason == "clicked" then CL.PostLink(data.payload) end
+    end,
+    noCancelOnEscape = 1,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
+-- Posts an item's chat link, asking first whether it should be importable
+-- (see the header; the fetch is Modules/ItemShare.lua's). The prompt only
+-- appears when the item resolves in OUR library - a wire snapshot or missing
+-- item has no record to offer and posts view-only straight away. Accepts a
+-- library record (`id`) or a sheet inventory entry (`item_id`).
+function CL.PostItemLink(item)
+    local id = type(item) == "table"
+        and ((type(item.id) == "string" and item.id)
+            or (type(item.item_id) == "string" and item.item_id)) or nil
+    local lib = id and ns.GetItemLibrary and ns.GetItemLibrary() or nil
+    local record = type(lib) == "table" and lib[id] or nil
+    if type(record) ~= "table" or not StaticPopup_Show then
+        return CL.PostLink(CL.Item(item))
+    end
+    StaticPopup_Show("PARCHMENT_LINK_IMPORTABLE", ns.SafeText(record.name), nil,
+        { payload = CL.Item(item), record = record })
 end
 
 -- Payload builders: each returns { title, lines }, lines being
@@ -265,6 +311,10 @@ function CL.SanitizeAnswer(data)
         and data.icon:match(ICON_PATTERN) then
         out.icon = data.icon
     end
+    -- The sender's claim that the link can be imported (drives the window's
+    -- Import button). Coerced to a plain boolean; the record itself never
+    -- rides in an answer - the button's ITEMQ fetches and re-validates it.
+    out.importable = data.importable and true or nil
     out.lines = {}
     for i, line in ipairs(type(data.lines) == "table" and data.lines or {}) do
         if i > MAX_LINES then break end
@@ -299,7 +349,8 @@ if ns.Comm then
             return
         end
         ns.Comm.Whisper("LINKA",
-            { id = id, title = link.title, icon = link.icon, lines = link.lines }, sender)
+            { id = id, title = link.title, icon = link.icon, lines = link.lines,
+                importable = (type(link.item) == "table") or nil }, sender)
     end)
     ns.Comm.On("LINKA", function(payload, sender)
         local answer = CL.SanitizeAnswer(payload)

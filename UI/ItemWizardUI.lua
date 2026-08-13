@@ -36,7 +36,8 @@
 -- Reads from: ns.UI, ns.HubUI, ns.Widgets (incl. EffectSummary),
 --   ns.CharacterForm, ns.Dialogs (Pick, PickIcon),
 --   ns.CharacterSheet.EFFECT_TYPES/EffectType,
---   ns.Items, ns.ChatLinks, ns.ChatLinkUI,
+--   ns.Items, ns.ChatLinks (incl. PostItemLink), ns.ChatLinkUI,
+--   ns.ItemShare (SendPrompt, call-time - loads later),
 --   ns.Schema.ValidateItem, the item library API (ns.GetItemLibrary,
 --   ns.GetItem, ns.SetItem, ns.DeleteItem, ns.NextItemKey), ns.GetSystem,
 --   ns.HasSystem, ns.AttrName,
@@ -1142,6 +1143,14 @@ local function RowMenu(row)
         if tip then tip(e, "Adds it to the active character's inventory.") end
         e = root:CreateButton("Duplicate", function() RowDuplicate(row) end)
         if tip then tip(e, "Stores a second copy, named '(copy)', to edit freely.") end
+        e = root:CreateButton("Link in chat", function()
+            if row.item then ns.ChatLinks.PostItemLink(row.item) end
+        end)
+        if tip then tip(e, "Puts a chat link in your input; asks whether others may import it.") end
+        e = root:CreateButton("Send to a player", function()
+            if row.item and ns.ItemShare then ns.ItemShare.SendPrompt(row.item) end
+        end)
+        if tip then tip(e, "Offers a copy directly to one player; they choose to accept.") end
         e = root:CreateButton(DELETE or "Delete", function() RowDelete(row) end)
         if tip then tip(e, "Asks first. Carriers keep the entry, showing it as missing.") end
     end)
@@ -1204,7 +1213,7 @@ local function CreateItemRow(content)
     row:SetScript("OnClick", function(self, mouseButton)
         if not self.item then return end
         if mouseButton ~= "RightButton" and IsShiftKeyDown and IsShiftKeyDown() then
-            ns.ChatLinks.PostLink(ns.ChatLinks.Item(self.item))
+            ns.ChatLinks.PostItemLink(self.item)
             return
         end
         if mouseButton == "RightButton" then

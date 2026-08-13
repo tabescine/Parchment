@@ -385,7 +385,9 @@ end
 --   inventory   - { weapons = {...}, equipment = {...}, gear = {...} }, display
 --                 entries only (never library or character tables), each
 --                 carrying its `index` into char.inventory so the UI can toggle
---                 and count without knowing how resolution worked
+--                 and count without knowing how resolution worked, plus the
+--                 entry's `item_id` so link/share actions can reach the
+--                 library record behind the row
 --   acEquipment - { total, sources } from equipped equipment, or nil when no
 --                 equipped piece carries an ac_bonus
 --   acCap       - { value, source } for the lowest ac_mod_cap among equipped
@@ -404,6 +406,7 @@ local function ResolveInventory(char, system, itemLib, weaponAttack)
             index = index, name = DisplayName(item.name), icon = item.icon,
             description = item.description, kind = kind,
             source = source, missing = (source == "missing") or nil,
+            item_id = type(state.item_id) == "string" and state.item_id or nil,
         }
 
         -- The item's effect list rides along on equippable kinds for display

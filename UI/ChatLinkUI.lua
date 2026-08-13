@@ -9,10 +9,17 @@
 -- renders only while its question is the pending one, so nobody can pop this
 -- window unasked.
 --
+-- An answer flagged `importable` (a sanitized boolean - see SanitizeAnswer)
+-- additionally shows an Import button: clicking it asks ItemShare to fetch
+-- the record (ITEMQ/ITEMA), and OnImportResult reflects how that ended. The
+-- button's state lives in frame.importCtx ({ player, id, state }), cleared on
+-- every new click, so a stale result can never label the wrong link.
+--
 -- Mechanism modeled on Total RP 3's chat links (see Modules/ChatLinks.lua).
 --
--- Reads from: ns.ChatLinks, ns.Comm (NormalizeName), ns.UI.
--- Exposes on ns.ChatLinkUI: Show, OnAnswer, and .frame.
+-- Reads from: ns.ChatLinks, ns.Comm (NormalizeName), ns.UI, ns.ItemShare
+--   (RequestImport, call-time - loads later).
+-- Exposes on ns.ChatLinkUI: Show, OnAnswer, OnImportResult, and .frame.
 
 local ADDON, ns = ...
 
@@ -46,6 +53,21 @@ local function BuildFrame()
     local scroll = CreateFrame("ScrollFrame", "ParchmentChatLinkScroll", f, "UIPanelScrollFrameTemplate")
     scroll:SetPoint("TOPLEFT", 14, -44)
     scroll:SetPoint("BOTTOMRIGHT", -32, 14)
+    f.scroll = scroll
+    -- Import affordance for links whose sender marked them importable
+    -- (f.importCtx set in OnAnswer); Render shows it and makes room.
+    f.importBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    f.importBtn:SetSize(120, 22)
+    f.importBtn:SetPoint("BOTTOM", 0, 12)
+    f.importBtn:Hide()
+    f.importBtn:SetScript("OnClick", function(btn)
+        local ctx = f.importCtx
+        if not ctx or ctx.state or not (ns.ItemShare and ns.ItemShare.RequestImport) then return end
+        ctx.state = "asked"
+        btn:SetEnabled(false)
+        btn:SetText("Fetching...")
+        ns.ItemShare.RequestImport(ctx.player, ctx.id)
+    end)
     local content = CreateFrame("Frame", nil, scroll)
     content:SetSize(10, 10)
     content.pool, content.used = {}, 0
@@ -92,6 +114,18 @@ function ChatLinkUI.Render(payload, senderText)
     f.payload, f.senderText = payload, senderText
     f.titleFS:SetText(payload.title or "Link")
 
+    -- The Import button (importable links only) sits under the text; the
+    -- scroll area shrinks to clear it. Resizes re-run Render, so the state
+    -- (idle/fetching/imported) is re-read from importCtx, not reset.
+    local ctx = f.importCtx
+    f.scroll:SetPoint("BOTTOMRIGHT", -32, ctx and 44 or 14)
+    f.importBtn:SetShown(ctx ~= nil)
+    if ctx then
+        f.importBtn:SetEnabled(not ctx.state)
+        f.importBtn:SetText(ctx.state == "done" and "Imported"
+            or ctx.state == "asked" and "Fetching..." or "Import item")
+    end
+
     -- Icon left of the title when the payload carries one; the title slides
     -- back to the window edge when it does not.
     local iconPath = IconPath(payload.icon)
@@ -132,8 +166,10 @@ function ChatLinkUI.Render(payload, senderText)
     f:Show()
 end
 
--- Shows a payload outright (own links, placeholders).
+-- Shows a payload outright (own links, placeholders). Never importable:
+-- anything shown directly is already ours.
 function ChatLinkUI.Show(payload, senderText)
+    GetFrame().importCtx = nil
     ChatLinkUI.Render(payload, senderText)
 end
 
@@ -152,6 +188,7 @@ function ChatLinkUI.OnAnswer(answer, sender)
     end
     pendingId, pendingFrom = nil, nil
     if answer.unknown then
+        GetFrame().importCtx = nil
         ChatLinkUI.Render({
             title = "Link expired",
             lines = { { text = "The sender no longer has this link (links live for one session).",
@@ -159,11 +196,29 @@ function ChatLinkUI.OnAnswer(answer, sender)
         })
         return
     end
+    -- An importable link gets its Import context (who to ask, for what) before
+    -- the render that shows the button.
+    GetFrame().importCtx = answer.importable
+        and { player = sender, id = answer.id } or nil
     ChatLinkUI.Render(answer, "Sent by " .. (sender or "?"))
+end
+
+-- ItemShare reports how a requested import ended; reflect it on the button
+-- while the window still shows that link (a later click already replaced the
+-- context otherwise, and chat carries the printed outcome either way).
+function ChatLinkUI.OnImportResult(id, ok)
+    local f = ChatLinkUI.frame
+    if not (f and f:IsShown() and f.importCtx and f.importCtx.id == id) then return end
+    f.importCtx.state = ok and "done" or nil
+    f.importBtn:SetEnabled(not ok)
+    f.importBtn:SetText(ok and "Imported" or "Import item")
 end
 
 -- Click handling: our own links resolve locally, anyone else's are fetched.
 local function OnLinkClicked(player, id)
+    -- Every click starts a fresh view; the Import context (and button) of a
+    -- previously shown link must not survive onto this one.
+    GetFrame().importCtx = nil
     local me = UnitName and UnitName("player")
     local mine = me and ns.Comm and ns.Comm.SameName and ns.Comm.SameName(player, me)
     if mine then
