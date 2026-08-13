@@ -934,7 +934,7 @@ local function InventoryRow(content, entry, kind, ctx)
     end
     if own then b.rightClick = Drop end
     if own and not entry.missing then
-        b.shiftClick = { click = function() ns.ChatLinks.PostLink(ns.ChatLinks.Item(entry)) end }
+        b.shiftClick = { click = function() ns.ChatLinks.PostItemLink(entry) end }
     end
     content.y = content.y - INV_ROW_H
 end

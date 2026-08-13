@@ -3,7 +3,7 @@
 ## IconTexture: Interface\AddOns\Parchment\Media\logo.png
 ## Notes: System-agnostic TTRPG toolkit - character sheets, initiative, feats and spellbooks.
 ## Author: Parchment
-## Version: 0.4.0
+## Version: 0.4.1
 ## SavedVariables: ParchmentSystemDB, ParchmentCharDB, ParchmentItemDB, ParchmentPackDB, ParchmentDB
 
 # Embedded libraries (load first so LibStub and the Ace3 modules exist).
@@ -37,6 +37,7 @@ Modules\Items.lua
 Modules\CharacterSheet.lua
 UI\CharacterSheetUI.lua
 Modules\Sharing.lua
+Modules\ItemShare.lua
 Modules\Party.lua
 UI\PartyUI.lua
 Modules\InitiativeTracker.lua

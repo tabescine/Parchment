@@ -132,11 +132,17 @@ for _, evil in ipairs({ "..\\..\\Interface\\evil", "Interface/Icons/x", "a|cff00
         "a hostile icon survived sanitizing: " .. tostring(evil))
 end
 
+-- importable: a boolean claim in the answer, coerced on receive; absent
+-- stays absent (no Import button for view-only links).
+assert(CL.SanitizeAnswer({ id = "X:1", title = "T", importable = 1 }).importable == true)
+assert(CL.SanitizeAnswer({ id = "X:1", title = "T" }).importable == nil)
+
 -- LINKQ answers from the registry; unknown ids get an expiry answer.
 whispers = {}
 handlers.LINKQ({ id = id1 }, "Asker")
 assert(whispers[1].t == "LINKA" and whispers[1].target == "Asker")
 assert(whispers[1].payload.title == "Rime Sheath" and whispers[1].payload.id == id1)
+assert(whispers[1].payload.importable == nil, "a view-only link must not claim importable")
 handlers.LINKQ({ id = "gone:9" }, "Asker")
 assert(whispers[2].payload.unknown == true)
 handlers.LINKQ("garbage", "Asker")
@@ -155,3 +161,49 @@ assert(shown and shown.answer.title == "Hi" and shown.sender == "Someone")
 shown = nil
 handlers.LINKA({ id = 5 }, "Someone")
 assert(shown == nil, "an unparseable answer must never reach the UI")
+
+-- PostItemLink: an item resolving in OUR library prompts importable-or-view-
+-- only, and nothing posts before the choice. "Importable" attaches a record
+-- COPY to the stored payload (and its LINKA claims importable), "View only"
+-- attaches nothing; a wire/missing item posts view-only with no prompt.
+ParchmentItemDB = nil
+ns.SetItem("itm_1", { name = "Rime Blade", kind = "weapon", bonus = 1 })
+local popups = {}
+StaticPopup_Show = function(which, _, _, data)
+    popups[#popups + 1] = { which = which, data = data }
+    return true
+end
+local nInserted = #inserted
+CL.PostItemLink(ns.GetItem("itm_1"))
+assert(#popups == 1 and popups[1].which == "PARCHMENT_LINK_IMPORTABLE")
+assert(#inserted == nInserted, "nothing may post before the choice")
+
+StaticPopupDialogs["PARCHMENT_LINK_IMPORTABLE"].OnAccept(nil, popups[1].data)
+local impId = inserted[#inserted]:match("^%[PMT:(.-)%]$")
+local stored = CL.Get(impId)
+assert(stored and type(stored.item) == "table" and stored.item.name == "Rime Blade")
+assert(stored.item ~= ns.GetItem("itm_1"), "the stored record must be a copy")
+
+CL.PostItemLink(ns.GetItem("itm_1"))
+StaticPopupDialogs["PARCHMENT_LINK_IMPORTABLE"].OnCancel(nil, popups[2].data, "clicked")
+local viewId = inserted[#inserted]:match("^%[PMT:(.-)%]$")
+assert(viewId ~= impId and CL.Get(viewId).item == nil)
+
+nInserted = #inserted
+CL.PostItemLink(ns.GetItem("itm_1"))
+StaticPopupDialogs["PARCHMENT_LINK_IMPORTABLE"].OnCancel(nil, popups[3].data, "")
+assert(#inserted == nInserted, "escape must post nothing")
+
+CL.PostItemLink({ name = "Foreign", kind = "gear" })
+assert(#popups == 3 and #inserted == nInserted + 1, "a non-library item posts promptless")
+
+-- The importable claim rides the LINKA; the record itself never does.
+whispers = {}
+handlers.LINKQ({ id = impId }, "Asker")
+assert(whispers[1].payload.importable == true)
+assert(whispers[1].payload.item == nil, "the record must never ride in a LINKA")
+handlers.LINKQ({ id = viewId }, "Asker")
+assert(whispers[2].payload.importable == nil)
+
+-- The suite runs in one process: leave no library behind for later files.
+ParchmentItemDB = nil
