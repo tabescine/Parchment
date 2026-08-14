@@ -1,308 +1,319 @@
 {
-  "_note": "Parchment Sample system in JSON. JSON allows no comments - see sample.system.toml for the fully annotated reference; both import identically.",
-  "accomplish_targets": {
-    "saves": 2,
-    "skills": {
-      "attribute": "wits",
-      "base": 3
-    },
-    "weapons": {
-      "attribute_max": [
-        "might",
-        "wits"
-      ],
-      "base": 5
-    }
+ "_note": "Parchment Sample system in JSON. JSON allows no comments - see sample.system.toml for the fully annotated reference; both import identically.",
+ "accomplish_targets": {
+  "saves": 2,
+  "skills": {
+   "attribute": "wits",
+   "base": 3
   },
-  "accomplishment_table": {
-    "1": 1,
-    "10": 5,
-    "2": 1,
-    "3": 2,
-    "4": 2,
-    "5": 3,
-    "6": 3,
-    "7": 4,
-    "8": 4,
-    "9": 5
+  "weapons": {
+   "attribute_max": [
+    "might",
+    "wits"
+   ],
+   "base": 5
+  }
+ },
+ "accomplishment_table": {
+  "1": 1,
+  "10": 5,
+  "2": 1,
+  "3": 2,
+  "4": 2,
+  "5": 3,
+  "6": 3,
+  "7": 4,
+  "8": 4,
+  "9": 5
+ },
+ "attributes": [
+  {
+   "id": "might",
+   "name": "Might"
   },
-  "attributes": [
-    {
-      "id": "might",
-      "name": "Might"
-    },
-    {
-      "id": "wits",
-      "name": "Wits"
-    },
-    {
-      "id": "spirit",
-      "name": "Spirit"
-    }
-  ],
-  "damage_types": [
-    "slashing",
-    "piercing",
-    "blunt",
-    "fire",
-    "frost",
-    "arcane"
-  ],
-  "derived_stats": {
-    "ac_base": 10,
-    "actions_base": 2,
-    "hit_die_attribute": "might",
-    "hp_attribute": "might",
-    "init_attributes": [
-      "wits",
-      "spirit"
-    ],
-    "initiative_tiebreaker": "wits",
-    "mana_attribute": "spirit",
-    "mana_multiplier": 2,
-    "movement_attribute": "wits",
-    "movement_base": 12,
-    "movement_per_step": 0.5,
-    "retroactive_hp": true,
-    "save_dc_base": 10,
-    "spell_attributes": [
-      "spirit"
-    ]
+  {
+   "id": "wits",
+   "name": "Wits"
   },
-  "hit_dice_bands": [
-    {
-      "die": "d6",
-      "max_mod": -1
-    },
-    {
-      "die": "d8",
-      "max_mod": 1
-    },
-    {
-      "die": "d10",
-      "max_mod": 3
-    }
+  {
+   "id": "spirit",
+   "name": "Spirit"
+  }
+ ],
+ "damage_types": [
+  "slashing",
+  "piercing",
+  "blunt",
+  "fire",
+  "frost",
+  "arcane"
+ ],
+ "derived_stats": {
+  "ac_base": 10,
+  "actions_base": 2,
+  "hit_die_attribute": "might",
+  "hp_attribute": "might",
+  "init_attributes": [
+   "wits",
+   "spirit"
   ],
-  "level_bonuses": {
-    "3": {
-      "attribute_points": 1
-    },
-    "5": {
-      "actions": 1
-    }
+  "initiative_tiebreaker": "wits",
+  "mana_attribute": "spirit",
+  "mana_multiplier": 2,
+  "movement_attribute": "wits",
+  "movement_base": 12,
+  "movement_per_step": 0.5,
+  "retroactive_hp": true,
+  "save_dc_base": 10,
+  "spell_attributes": [
+   "spirit"
+  ],
+  "aim_bonus": 2,
+  "death_saves": {
+   "threshold": 10,
+   "successes": 3,
+   "failures": 3
   },
-  "max_level": 10,
-  "modifier_table": {
-    "1": -3,
-    "10": 2,
-    "11": 2,
-    "12": 3,
-    "2": -2,
-    "3": -2,
-    "4": -1,
-    "5": -1,
-    "6": 0,
-    "7": 0,
-    "8": 1,
-    "9": 1
+  "fatigue": {
+   "max": 10,
+   "penalty_per_level": 1,
+   "speed_half_at": 5
+  }
+ },
+ "hit_dice_bands": [
+  {
+   "die": "d6",
+   "max_mod": -1
   },
-  "origin_traits": [
-    {
-      "bonuses": [
-        {
-          "type": "attribute_points",
-          "value": 2
-        }
-      ],
-      "description": "Two extra attribute points to spend at creation.",
-      "id": "scholarly",
-      "name": "Scholarly Upbringing"
-    },
-    {
-      "bonuses": [
-        {
-          "skill": "endurance",
-          "type": "skill",
-          "value": 1
-        },
-        {
-          "type": "max_hp",
-          "value": 2
-        }
-      ],
-      "description": "A life of toil. +1 Endurance and +2 max HP.",
-      "id": "hardened",
-      "name": "Hardened"
-    },
-    {
-      "bonuses": [
-        {
-          "type": "movement",
-          "value": 1
-        },
-        {
-          "id": "spirit",
-          "type": "save",
-          "value": 1
-        }
-      ],
-      "description": "+1 movement, +1 Spirit saving throws.",
-      "id": "fleet",
-      "name": "Fleet of Foot"
-    }
-  ],
-  "point_buy": {
-    "base": 1,
-    "max": 8,
-    "min": 1,
-    "total": 15
+  {
+   "die": "d8",
+   "max_mod": 1
   },
-  "progression": {
-    "picks_level_1": 3,
-    "picks_per_level": 1
+  {
+   "die": "d10",
+   "max_mod": 3
+  }
+ ],
+ "level_bonuses": {
+  "3": {
+   "attribute_points": 1
   },
-  "races": [
-    "human",
-    "orc",
-    "sylvan"
-  ],
-  "racial_traits": [
+  "5": {
+   "actions": 1
+  }
+ },
+ "max_level": 10,
+ "modifier_table": {
+  "1": -3,
+  "10": 2,
+  "11": 2,
+  "12": 3,
+  "2": -2,
+  "3": -2,
+  "4": -1,
+  "5": -1,
+  "6": 0,
+  "7": 0,
+  "8": 1,
+  "9": 1
+ },
+ "origin_traits": [
+  {
+   "bonuses": [
     {
-      "allowed_races": [
-        "human"
-      ],
-      "bonuses": [
-        {
-          "id": "wits",
-          "type": "attribute",
-          "value": 1
-        }
-      ],
-      "description": "Versatile folk. +1 Wits.",
-      "id": "human",
-      "name": "Human"
-    },
-    {
-      "allowed_races": [
-        "orc"
-      ],
-      "bonuses": [
-        {
-          "id": "might",
-          "type": "attribute",
-          "value": 1
-        }
-      ],
-      "description": "Hardy and strong. +1 Might, but -1 Persuasion.",
-      "id": "orc",
-      "name": "Orc",
-      "penalties": [
-        {
-          "skill": "persuasion",
-          "type": "skill",
-          "value": -1
-        }
-      ]
-    },
-    {
-      "bonuses": [
-        {
-          "skill": "athletics",
-          "type": "skill",
-          "value": 1
-        }
-      ],
-      "description": "Restless heritage, found among all folk but orcs. +1 Athletics.",
-      "disallowed_races": [
-        "orc"
-      ],
-      "id": "wayfarer",
-      "name": "Wayfarer's Blood"
+     "type": "attribute_points",
+     "value": 2
     }
-  ],
-  "skills": [
+   ],
+   "description": "Two extra attribute points to spend at creation.",
+   "id": "scholarly",
+   "name": "Scholarly Upbringing"
+  },
+  {
+   "bonuses": [
     {
-      "attribute": "might",
-      "id": "athletics",
-      "name": "Athletics"
+     "skill": "endurance",
+     "type": "skill",
+     "value": 1
     },
     {
-      "attribute": "might",
-      "id": "endurance",
-      "name": "Endurance"
-    },
-    {
-      "attribute": "wits",
-      "id": "lore",
-      "name": "Lore"
-    },
-    {
-      "attribute": "wits",
-      "id": "perception",
-      "name": "Perception"
-    },
-    {
-      "attribute": "spirit",
-      "id": "persuasion",
-      "name": "Persuasion"
-    },
-    {
-      "attribute": "spirit",
-      "id": "resolve",
-      "name": "Resolve"
+     "type": "max_hp",
+     "value": 2
     }
-  ],
-  "spell_schools": [
+   ],
+   "description": "A life of toil. +1 Endurance and +2 max HP.",
+   "id": "hardened",
+   "name": "Hardened"
+  },
+  {
+   "bonuses": [
     {
-      "id": "evocation",
-      "name": "Evocation"
+     "type": "movement",
+     "value": 1
     },
     {
-      "id": "warding",
-      "name": "Warding"
+     "id": "spirit",
+     "type": "save",
+     "value": 1
     }
-  ],
-  "system_name": "Parchment Sample",
-  "version": "1.0",
-  "weapons": [
+   ],
+   "description": "+1 movement, +1 Spirit saving throws.",
+   "id": "fleet",
+   "name": "Fleet of Foot"
+  }
+ ],
+ "point_buy": {
+  "base": 1,
+  "max": 8,
+  "min": 1,
+  "total": 15
+ },
+ "progression": {
+  "picks_level_1": 3,
+  "picks_per_level": 1
+ },
+ "races": [
+  "human",
+  "orc",
+  "sylvan"
+ ],
+ "racial_traits": [
+  {
+   "allowed_races": [
+    "human"
+   ],
+   "bonuses": [
     {
-      "attribute": "might",
-      "damage": "1d8",
-      "id": "blade",
-      "name": "Blade",
-      "properties": [
-        "versatile"
-      ],
-      "versatile": "1d10"
-    },
-    {
-      "attribute": "wits",
-      "damage": "1d6",
-      "id": "bow",
-      "name": "Bow",
-      "properties": [
-        "ranged",
-        "two-handed"
-      ]
-    },
-    {
-      "attribute": "spirit",
-      "damage": "1d6",
-      "id": "staff",
-      "name": "Staff"
-    },
-    {
-      "attribute": [
-        "might",
-        "wits"
-      ],
-      "damage": "1d4",
-      "id": "dirk",
-      "name": "Dirk",
-      "properties": [
-        "light",
-        "thrown"
-      ]
+     "id": "wits",
+     "type": "attribute",
+     "value": 1
     }
-  ]
+   ],
+   "description": "Versatile folk. +1 Wits.",
+   "id": "human",
+   "name": "Human"
+  },
+  {
+   "allowed_races": [
+    "orc"
+   ],
+   "bonuses": [
+    {
+     "id": "might",
+     "type": "attribute",
+     "value": 1
+    }
+   ],
+   "description": "Hardy and strong. +1 Might, but -1 Persuasion.",
+   "id": "orc",
+   "name": "Orc",
+   "penalties": [
+    {
+     "skill": "persuasion",
+     "type": "skill",
+     "value": -1
+    }
+   ]
+  },
+  {
+   "bonuses": [
+    {
+     "skill": "athletics",
+     "type": "skill",
+     "value": 1
+    }
+   ],
+   "description": "Restless heritage, found among all folk but orcs. +1 Athletics.",
+   "disallowed_races": [
+    "orc"
+   ],
+   "id": "wayfarer",
+   "name": "Wayfarer's Blood"
+  }
+ ],
+ "skills": [
+  {
+   "attribute": "might",
+   "id": "athletics",
+   "name": "Athletics"
+  },
+  {
+   "attribute": "might",
+   "id": "endurance",
+   "name": "Endurance"
+  },
+  {
+   "attribute": "wits",
+   "id": "lore",
+   "name": "Lore"
+  },
+  {
+   "attribute": "wits",
+   "id": "perception",
+   "name": "Perception"
+  },
+  {
+   "attribute": "spirit",
+   "id": "persuasion",
+   "name": "Persuasion"
+  },
+  {
+   "attribute": "spirit",
+   "id": "resolve",
+   "name": "Resolve"
+  }
+ ],
+ "spell_schools": [
+  {
+   "id": "evocation",
+   "name": "Evocation"
+  },
+  {
+   "id": "warding",
+   "name": "Warding"
+  }
+ ],
+ "system_name": "Parchment Sample",
+ "version": "1.0",
+ "weapons": [
+  {
+   "attribute": "might",
+   "damage": "1d8",
+   "id": "blade",
+   "name": "Blade",
+   "properties": [
+    "versatile"
+   ],
+   "versatile": "1d10"
+  },
+  {
+   "attribute": "wits",
+   "damage": "1d6",
+   "id": "bow",
+   "name": "Bow",
+   "properties": [
+    "ranged",
+    "two-handed"
+   ]
+  },
+  {
+   "attribute": "spirit",
+   "damage": "1d6",
+   "id": "staff",
+   "name": "Staff"
+  },
+  {
+   "attribute": [
+    "might",
+    "wits"
+   ],
+   "damage": "1d4",
+   "id": "dirk",
+   "name": "Dirk",
+   "properties": [
+    "light",
+    "thrown"
+   ]
+  }
+ ]
 }

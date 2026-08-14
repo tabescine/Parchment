@@ -1,85 +1,90 @@
 {
-  "_key": "wren",
-  "_note": "Parchment Sample character in JSON. JSON allows no comments - see sample.character.toml for the fully annotated reference; both import identically.",
-  "ac_attribute": "wits",
-  "accomplished_saves": [
-    "wits"
-  ],
-  "accomplished_skills": [
-    "lore",
-    "perception",
-    "persuasion"
-  ],
-  "accomplished_weapons": [
-    "bow"
-  ],
-  "attributes": {
-    "might": 5,
-    "spirit": 6,
-    "wits": 8
-  },
-  "cast_attribute": "spirit",
-  "current_hp": 24,
-  "current_mana": 8,
-  "custom_feats": [
+ "_key": "wren",
+ "_note": "Parchment Sample character in JSON. JSON allows no comments - see sample.character.toml for the fully annotated reference; both import identically.",
+ "ac_attribute": "wits",
+ "accomplished_saves": [
+  "wits"
+ ],
+ "accomplished_skills": [
+  "lore",
+  "perception",
+  "persuasion"
+ ],
+ "accomplished_weapons": [
+  "bow"
+ ],
+ "attributes": {
+  "might": 5,
+  "spirit": 6,
+  "wits": 8
+ },
+ "cast_attribute": "spirit",
+ "current_hp": 24,
+ "current_mana": 8,
+ "custom_feats": [
+  {
+   "description": "Wren reads the land like a ledger. +1 initiative, Lore gains her Wits modifier a second time, and DR 1 while travelling (table rule).",
+   "effects": [
     {
-      "description": "Wren reads the land like a ledger. +1 initiative, Lore gains her Wits modifier a second time, and DR 1 while travelling (table rule).",
-      "effects": [
-        {
-          "type": "initiative",
-          "value": 1
-        },
-        {
-          "add_modifier": "wits",
-          "skill": "lore",
-          "type": "skill"
-        },
-        {
-          "type": "damage_reduction",
-          "value": 1
-        }
-      ],
-      "id": "trail_sense",
-      "level": 2,
-      "name": "Trail Sense",
-      "type": "passive"
-    }
-  ],
-  "feats": {
-    "keen_study": 1
-  },
-  "hit_dice": "5d6",
-  "init_attribute": "wits",
-  "inventory": [
-    {
-      "equipped": true,
-      "item_id": "itm_1"
+     "type": "initiative",
+     "value": 1
     },
     {
-      "equipped": true,
-      "item_id": "itm_2"
+     "add_modifier": "wits",
+     "skill": "lore",
+     "type": "skill"
     },
     {
-      "count": 12,
-      "item_id": "itm_3"
+     "type": "damage_reduction",
+     "value": 1
     }
-  ],
-  "level": 5,
-  "max_hp": 26,
-  "max_mana": 8,
-  "name": "Wren Ashdown",
-  "notes": "A demo character for the Parchment Sample system. Not part of any real ruleset.",
-  "origin_traits": [
-    "scholarly",
-    "hardened"
-  ],
-  "player": "example",
-  "primary_attribute": "wits",
-  "quote": "The map is never the territory, but it keeps you from walking off a cliff.",
-  "race": "human",
-  "racial_trait": "human",
-  "spells": [
-    "hearth_mend"
-  ],
-  "temp_hp": 2
+   ],
+   "id": "trail_sense",
+   "level": 2,
+   "name": "Trail Sense",
+   "type": "passive"
+  }
+ ],
+ "feats": {
+  "keen_study": 1
+ },
+ "hit_dice": "5d6",
+ "init_attribute": "wits",
+ "inventory": [
+  {
+   "equipped": true,
+   "item_id": "itm_1"
+  },
+  {
+   "equipped": true,
+   "item_id": "itm_2"
+  },
+  {
+   "item_id": "itm_6",
+   "equipped": true,
+   "wield": "two"
+  },
+  {
+   "count": 12,
+   "item_id": "itm_3"
+  }
+ ],
+ "level": 5,
+ "max_hp": 26,
+ "max_mana": 8,
+ "name": "Wren Ashdown",
+ "notes": "A demo character for the Parchment Sample system. Not part of any real ruleset.",
+ "origin_traits": [
+  "scholarly",
+  "hardened"
+ ],
+ "player": "example",
+ "primary_attribute": "wits",
+ "quote": "The map is never the territory, but it keeps you from walking off a cliff.",
+ "race": "human",
+ "racial_trait": "human",
+ "spells": [
+  "hearth_mend"
+ ],
+ "temp_hp": 2
 }

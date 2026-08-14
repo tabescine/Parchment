@@ -50,7 +50,7 @@ local MAX_ENTRIES = 50
 -- carries it, but the rare item the migration could not fold still does, and
 -- old senders' snapshots keep reading on our side the same way.
 local RESOLVED_FIELDS = { "name", "kind", "icon", "weapon_id", "bonus", "ac_bonus", "ac_mod_cap",
-    "effects" }
+    "die", "versatile_die", "category", "effects" }
 
 -- Targets we are awaiting a reply from (prevents request pile-ups).
 local pending = {}

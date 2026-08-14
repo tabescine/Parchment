@@ -467,3 +467,114 @@ local unringed = ns.CharacterSheet.Compute(Char({
 }), system, mixed)
 assert(unringed.derived.ac == 10 and unringed.derived.ac_effects == nil,
     "a stashed ac effect must not fold and leaves no provenance")
+
+-- Wield states. The category decides the cycle: light may sit in either hand,
+-- versatile in one hand or two, a two-hander only in both; no category means a
+-- plain one-hander (the pre-wield behaviour).
+T.load(ns, "Schema.lua")   -- damage below is gated on Schema.IsDieNotation
+local WS = Items.WieldStates
+assert(WS("light")[1] == "main" and WS("light")[2] == "off")
+assert(WS("versatile")[1] == "main" and WS("versatile")[2] == "two")
+assert(WS("two_hand")[1] == "two" and #WS("two_hand") == 1)
+assert(WS("one_hand")[1] == "main" and #WS("one_hand") == 1)
+assert(WS(nil)[1] == "main" and #WS(nil) == 1, "no category = plain one-hander")
+
+-- CycleWield walks stashed -> each state -> stashed, and EffectiveWield never
+-- trusts a stored wield the category does not allow.
+local holder = { inventory = { { item_id = "x", equipped = false } } }
+assert(Items.CycleWield(holder, 1, "light") == "main")
+assert(Items.CycleWield(holder, 1, "light") == "off")
+assert(Items.CycleWield(holder, 1, "light") == "stashed")
+assert(holder.inventory[1].equipped == false and holder.inventory[1].wield == nil,
+    "stashing clears the stored hand")
+assert(Items.CycleWield(holder, 1, "two_hand") == "two")
+assert(Items.CycleWield(holder, 1, "two_hand") == "stashed")
+assert(Items.CycleWield(holder, 1, nil) == "main", "no category equips main hand")
+assert(Items.EffectiveWield({ equipped = true, wield = "two" }, "light") == "main",
+    "a stale wield falls back to the category's first state")
+assert(Items.EffectiveWield({ equipped = false, wield = "main" }, "light") == nil,
+    "a stashed entry has no wield")
+
+-- Damage: die + governing attribute modifier, per wield state. A fresh mini
+-- system with a nonzero modifier so the attribute share is visible - installed
+-- as the active system too, since modifier/accomplishment lookups read it.
+local dmgSystem = {
+    system_name = "Damage Mini",
+    attributes = { { id = "a", name = "Alpha" } },
+    modifier_table = { 3 },                     -- score 1 -> modifier +3
+    accomplishment_table = { 2 },
+    hit_dice_bands = { { max_mod = 9, die = "d6" } },
+    derived_stats = { ac_base = 10 },
+    weapons = {
+        { id = "club", name = "Club", attribute = "a", damage = "1d6" },
+        { id = "knife", name = "Knife", attribute = "a", damage = "1d4",
+          properties = { "Light", "Agile" } },
+        { id = "staff", name = "Staff", attribute = "a", damage = "1d6",
+          versatile = "1d8", properties = { "Versatile" } },
+        { id = "maul", name = "Maul", attribute = "a", damage = "2d6",
+          properties = { "Huge", "Two-Handed" } },
+    },
+}
+ParchmentSystemDB = dmgSystem
+local dmgLib = {
+    club = { id = "club", name = "Old Club", kind = "weapon", weapon_id = "club" },
+    knife = { id = "knife", name = "Skinning Knife", kind = "weapon", weapon_id = "knife" },
+    staff = { id = "staff", name = "Walking Staff", kind = "weapon", weapon_id = "staff" },
+    maul = { id = "maul", name = "Great Maul", kind = "weapon", weapon_id = "maul" },
+    loose = { id = "loose", name = "Strange Shard", kind = "weapon", die = "2d6+1" },
+    odd = { id = "odd", name = "Odd Relic", kind = "weapon", weapon_id = "club",
+            die = "special" },
+    magic = { id = "magic", name = "Runed Club", kind = "weapon", weapon_id = "club",
+              die = "1d10", bonus = 2 },
+}
+local function DmgChar(inventory)
+    return { name = "Swinger", level = 1, attributes = { a = 1 },
+        accomplished_weapons = { "club", "knife", "staff", "maul" },
+        inventory = inventory }
+end
+local function OneWeapon(entry)
+    local sheet = ns.CharacterSheet.Compute(DmgChar({ entry }), dmgSystem, dmgLib)
+    return sheet.inventory.weapons[1]
+end
+
+-- Main hand: die + modifier; the die and category inherit from the link.
+local w = OneWeapon({ item_id = "club", equipped = true, wield = "main" })
+assert(w.die == "1d6" and w.category == nil and w.wield == "main")
+assert(w.damage and w.damage.notation == "1d6+3", "got " .. tostring(w.damage and w.damage.notation))
+
+-- Off hand: the bare die - the light follow-up strike adds no damage modifier.
+w = OneWeapon({ item_id = "knife", equipped = true, wield = "off" })
+assert(w.category == "light" and w.wield == "off")
+assert(w.damage.notation == "1d4" and w.damage.mod == 0, "off hand must drop the modifier")
+
+-- Versatile two-handed: the parenthesized die, modifier kept.
+w = OneWeapon({ item_id = "staff", equipped = true, wield = "two" })
+assert(w.category == "versatile" and w.versatile_die == "1d8")
+assert(w.damage.notation == "1d8+3", "two-handed swings the versatile die")
+w = OneWeapon({ item_id = "staff", equipped = true, wield = "main" })
+assert(w.damage.notation == "1d6+3", "one-handed keeps the base die")
+
+-- A two-hander's only state is both hands; property strings decide it.
+w = OneWeapon({ item_id = "maul", equipped = true })
+assert(w.category == "two_hand" and w.wield == "two")
+assert(w.damage.notation == "2d6+3")
+
+-- Freestanding (no link): its own die, bare - nothing governs a modifier.
+w = OneWeapon({ item_id = "loose", equipped = true, wield = "main" })
+assert(w.damage.notation == "2d6+1" and w.damage.mod == 0)
+
+-- A die the roller cannot parse renders as text, never as a roll.
+w = OneWeapon({ item_id = "odd", equipped = true, wield = "main" })
+assert(w.die == "special" and w.damage == nil, "garbage notation must not become a roll")
+
+-- The item's own die overrides the linked weapon's, and the attack bonus
+-- stays attack-only: damage is deliberately unaffected by it.
+w = OneWeapon({ item_id = "magic", equipped = true, wield = "main" })
+assert(w.damage.notation == "1d10+3", "the authored die wins over the inherited one")
+assert(w.attack_total == 3 + 2 + 2, "modifier + accomplishment + item bonus")
+
+-- A stale wield on a shared/edited sheet falls back cleanly in Compute too.
+w = OneWeapon({ item_id = "knife", equipped = true, wield = "two" })
+assert(w.wield == "main", "a light weapon cannot be two-handed")
+
+print("test_items: wield states + damage OK")

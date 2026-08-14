@@ -52,7 +52,8 @@ local MAX_ID = 120
 -- deliberately absent - ns.SetItem stamps a local one. A field added to the
 -- item schema must be added here too, or shared copies silently lose it.
 local ITEM_FIELDS = { "id", "name", "kind", "description", "weapon_id", "icon",
-    "bonus", "ac_bonus", "ac_mod_cap", "default_count" }
+    "bonus", "ac_bonus", "ac_mod_cap", "default_count", "die", "versatile_die",
+    "category" }
 local EFFECT_FIELDS = { "type", "value", "id", "skill", "school", "add_modifier",
     "per_level" }
 

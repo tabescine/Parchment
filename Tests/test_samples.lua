@@ -75,12 +75,13 @@ assert(d.init_attribute == "wits", "explicit in-list init pick must be honored")
 assert(#sheet.weapons == 1 and sheet.weapons[1].attack_total == 4)  -- Bow: wits 1 + acc 3
 
 -- The sample's inventory survives the import as references. Nothing seeds the
--- item library, so all three resolve to the missing sentinel and land in the
+-- item library, so all four resolve to the missing sentinel and land in the
 -- catch-all gear group - the documented "importing this without the items costs
--- nothing but three dim rows" behaviour, and proof no dangling id can throw.
-assert(#char.inventory == 3 and char.inventory[1].item_id == "itm_1")
-assert(char.inventory[1].equipped == true and char.inventory[3].count == 12)
-assert(sheet.inventory and #sheet.inventory.gear == 3, "dangling references must still render")
+-- nothing but a few dim rows" behaviour, and proof no dangling id can throw.
+assert(#char.inventory == 4 and char.inventory[1].item_id == "itm_1")
+assert(char.inventory[1].equipped == true and char.inventory[4].count == 12)
+assert(char.inventory[3].wield == "two", "the wield state must survive the import")
+assert(sheet.inventory and #sheet.inventory.gear == 4, "dangling references must still render")
 for _, row in ipairs(sheet.inventory.gear) do
     assert(row.missing and row.source == "missing", "unknown item must resolve as missing")
 end
@@ -97,11 +98,21 @@ assert(libOk, "the sample library must validate: " .. tostring(libIssues[1]))
 
 sheet = ns.CharacterSheet.Compute(char, ns.GetSystem(), lib)
 local inv = sheet.inventory
-assert(#inv.weapons == 1 and #inv.equipment == 1 and #inv.gear == 1,
+assert(#inv.weapons == 2 and #inv.equipment == 1 and #inv.gear == 1,
     "each sample item must land in its own group")
 local bow = inv.weapons[1]
 assert(bow.source == "library" and bow.equipped and bow.weapon_name == "Bow")
 assert(bow.attack_total == 5, "bow attack 4 + the item's +1, got " .. tostring(bow.attack_total))
+assert(bow.die == "1d6" and bow.category == "two_hand" and bow.wield == "two",
+    "the bow inherits die and category from the linked system weapon")
+assert(bow.damage and bow.damage.notation == "1d6+1",
+    "bow damage = inherited die + wits modifier, got " .. tostring(bow.damage and bow.damage.notation))
+-- The freestanding cudgel: its own dice, two-handed, no governing attribute.
+local cudgel = inv.weapons[2]
+assert(cudgel.name == "Ironwood Cudgel" and cudgel.category == "versatile"
+    and cudgel.wield == "two")
+assert(cudgel.damage and cudgel.damage.notation == "1d8" and cudgel.damage.mod == 0,
+    "two-handed swings the versatile die, bare - nothing links a modifier")
 assert(inv.equipment[1].equipped and inv.equipment[1].effects[1].type == "ac")
 assert(sheet.derived.ac == 12, "equipped equipment must add its AC on top of the 11 above")
 assert(sheet.derived.ac_equipment == nil, "the sample carries no legacy ac_bonus field")

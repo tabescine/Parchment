@@ -272,6 +272,11 @@ function CL.Item(item)
     if type(item.bonus) == "number" and item.bonus ~= 0 then
         bits[#bits + 1] = (item.bonus > 0 and "+" or "") .. item.bonus .. " attack"
     end
+    if type(item.die) == "string" and item.die ~= "" then
+        bits[#bits + 1] = "damage " .. item.die
+            .. (type(item.versatile_die) == "string" and item.versatile_die ~= ""
+                and (" (" .. item.versatile_die .. ")") or "")
+    end
     if type(item.ac_bonus) == "number" and item.ac_bonus ~= 0 then
         bits[#bits + 1] = (item.ac_bonus > 0 and "+" or "") .. item.ac_bonus .. " AC"
     end

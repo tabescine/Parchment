@@ -1,59 +1,84 @@
 {
-  "_note": "Parchment Sample item library in JSON. JSON allows no comments - see sample.items.toml for the fully annotated reference; both import identically.",
-  "items": {
-    "itm_1": {
-      "id": "itm_1",
-      "name": "Hunter's Bow",
-      "kind": "weapon",
-      "description": "A well-kept shortbow of ash and sinew. Its draw is quick and forgiving.",
-      "icon": "inv_weapon_bow_08",
-      "weapon_id": "bow",
-      "bonus": 1,
-      "version": 1
-    },
-    "itm_2": {
-      "id": "itm_2",
-      "name": "Traveller's Leathers",
-      "kind": "equipment",
-      "description": "Scuffed riding leathers, oiled against the weather.",
-      "icon": "inv_chest_leather_09",
-      "effects": [
-        { "type": "ac", "value": 1 }
-      ],
-      "version": 1
-    },
-    "itm_4": {
-      "id": "itm_4",
-      "name": "Guard's Plate",
-      "kind": "equipment",
-      "description": "Municipal-issue plate, sized for whoever stands the watch.",
-      "icon": "inv_chest_plate04",
-      "ac_mod_cap": 0,
-      "effects": [
-        { "type": "ac", "value": 3 }
-      ],
-      "version": 1
-    },
-    "itm_5": {
-      "id": "itm_5",
-      "name": "Ring of the Owl",
-      "kind": "equipment",
-      "description": "A worn silver band, cool against the skin. The owl sees what others miss.",
-      "icon": "inv_jewelry_ring_03",
-      "effects": [
-        { "type": "skill", "skill": "perception", "value": 1 },
-        { "type": "save", "id": "spirit", "value": 1 }
-      ],
-      "version": 1
-    },
-    "itm_3": {
-      "id": "itm_3",
-      "name": "Arrows",
-      "kind": "gear",
-      "description": "Goose-fletched, kept dry in a waxed quiver.",
-      "icon": "inv_misc_ammo_arrow_01",
-      "default_count": 20,
-      "version": 1
+ "_note": "Parchment Sample item library in JSON. JSON allows no comments - see sample.items.toml for the fully annotated reference; both import identically.",
+ "items": {
+  "itm_1": {
+   "id": "itm_1",
+   "name": "Hunter's Bow",
+   "kind": "weapon",
+   "description": "A well-kept shortbow of ash and sinew. Its draw is quick and forgiving.",
+   "icon": "inv_weapon_bow_08",
+   "weapon_id": "bow",
+   "bonus": 1,
+   "version": 1
+  },
+  "itm_2": {
+   "id": "itm_2",
+   "name": "Traveller's Leathers",
+   "kind": "equipment",
+   "description": "Scuffed riding leathers, oiled against the weather.",
+   "icon": "inv_chest_leather_09",
+   "effects": [
+    {
+     "type": "ac",
+     "value": 1
     }
+   ],
+   "version": 1
+  },
+  "itm_4": {
+   "id": "itm_4",
+   "name": "Guard's Plate",
+   "kind": "equipment",
+   "description": "Municipal-issue plate, sized for whoever stands the watch.",
+   "icon": "inv_chest_plate04",
+   "ac_mod_cap": 0,
+   "effects": [
+    {
+     "type": "ac",
+     "value": 3
+    }
+   ],
+   "version": 1
+  },
+  "itm_5": {
+   "id": "itm_5",
+   "name": "Ring of the Owl",
+   "kind": "equipment",
+   "description": "A worn silver band, cool against the skin. The owl sees what others miss.",
+   "icon": "inv_jewelry_ring_03",
+   "effects": [
+    {
+     "type": "skill",
+     "skill": "perception",
+     "value": 1
+    },
+    {
+     "type": "save",
+     "id": "spirit",
+     "value": 1
+    }
+   ],
+   "version": 1
+  },
+  "itm_3": {
+   "id": "itm_3",
+   "name": "Arrows",
+   "kind": "gear",
+   "description": "Goose-fletched, kept dry in a waxed quiver.",
+   "icon": "inv_misc_ammo_arrow_01",
+   "default_count": 20,
+   "version": 1
+  },
+  "itm_6": {
+   "id": "itm_6",
+   "name": "Ironwood Cudgel",
+   "kind": "weapon",
+   "description": "Dense as stone and twice as stubborn. Takes two hands to swing properly.",
+   "icon": "inv_mace_02",
+   "die": "1d6",
+   "versatile_die": "1d8",
+   "category": "versatile",
+   "version": 1
   }
+ }
 }

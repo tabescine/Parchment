@@ -50,6 +50,30 @@ sys.weapons = { { id = "w", name = "W", attribute = { "a", "ghost" } } }
 ok, issues = Schema.ValidateSystem(sys)
 assert(not ok and findIssue(issues, "unknown attribute 'ghost'"))
 
+-- The optional action declarations: aim_bonus is a bounded number, and
+-- death_saves a small table of bounded numbers.
+sys = MinimalSystem()
+sys.derived_stats = { aim_bonus = 2,
+    death_saves = { threshold = 10, successes = 3, failures = 3 } }
+assert(Schema.ValidateSystem(sys), "aim + death-save config must validate")
+sys.derived_stats = { aim_bonus = "loads" }
+ok, issues = Schema.ValidateSystem(sys)
+assert(not ok and findIssue(issues, "aim_bonus"), "a non-numeric aim_bonus must be reported")
+sys.derived_stats = { death_saves = 10 }
+ok, issues = Schema.ValidateSystem(sys)
+assert(not ok and findIssue(issues, "death_saves"), "scalar death_saves must be reported")
+sys.derived_stats = { death_saves = { threshold = 1 / 0 } }
+ok, issues = Schema.ValidateSystem(sys)
+assert(not ok and findIssue(issues, "not a finite number"), "inf threshold must be reported")
+sys.derived_stats = { fatigue = { max = 10, penalty_per_level = 1, speed_half_at = 5 } }
+assert(Schema.ValidateSystem(sys), "fatigue config must validate")
+sys.derived_stats = { fatigue = "lots" }
+ok, issues = Schema.ValidateSystem(sys)
+assert(not ok and findIssue(issues, "fatigue"), "scalar fatigue config must be reported")
+sys.derived_stats = { fatigue = { max = 0 / 0 } }
+ok, issues = Schema.ValidateSystem(sys)
+assert(not ok and findIssue(issues, "not a finite number"), "NaN fatigue max must be reported")
+
 -- derived_stats attribute couplings must resolve (incl. the tiebreaker and
 -- the AC/init candidate lists).
 sys = MinimalSystem()
@@ -225,6 +249,25 @@ ok, issues = Schema.ValidateItem(Item({ ac_mod_cap = 0 / 0 }))
 assert(not ok and findIssue(issues, "not a finite number"), "NaN ac_mod_cap not reported")
 ok, issues = Schema.ValidateItem(Item({ ac_mod_cap = -1 }))
 assert(not ok and findIssue(issues, "should not be negative"), "negative ac_mod_cap not reported")
+
+-- Weapon die notation and wield category: dice notation the roller can parse
+-- (the sheet's damage click feeds it straight to the dice module), a bounded
+-- category enum, and the wield state an inventory entry may store.
+assert(Schema.IsDieNotation("1d8") and Schema.IsDieNotation("d6")
+    and Schema.IsDieNotation("2d6+1") and Schema.IsDieNotation("1d10-1")
+    and Schema.IsDieNotation("1D8"), "plain notation must pass")
+assert(not Schema.IsDieNotation("banana") and not Schema.IsDieNotation("1d")
+    and not Schema.IsDieNotation("d0") and not Schema.IsDieNotation("0d6")
+    and not Schema.IsDieNotation("101d6") and not Schema.IsDieNotation("1d1001")
+    and not Schema.IsDieNotation("1d6+1000") and not Schema.IsDieNotation("1d6+")
+    and not Schema.IsDieNotation(8), "garbage notation must fail")
+assert(Schema.ValidateItem(Item({ die = "1d8", versatile_die = "1d10", category = "versatile" })))
+ok, issues = Schema.ValidateItem(Item({ die = "banana" }))
+assert(not ok and findIssue(issues, "not dice notation"), "a garbage die must be reported")
+ok, issues = Schema.ValidateItem(Item({ versatile_die = "1d" }))
+assert(not ok and findIssue(issues, "not dice notation"), "a garbage versatile die must be reported")
+ok, issues = Schema.ValidateItem(Item({ category = "dual" }))
+assert(not ok and findIssue(issues, "field 'category'"), "an unknown category must be reported")
 ok, issues = Schema.ValidateItem(Item({ ac_mod_cap = 1000 }))
 assert(not ok and findIssue(issues, "outside"), "an absurd ac_mod_cap must be reported")
 ok, issues = Schema.ValidateItem(Item({ bonus = 500 }))
@@ -269,6 +312,46 @@ ok, issues = Schema.ValidateCharacter(invChar({ { item_id = "i", count = 1 / 0 }
 assert(not ok and findIssue(issues, "not a finite number"))
 ok, issues = Schema.ValidateCharacter(invChar({ { item_id = "i", equipped = "yes" } }), nil)
 assert(not ok and findIssue(issues, "field 'equipped' should be boolean"))
+-- The wield state is a small enum; the category pairing is resolved leniently
+-- at render time, so only the enum is the schema's business.
+assert(Schema.ValidateCharacter(invChar({
+    { item_id = "i", equipped = true, wield = "off" },
+    { item_id = "j", equipped = true, wield = "two" },
+}), nil))
+ok, issues = Schema.ValidateCharacter(invChar({ { item_id = "i", wield = "backhand" } }), nil)
+assert(not ok and findIssue(issues, "field 'wield'"), "an unknown wield must be reported")
+
+-- The fatigue counter: a bounded optional number on the character.
+assert(Schema.ValidateCharacter({ name = "C", level = 1, attributes = { a = 1 },
+    fatigue = 3 }, nil))
+ok, issues = Schema.ValidateCharacter({ name = "C", level = 1, attributes = { a = 1 },
+    fatigue = 0 / 0 }, nil)
+assert(not ok and findIssue(issues, "field 'fatigue'"), "NaN fatigue must be reported")
+
+-- Death-save pips: a small optional table, shape-checked with or without a
+-- system (a shared sheet carries it over the wire).
+local pipChar = { name = "C", level = 1, attributes = { a = 1 },
+    death_saves = { successes = 2, failures = 1, stable = false } }
+assert(Schema.ValidateCharacter(pipChar, nil))
+ok, issues = Schema.ValidateCharacter({ name = "C", level = 1, attributes = { a = 1 },
+    death_saves = 3 }, nil)
+assert(not ok and findIssue(issues, "field 'death_saves'"), "scalar pips must be reported")
+ok, issues = Schema.ValidateCharacter({ name = "C", level = 1, attributes = { a = 1 },
+    death_saves = { successes = 1 / 0 } }, nil)
+assert(not ok and findIssue(issues, "not a finite number"), "inf pips must be reported")
+ok, issues = Schema.ValidateCharacter({ name = "C", level = 1, attributes = { a = 1 },
+    death_saves = { stable = "yes" } }, nil)
+assert(not ok and findIssue(issues, "field 'stable'"), "non-boolean stable must be reported")
+-- The wire snapshot carries the die fields too - attacker-controlled, so
+-- garbage notation is reported there as well.
+assert(Schema.ValidateCharacter(invChar({
+    { item_id = "i", resolved = { name = "Axe", kind = "weapon", die = "1d12",
+        versatile_die = "2d6", category = "versatile" } },
+}), nil))
+ok, issues = Schema.ValidateCharacter(invChar({
+    { item_id = "i", resolved = { name = "Axe", kind = "weapon", die = "evil()" } },
+}), nil)
+assert(not ok and findIssue(issues, "not dice notation"), "a wire die must be validated")
 -- A type-confused inventory must be reported or leniently skipped, never thrown.
 for _, bad in ipairs({ 5, { 5 }, { { item_id = "i", resolved = 5 } } }) do
     reports(Schema.ValidateCharacter, invChar(bad), refSys)

@@ -86,6 +86,26 @@ local KINDS = {
 }
 local KIND_LABEL = { weapon = "Weapon", equipment = "Equipment", gear = "Gear" }
 
+-- The wield categories a weapon may declare (how many hands, and so which
+-- wield states the sheet's toggle cycles). "(from weapon link)" - no explicit
+-- category - inherits from the linked system weapon's properties, or falls
+-- back to a plain one-hander.
+local CATEGORIES = {
+    { id = NONE_ID, name = "(from weapon link)",
+      hint = "Inherit from the linked system weapon, or default to one-handed." },
+    { id = "light", name = "Light",
+      hint = "One hand, and light enough for the off hand (off-hand strikes add no"
+          .. " damage modifier)." },
+    { id = "one_hand", name = "One-handed", hint = "Main hand only." },
+    { id = "versatile", name = "Versatile",
+      hint = "One hand, or two - two-handed swings use the two-handed die." },
+    { id = "two_hand", name = "Two-handed", hint = "Needs both hands." },
+}
+local CATEGORY_LABEL = {
+    light = "Light", one_hand = "One-handed",
+    versatile = "Versatile", two_hand = "Two-handed",
+}
+
 -- A few icons per kind, offered as click-to-fill swatches beside the icon field
 -- (a full icon browser is a window of its own; the field takes any texture name).
 local ICON_PATH = "Interface\\Icons\\"
@@ -168,8 +188,12 @@ end
 local function MechanicsText(item)
     if item.kind == "weapon" then
         local bonus = UI.Signed(tonumber(item.bonus) or 0)
+        local die = item.die
+            and ("  -  damage " .. item.die
+                .. (item.versatile_die and (" (two-handed " .. item.versatile_die .. ")") or ""))
+            or ""
         return (item.weapon_id and (bonus .. " to " .. WeaponName(item.weapon_id) .. " attack rolls")
-            or (bonus .. " attack (no weapon linked)")) .. EffectsSuffix(item)
+            or (bonus .. " attack (no weapon linked)")) .. die .. EffectsSuffix(item)
     elseif item.kind == "equipment" then
         local bits = {}
         -- Pre-effects items carried +AC as a field; anything the migration
@@ -252,13 +276,24 @@ local function Normalize(d)
     if d.kind == "weapon" then
         d.bonus = ClampBonus(d.bonus)
         if type(d.weapon_id) ~= "string" then d.weapon_id = nil end
+        if type(d.die) ~= "string" or d.die == "" then d.die = nil end
+        if type(d.versatile_die) ~= "string" or d.versatile_die == "" then
+            d.versatile_die = nil
+        end
+        if not CATEGORY_LABEL[d.category] then d.category = nil end
+        -- The dice follow the category (see FillDetails): inheriting the
+        -- category inherits the dice, and only versatile carries a 2H die.
+        if d.category == nil then d.die, d.versatile_die = nil, nil end
+        if d.category ~= "versatile" then d.versatile_die = nil end
         d.ac_mod_cap, d.default_count = nil, nil
     elseif d.kind == "equipment" then
         d.ac_mod_cap = ClampCap(d.ac_mod_cap)
         d.bonus, d.weapon_id, d.default_count = nil, nil, nil
+        d.die, d.versatile_die, d.category = nil, nil, nil
     else
         d.default_count = ns.Items.ClampCount(d.default_count) or 1
         d.bonus, d.weapon_id, d.ac_mod_cap = nil, nil, nil
+        d.die, d.versatile_die, d.category = nil, nil, nil
     end
     -- Equippable kinds keep an effects list to edit (capped like the schema);
     -- gear drops it - counted items are never worn, so nothing would apply it.
@@ -498,8 +533,19 @@ local function FillDetails(f, d)
         if name then b.tex:SetTexture(ICON_PATH .. name) end
     end
 
-    -- Two kind-specific rows, filled by whichever control the kind uses.
-    if d.kind == "weapon" then
+    -- Kind-specific rows, filled by whichever control the kind uses. The die
+    -- boxes follow the category: "(from weapon link)" inherits the dice too,
+    -- so they only show once an explicit category is picked, and the
+    -- two-handed die only when that category is versatile.
+    local isWeapon = d.kind == "weapon"
+    local hasCat = isWeapon and d.category ~= nil
+    f.catLabel:SetShown(isWeapon)
+    f.catBtn:SetShown(isWeapon)
+    f.dieLabel:SetShown(hasCat)
+    f.dieBox:SetShown(hasCat)
+    f.versLabel:SetShown(hasCat and d.category == "versatile")
+    f.versBox:SetShown(hasCat and d.category == "versatile")
+    if isWeapon then
         f.rowALabel:SetText("Weapon link")
         f.linkBtn:Show()
         f.linkBtn:SetText(d.weapon_id and WeaponName(d.weapon_id) or "(none)")
@@ -508,6 +554,9 @@ local function FillDetails(f, d)
         f.rowBLabel:SetText("Attack bonus")
         f.stepperB:Show()
         f.stepperB:SetText(UI.Signed(d.bonus or 0))
+        if not f.dieBox:HasFocus() then f.dieBox:SetText(d.die or "") end
+        if not f.versBox:HasFocus() then f.versBox:SetText(d.versatile_die or "") end
+        f.catBtn:SetText(CATEGORY_LABEL[d.category] or "(from weapon link)")
     else
         f.linkBtn:Hide()
         f.stepperA:Show()
@@ -793,6 +842,20 @@ local function BuildDetailsPage(f)
     f.stepperB:SetPoint("TOPLEFT", CTRL_X + 6, y + 1)
     y = y - ROW_H
 
+    -- Weapon-only rows: the wield category first (it decides what the die row
+    -- shows), then the damage dice. "(from weapon link)" inherits category AND
+    -- dice from the linked system weapon, so the die boxes only appear once an
+    -- explicit category is picked - and the two-handed die only for versatile.
+    f.catLabel = Label(p, "Wielding", PAD, y)
+    f.catBtn = FieldButton(p, CTRL_X, y, 160)
+    y = y - ROW_H
+
+    f.dieLabel = Label(p, "Damage die", PAD, y)
+    f.dieBox = Form.TextBox(p, CTRL_X, y, 70)
+    f.versLabel = Label(p, "Versatile(2H):", CTRL_X + 84, y)
+    f.versBox = Form.TextBox(p, CTRL_X + 174, y, 70)
+    y = y - ROW_H
+
     Label(p, "Description", PAD, y)
     y = y - 18
 
@@ -887,7 +950,35 @@ local function WireDetails(f)
         Refresh(f)
     end)
 
+    -- The damage die pair: stored as typed (trimmed; empty clears). Notation
+    -- the roller cannot parse is reported as a soft warning on the review
+    -- step, and the sheet renders it as inert text rather than a roll.
+    local function WireDie(box, field)
+        box:SetScript("OnTextChanged", function(b, user)
+            if not (user and f.draft) then return end
+            local text = b:GetText():match("^%s*(.-)%s*$")
+            f.draft[field] = text ~= "" and text or nil
+        end)
+    end
+    WireDie(f.dieBox, "die")
+    WireDie(f.versBox, "versatile_die")
+
+    f.catBtn:SetScript("OnClick", function()
+        if not f.draft then return end
+        ns.Dialogs.Pick({
+            title = "Wielding", prompt = "How is this weapon held?",
+            items = CATEGORIES, max = 1, selected = { f.draft.category },
+            onConfirm = function(ids)
+                if not f.draft then return end
+                f.draft.category = (ids[1] and ids[1] ~= NONE_ID) and ids[1] or nil
+                Refresh(f)
+            end,
+        })
+    end)
+
     UI.SetPlaceholder(f.nameBox, "Item name")
+    UI.SetPlaceholder(f.dieBox, "1d8")
+    UI.SetPlaceholder(f.versBox, "1d10")
     UI.SetPlaceholder(f.iconBox, "inv_misc_bag_08")
     UI.SetPlaceholder(f.descBox, "What it is, in your own words", "TOPLEFT")
 end
@@ -966,7 +1057,8 @@ end
 --
 -- id      - a library id to edit (deep-copied into the draft, so the stored
 --           item is untouched until Save); nil drafts a new item
--- kind    - the kind a new draft starts on (default "gear")
+-- kind    - the kind a new draft starts on; nil = not chosen yet (default
+--           "gear", and the wizard opens on its Kind step)
 -- charKey - when set, saving also hands the item to that character (the sheet's
 --           add flow); nil authors library-only
 function ItemWizardUI.Open(id, kind, charKey)
@@ -978,7 +1070,11 @@ function ItemWizardUI.Open(id, kind, charKey)
     f.addToKey = charKey
     f.draft = Normalize(existing and ns.DeepCopy(existing)
         or { name = "", kind = kind or "gear", description = "" })
-    f.step = existing and 2 or 1     -- editing starts where the fields are
+    -- Editing starts where the fields are - and so does a new draft whose
+    -- kind was already chosen (the type-picker cards, a section's add flow):
+    -- asking again on step 1 would be the same question twice. Back still
+    -- reaches the Kind step to change it.
+    f.step = (existing or KIND_LABEL[kind]) and 2 or 1
     f.titleFS:SetText(existing and "Edit Item" or "New Item")
     Refresh(f)
     f:Show()
@@ -1041,7 +1137,10 @@ function ItemWizardUI.AddFlow(kind)
             local id = ids[1]
             if not id then return end
             if id == NEW_ID then
-                ItemWizardUI.Open(nil, kind or "gear", charKey)
+                -- kind may be nil (the generic INVENTORY header's add flow):
+                -- the wizard then opens on its Kind step; a section's add flow
+                -- passes its kind and skips straight to the fields.
+                ItemWizardUI.Open(nil, kind, charKey)
                 return
             end
             local item = ns.GetItemLibrary()[id]
