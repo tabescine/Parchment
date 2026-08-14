@@ -13,7 +13,7 @@
 -- ("6d6", "2d8+3") are local-only and post as plain OOC lines.
 --
 -- Reads from: ns.Addon.db.profile.publicRolls, ns.Print.
--- Exposes on ns.Dice: Request, Check, Parse, Roll, RollToChat.
+-- Exposes on ns.Dice: Request, Check, Parse, Roll, RollToChat, NotationCheck.
 
 local ADDON, ns = ...
 
@@ -106,11 +106,21 @@ end
 -- ability/spell/item behind the roll. The local print is rewritten through
 -- ns.ChatLinks so our own copy is clickable too (printed lines bypass the
 -- chat filters that rewrite it for everyone else).
-function Dice.Check(label, modifier, linkToken)
+--
+-- `extra` (optional, { label, value }) is a one-off bonus named separately in
+-- the breakdown - "14 (d20) + 7 + 2 (Aim) = 23" - so the table sees WHY this
+-- roll ran higher than the sheet's number.
+function Dice.Check(label, modifier, linkToken, extra)
     modifier = modifier or 0
-    Dice.Request(modifier, function(total, raw, fellBack)
-        local line = string.format("%s: %d (d20) %s %d = %d", linkToken or label, raw,
-            modifier >= 0 and "+" or "-", math.abs(modifier), total)
+    local extraValue = extra and tonumber(extra.value) or 0
+    Dice.Request(modifier + extraValue, function(total, raw, fellBack)
+        local line = string.format("%s: %d (d20) %s %d", linkToken or label, raw,
+            modifier >= 0 and "+" or "-", math.abs(modifier))
+        if extraValue ~= 0 then
+            line = line .. string.format(" %s %d (%s)", extraValue >= 0 and "+" or "-",
+                math.abs(extraValue), extra.label or "bonus")
+        end
+        line = line .. " = " .. total
         local localLine = line
         if linkToken and ns.ChatLinks then
             localLine = ns.ChatLinks.Rewrite(line, (UnitName and UnitName("player")) or "?")
@@ -205,6 +215,28 @@ function Dice.Roll(notation)
         parts[#parts + 1] = joiner .. text
     end
     return total, table.concat(parts)
+end
+
+-- Rolls notation under a label ("Flame Dagger damage", "1d8+3") and announces
+-- it like Check does: always printed locally, echoed to the group channel when
+-- in one. Like every free-notation roll this is LOCAL - RandomRoll is
+-- d20-shaped, so there is no witnessed system line to back it; the OOC copy is
+-- the table's usual honour-system damage line. `linkToken` (optional) replaces
+-- the label with a clickable chat link, as in Dice.Check. Returns false when
+-- the notation does not parse.
+function Dice.NotationCheck(label, notation, linkToken)
+    local total, canon = Dice.Roll(notation)
+    if not total then return false end
+    local line = string.format("%s: %s = %d", linkToken or label, canon, total)
+    local localLine = line
+    if linkToken and ns.ChatLinks then
+        localLine = ns.ChatLinks.Rewrite(line, (UnitName and UnitName("player")) or "?")
+    end
+    ns.Print(localLine)
+    if IsInGroup and IsInGroup() then
+        SendChatMessage("(" .. line .. ")", (IsInRaid and IsInRaid()) and "RAID" or "PARTY")
+    end
+    return true
 end
 
 -- Rolls and announces: "(rolled 6d6: 23)" to the group channel, the same

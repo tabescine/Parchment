@@ -96,6 +96,43 @@ local function SourceTag(sources)
     return "  |cff8ec6ff(" .. table.concat(sources, ", ") .. ")|r"
 end
 
+-- Aim: when the system declares an aim bonus (derived_stats.aim_bonus), the
+-- overview carries a toggle that arms it; the NEXT weapon or spell attack roll
+-- adds the bonus and disarms it (rolls marked spec.attack - checks, saves and
+-- damage are unaffected). Session state, never persisted: it is about the next
+-- roll, not the character.
+local aimArmed = false
+
+-- Spends the armed aim: returns the bonus to add to this attack roll (0 when
+-- not armed / not configured) and re-renders so the armed toggle unlights.
+local function ConsumeAim()
+    if not aimArmed then return 0 end
+    aimArmed = false
+    local bonus = ns.DerivedConfig().aim_bonus or 0
+    CharacterSheetUI.RefreshIfShown()
+    return bonus
+end
+
+-- The Aim toggle as a section-header action, sitting where the rolls it
+-- feeds live (the weapon-skill and spellcasting sections both carry it - a
+-- pure caster has no weapon rows). nil when the system declares no aim or
+-- the sheet is a viewed one.
+local function AimAction(ctx)
+    local bonus = ns.DerivedConfig().aim_bonus
+    if not bonus or bonus == 0 or ctx.viewChar then return nil end
+    return {
+        text = aimArmed and ("|cffc8a868Aim " .. Signed(bonus) .. " armed|r") or "take aim",
+        hint = aimArmed
+            and "Click: lower your aim"
+            or ("Click: aim - " .. Signed(bonus) .. " to your NEXT weapon or spell attack"
+                .. " roll; it spends itself on that roll."),
+        click = function()
+            aimArmed = not aimArmed
+            CharacterSheetUI.RefreshIfShown()
+        end,
+    }
+end
+
 -- Body canvas helpers. Each operates on the content frame and advances a
 -- vertical cursor (self.y). Text regions are pooled and reused across renders.
 -- All horizontal anchoring goes through PlaceLeft/PlaceRight against the
@@ -180,13 +217,24 @@ local function AcquireBtn(content)
             -- combat) instead of the default d20 check. A `linkPayload`
             -- builder makes the roll announce what was rolled as a clickable
             -- chat link (built at click time, so it carries current data).
-            if self.roll.click then
-                self.roll.click()
-            else
-                local token = self.roll.linkPayload
-                    and ns.ChatLinks.MakeToken(self.roll.linkPayload()) or nil
-                ns.Dice.Check(self.roll.label, self.roll.modifier, token)
+            -- Captured first: consuming an armed aim re-renders, which recycles
+            -- this pooled button out from under us.
+            local roll = self.roll
+            if roll.click then
+                roll.click()
+                return
             end
+            -- An armed aim rides the roll as its own named term ("+ 2 (Aim)")
+            -- rather than blending into the modifier, so the breakdown shows
+            -- why this attack ran higher than the sheet's number.
+            local extra
+            if roll.attack then
+                local aim = ConsumeAim()
+                if aim ~= 0 then extra = { label = "Aim", value = aim } end
+            end
+            local token = roll.linkPayload
+                and ns.ChatLinks.MakeToken(roll.linkPayload()) or nil
+            ns.Dice.Check(roll.label, roll.modifier, token, extra)
         end)
         content.btnPool[content.btnUsed] = b
     end
@@ -367,6 +415,9 @@ local function Row(content, label, value, indent, valColor, tip, roll)
         b:SetHeight(16)
         b.tip = tip
         b.roll = roll
+        -- A spec may carry a secondary action (the death-save tracker's
+        -- manual failure pip); rows without one behave as before.
+        b.rightClick = roll and roll.rightClick or nil
     end
     content.y = content.y - 16
 end
@@ -421,7 +472,9 @@ local function RenderOverview(content, sheet, ctx)
         end
     end
 
-    -- Derived stats, two readable rows of pairs.
+    -- Derived stats, two readable rows of pairs. (Death saves, fatigue and
+    -- the Aim toggle live elsewhere: the two conditions in the vitals header,
+    -- aim on the weapon-skill/spellcasting section headers.)
     if not Section(content, "overview", "OVERVIEW") then return end
     Row(content, "Level", tostring(sheet.level))
     Row(content, "Hit Dice", sheet.derived.hit_dice, 0, nil,
@@ -459,11 +512,16 @@ local function RenderOverview(content, sheet, ctx)
         } or nil)
     local moveSteps = cfg.movement_attribute and math.max(0, aMod(cfg.movement_attribute)) or 0
     local moveStruct = cfg.movement_base + moveSteps * cfg.movement_per_step
+    -- The halving applies after everything else, so the term-by-term math in
+    -- the tooltip must diff against the pre-halved number.
+    local moveHalved = d.fatigue and d.fatigue.speed_halved
+    local moveFull = moveHalved and d.movement * 2 or d.movement
     Row(content, "Movement", Num(d.movement) .. "m", 0, nil, Tip("Movement",
         "base " .. Num(cfg.movement_base)
         .. (cfg.movement_attribute and (" + " .. Num(cfg.movement_per_step) .. "m per positive "
             .. aName(cfg.movement_attribute) .. " modifier (" .. moveSteps .. ")") or "")
-        .. fxTerm(d.movement - moveStruct)))
+        .. fxTerm(moveFull - moveStruct)
+        .. (moveHalved and (", halved by fatigue (level " .. d.fatigue.level .. ")") or "")))
     Row(content, "Actions", tostring(d.actions), 0, nil, Tip("Actions",
         "base " .. cfg.actions_base
         .. (d.actions ~= cfg.actions_base
@@ -515,7 +573,11 @@ local function RenderAttributes(content, sheet, ctx)
     content.y = content.y - 14
     for _, a in ipairs(sheet.attributes) do
         local rowY = content.y
-        Row(content, a.name, "", 0, nil, nil, ctx.rollSpec(a.name .. " check", a.modifier))
+        -- Attribute checks carry the fatigue penalty at roll time: the raw
+        -- modifier stays displayed (it feeds every other total), but the d20
+        -- check is a check.
+        Row(content, a.name, "", 0, nil, nil, ctx.rollSpec(a.name .. " check",
+            a.modifier - (sheet.derived.fatigue and sheet.derived.fatigue.penalty or 0)))
         local total = Acquire(content, "GameFontHighlightSmall")
         PlaceRight(content, total, TOTAL_X, rowY)
         total:SetTextColor(C_TEXT[1], C_TEXT[2], C_TEXT[3])
@@ -586,7 +648,7 @@ local function RenderWeapons(content, sheet, ctx)
     local accomplishment = ctx.accomplishment
     local modById = ctx.modById
     if #sheet.weapons > 0 then
-        if not Section(content, "weaponskills", "WEAPON SKILLS (accomplished)") then return end
+        if not Section(content, "weaponskills", "WEAPON SKILLS (accomplished)", AimAction(ctx)) then return end
         local W_ATK_X, W_DMG_X = PAD + 60, PAD   -- column right edges
         local atkHead = Acquire(content, "GameFontHighlightSmall")
         PlaceRight(content, atkHead, W_ATK_X, content.y)
@@ -620,7 +682,7 @@ local function RenderWeapons(content, sheet, ctx)
                 else
                     tt:AddLine("Accomplished: adds " .. Signed(accomplishment) .. " to attack rolls", 0.56, 0.78, 1)
                 end
-            end, w.attack_total and ctx.rollSpec(w.name .. " attack", w.attack_total) or nil)
+            end, w.attack_total and ctx.rollSpec(w.name .. " attack", w.attack_total, true) or nil)
             local atk = Acquire(content, "GameFontHighlightSmall")
             PlaceRight(content, atk, W_ATK_X, rowY)
             if w.attack_total then
@@ -654,9 +716,16 @@ local function ApplyToActive(mutate)
     ns.Systems.RefreshAll()
 end
 
--- Flips one inventory entry between equipped and stashed.
+-- Flips one inventory entry between equipped and stashed (equipment; weapons
+-- cycle wield states instead).
 local function ToggleItem(index)
     ApplyToActive(function(char) return ns.Items.ToggleEquipped(char, index) ~= nil end)
+end
+
+-- Advances a weapon entry through stashed -> main hand -> (off hand / two-
+-- handed, as the category allows) -> stashed.
+local function CycleItem(index, category)
+    ApplyToActive(function(char) return ns.Items.CycleWield(char, index, category) ~= nil end)
 end
 
 -- Steps a gear entry's counter (the helper clamps it into [0, MAX_COUNT]). The
@@ -717,6 +786,9 @@ StaticPopupDialogs["PARCHMENT_ITEM_REMOVE"] = {
     timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
 }
 
+-- Display names for a weapon's wield states.
+local WIELD_LABEL = { main = "Main hand", off = "Off hand", two = "Two-handed" }
+
 -- The row's headline: the item name plus what it is worth ("Flame Dagger +2",
 -- "Chainmail +1 AC"), with a weapon item's linked weapon dimmed after it. A
 -- reference that did not resolve names itself (the sentinel is called "Missing
@@ -731,6 +803,13 @@ local function ItemLabel(entry, kind)
         if entry.bonus ~= 0 then text = text .. " " .. Signed(entry.bonus) end
         if entry.weapon_name then
             text = text .. "  |cff9e998c" .. ns.SafeText(entry.weapon_name) .. "|r"
+        end
+        -- Held anywhere but the main hand is worth saying on the row itself:
+        -- it changes what the damage click rolls.
+        if entry.wield == "off" then
+            text = text .. "  |cff9e998c(off hand)|r"
+        elseif entry.wield == "two" then
+            text = text .. "  |cff9e998c(two-handed)|r"
         end
     elseif kind == "equipment" then
         if entry.ac_bonus ~= 0 then text = text .. " " .. Signed(entry.ac_bonus) .. " AC" end
@@ -785,8 +864,30 @@ local function ItemTip(entry, kind, own)
                     .. (entry.weapon_name or "weapon") .. " skill " .. Signed(parts.base or 0)
                     .. " " .. Signed(parts.bonus or 0) .. " item)", 0.9, 0.9, 0.9)
             end
+            -- The dice this weapon swings for: both dice when versatile, and
+            -- the exact notation the damage click would roll right now.
+            if entry.die or entry.versatile_die then
+                tt:AddLine("Damage: " .. ns.SafeText(entry.die or "-")
+                    .. (entry.versatile_die
+                        and ("  (two-handed " .. ns.SafeText(entry.versatile_die) .. ")") or ""),
+                    0.9, 0.9, 0.9)
+            end
+            if entry.equipped and entry.damage then
+                local d = entry.damage
+                local how
+                if entry.wield == "off" then
+                    how = " (off hand: no damage modifier)"
+                elseif d.mod ~= 0 then
+                    how = " (die " .. Signed(d.mod) .. " attribute modifier)"
+                else
+                    how = ""
+                end
+                tt:AddLine("Rolls " .. d.notation .. how, 0.9, 0.9, 0.9, true)
+            end
             AddEffectLines(tt, entry)
-            tt:AddLine(entry.equipped and "Equipped." or "Stashed.", 0.56, 0.78, 1)
+            tt:AddLine(entry.equipped
+                and ((WIELD_LABEL[entry.wield] or "Equipped") .. ".") or "Stashed.",
+                0.56, 0.78, 1)
         elseif kind == "equipment" then
             if entry.ac_bonus ~= 0 then
                 tt:AddLine("Adds " .. Signed(entry.ac_bonus) .. " AC while equipped.", 0.9, 0.9, 0.9)
@@ -819,10 +920,26 @@ local function ItemIconPath(icon)
     return nil
 end
 
+-- What a weapon's toggle does next: the state after the current one in the
+-- category's cycle, or "stash" at the end of it (mirrors Items.CycleWield).
+local function NextWieldHint(entry)
+    local states = ns.Items.WieldStates(entry.category)
+    if not entry.equipped then
+        return "Click: wield it (" .. WIELD_LABEL[states[1]]:lower() .. ")"
+    end
+    for i, s in ipairs(states) do
+        if s == entry.wield and states[i + 1] then
+            return "Click: switch to " .. WIELD_LABEL[states[i + 1]]:lower()
+        end
+    end
+    return "Click: stash it (its bonus stops counting)"
+end
+
 -- The state icon: the item's own icon when equipped (falling back to the
 -- held/worn glyph for an item without one), the backpack when stashed, and a
--- plain backpack for gear (nothing to toggle). Clicking equips or stashes on
--- the own sheet; a viewed sheet still explains the state it shows.
+-- plain backpack for gear (nothing to toggle). Clicking cycles a weapon's
+-- wield state and equips/stashes equipment on the own sheet; a viewed sheet
+-- still explains the state it shows.
 local function StateIcon(content, entry, kind, ctx, y)
     local b = AcquireIconBtn(content)
     PlaceLeft(content, b, PAD, y + 1)
@@ -837,6 +954,18 @@ local function StateIcon(content, entry, kind, ctx, y)
         or ICON_STASHED)
     b.tex:Show()
     local equipped, index = entry.equipped, entry.index
+    if kind == "weapon" then
+        local state = equipped and (WIELD_LABEL[entry.wield] or "Equipped") or "Stashed"
+        b.tip = function(tt)
+            tt:AddLine(state, C_GOLD[1], C_GOLD[2], C_GOLD[3])
+            if not ctx.viewChar then tt:AddLine(NextWieldHint(entry), 0.56, 0.78, 1) end
+        end
+        if not ctx.viewChar then
+            local category = entry.category
+            b.click = function() CycleItem(index, category) end
+        end
+        return
+    end
     b.tip = function(tt)
         tt:AddLine(equipped and "Equipped" or "Stashed", C_GOLD[1], C_GOLD[2], C_GOLD[3])
         if not ctx.viewChar then
@@ -873,20 +1002,55 @@ local function GearCounter(content, entry, ctx, y)
     step("+", CNT_PLUS_X, 1, "Click: carry one more")
 end
 
--- An equipped weapon's own attack total, gold at the row's right edge, plus the
--- click-to-roll spec for the row (nil on a viewed sheet). A stashed weapon shows
--- nothing - it is in the bag - and so does one whose link names no weapon skill
--- this character is accomplished with.
+-- An equipped weapon's attack and damage columns (atk | damage, mirroring the
+-- weapon-skill rows): the attack total, gold, returned as the row-wide roll
+-- spec, and the damage notation as its OWN click target rolling the dice -
+-- the row's two clicks. A stashed weapon shows neither - it is in the bag -
+-- and a weapon whose link names no accomplished weapon skill shows no attack.
+-- A damage string that is not dice notation renders dim and inert (Compute
+-- only emits `damage` for notation the roller can parse).
+local INV_ATK_X, INV_DMG_X = PAD + 60, PAD
 local function WeaponAttackValue(content, entry, kind, ctx, y)
-    if kind ~= "weapon" or not (entry.equipped and entry.attack_total) then return nil end
-    local atk = Acquire(content, "GameFontHighlightSmall")
-    PlaceRight(content, atk, PAD, y)
-    atk:SetJustifyH("RIGHT")
-    atk:SetTextColor(C_GOLD[1], C_GOLD[2], C_GOLD[3])
-    atk:SetText(Signed(entry.attack_total))
-    local spec = ctx.rollSpec((entry.name or "Weapon") .. " attack", entry.attack_total)
-    -- The roll announces the item behind it as a clickable chat link.
-    if spec then spec.linkPayload = function() return ns.ChatLinks.Item(entry) end end
+    if kind ~= "weapon" or not entry.equipped then return nil end
+    local spec
+    if entry.attack_total then
+        local atk = Acquire(content, "GameFontHighlightSmall")
+        PlaceRight(content, atk, INV_ATK_X, y)
+        atk:SetJustifyH("RIGHT")
+        atk:SetTextColor(C_GOLD[1], C_GOLD[2], C_GOLD[3])
+        atk:SetText(Signed(entry.attack_total))
+        spec = ctx.rollSpec((entry.name or "Weapon") .. " attack", entry.attack_total, true)
+        -- The roll announces the item behind it as a clickable chat link.
+        if spec then spec.linkPayload = function() return ns.ChatLinks.Item(entry) end end
+    end
+    if entry.damage and not ctx.viewChar then
+        local d, name = entry.damage, entry.name
+        local b = AcquireIconBtn(content)
+        b.label:SetText(d.notation)
+        b.label:SetTextColor(C_GOLD[1], C_GOLD[2], C_GOLD[3])
+        b:SetSize(math.max(24, b.label:GetStringWidth() + 6), ICON_SIZE)
+        PlaceRight(content, b, INV_DMG_X - 3, y + 1)
+        b.tip = function(tt)
+            tt:AddLine("Click: roll damage (" .. d.notation .. ")", 0.56, 0.78, 1)
+        end
+        b.click = function()
+            ns.Dice.NotationCheck((name or "Weapon") .. " damage", d.notation,
+                ns.ChatLinks and ns.ChatLinks.Item(entry) or nil)
+        end
+    elseif entry.damage then
+        -- Viewed sheet: the number is information, not a button.
+        local dmg = Acquire(content, "GameFontHighlightSmall")
+        PlaceRight(content, dmg, INV_DMG_X, y)
+        dmg:SetJustifyH("RIGHT")
+        dmg:SetTextColor(C_GOLD[1], C_GOLD[2], C_GOLD[3])
+        dmg:SetText(entry.damage.notation)
+    elseif entry.die then
+        local dmg = Acquire(content, "GameFontHighlightSmall")
+        PlaceRight(content, dmg, INV_DMG_X, y)
+        dmg:SetJustifyH("RIGHT")
+        dmg:SetTextColor(C_DIM[1], C_DIM[2], C_DIM[3])
+        dmg:SetText(ns.SafeText(entry.die))
+    end
     return spec
 end
 
@@ -952,6 +1116,19 @@ end
 local function InventorySection(content, key, title, entries, kind, ctx)
     if #entries == 0 then return end
     if not Section(content, key, title, AddAction(ctx, kind)) then return end
+    if kind == "weapon" then
+        -- Column heads over the weapon rows, matching the weapon-skill
+        -- section's atk | damage layout.
+        local atkHead = Acquire(content, "GameFontHighlightSmall")
+        PlaceRight(content, atkHead, INV_ATK_X, content.y)
+        atkHead:SetTextColor(C_DIM[1], C_DIM[2], C_DIM[3])
+        atkHead:SetText("atk")
+        local dmgHead = Acquire(content, "GameFontHighlightSmall")
+        PlaceRight(content, dmgHead, INV_DMG_X, content.y)
+        dmgHead:SetTextColor(C_DIM[1], C_DIM[2], C_DIM[3])
+        dmgHead:SetText("damage")
+        content.y = content.y - 14
+    end
     for _, entry in ipairs(entries) do InventoryRow(content, entry, kind, ctx) end
 end
 
@@ -991,7 +1168,7 @@ local function RenderSpellcasting(content, sheet, ctx)
         local spell = sheet.derived.spell
         local accomplishment = ctx.accomplishment
         local modById = ctx.modById
-        if not Section(content, "spellcasting", "SPELLCASTING") then return end
+        if not Section(content, "spellcasting", "SPELLCASTING", AimAction(ctx)) then return end
         local S_ATK_X, S_DC_X = PAD + 44, PAD   -- column right edges
         local sAtkHead = Acquire(content, "GameFontHighlightSmall")
         PlaceRight(content, sAtkHead, S_ATK_X, content.y)
@@ -1038,7 +1215,7 @@ local function RenderSpellcasting(content, sheet, ctx)
         local function SpellRow(label, atkValue, dcValue, school)
             local rowY = content.y
             Row(content, label, "", 0, nil, SpellTip(label, school),
-                ctx.rollSpec(label .. " spell attack", atkValue))
+                ctx.rollSpec(label .. " spell attack", atkValue, true))
             local atk = Acquire(content, "GameFontHighlightSmall")
             PlaceRight(content, atk, S_ATK_X, rowY)
             atk:SetTextColor(C_GOLD[1], C_GOLD[2], C_GOLD[3])
@@ -1327,10 +1504,11 @@ local function RenderBody(self)
     }
     for _, a in ipairs(sheet.attributes) do ctx.modById[a.id] = a end
     -- Click-to-roll spec, or nil for a viewed (read-only) sheet whose modifiers
-    -- are not yours to roll.
-    function ctx.rollSpec(label, mod)
+    -- are not yours to roll. `isAttack` marks weapon/spell attack rolls - the
+    -- ones an armed Aim folds into.
+    function ctx.rollSpec(label, mod, isAttack)
         if ctx.viewChar then return nil end
-        return { label = label, modifier = mod or 0 }
+        return { label = label, modifier = mod or 0, attack = isAttack or nil }
     end
     -- Click-to-post spec (share a prose block to group chat), or nil for a
     -- viewed sheet.
@@ -1368,6 +1546,75 @@ local function RenderBody(self)
     CanvasFinish(content)
 end
 
+-- Death saves and fatigue live beside HP/Mana in the vitals header - the two
+-- conditions a table glances at mid-fight. The clusters build in BuildFrame
+-- and fill in RefreshVitals; these are their click actions, always operating
+-- on the ACTIVE character (a viewed sheet renders the clusters read-only).
+
+local function AnnounceCondition(line)
+    ns.Print(line)
+    if ns.Addon and ns.Addon.db and ns.Addon.db.profile.publicRolls
+        and IsInGroup and IsInGroup() then
+        SendChatMessage("(" .. line .. ")", (IsInRaid and IsInRaid()) and "RAID" or "PARTY")
+    end
+end
+
+local function RollDeathSave()
+    local cfg = ns.DerivedConfig().death_saves
+    local char, key = ns.GetActiveCharacter()
+    if not (cfg and char and key) then return end
+    local state = type(char.death_saves) == "table" and char.death_saves or {}
+    if state.stable or (tonumber(state.failures) or 0) >= cfg.failures then return end
+    ns.Dice.Request(0, function(_, raw)
+        local outcome = ns.CharacterSheet.ApplyDeathSave(char, raw, cfg)
+        ns.SetCharacter(key, char)
+        AnnounceCondition("Death save: " .. raw .. " - " .. (({
+            success = "success",
+            failure = "failure",
+            stable = "success - STABLE",
+            dead = "failure - DEAD",
+            revive = "natural 20 - back up at 1 HP!",
+        })[outcome] or outcome))
+        ns.Systems.RefreshAll()
+    end)
+end
+
+local function AddDeathFail()
+    local cfg = ns.DerivedConfig().death_saves
+    local char, key = ns.GetActiveCharacter()
+    if not (cfg and char and key) then return end
+    local outcome = ns.CharacterSheet.AddDeathFailure(char, cfg)
+    ns.SetCharacter(key, char)
+    if outcome == "dead" then AnnounceCondition("Death saves: failures full - DEAD.") end
+    ns.Systems.RefreshAll()
+end
+
+-- The misclick eraser: takes one pip back ("success" or "failure").
+local function UndoDeathPip(which)
+    local char, key = ns.GetActiveCharacter()
+    if not (char and key) then return end
+    ns.CharacterSheet.UndoDeathPip(char, which)
+    ns.SetCharacter(key, char)
+    ns.Systems.RefreshAll()
+end
+
+local function BumpFatigue(delta)
+    local cfg = ns.DerivedConfig().fatigue
+    local char, key = ns.GetActiveCharacter()
+    if not (cfg and char and key) then return end
+    local level = math.max(0, math.min(cfg.max, (tonumber(char.fatigue) or 0) + delta))
+    char.fatigue = level > 0 and level or nil
+    ns.SetCharacter(key, char)
+    ns.Systems.RefreshAll()
+end
+
+-- Shows/hides one header condition cluster as a unit.
+local function ShowCondition(btn, shown)
+    btn:SetShown(shown)
+    btn.lbl:SetShown(shown)
+    btn.val:SetShown(shown)
+end
+
 -- Pushes the current character's resource numbers into the vitals header.
 -- Boxes the user is typing in are left alone so an external refresh (e.g. an
 -- editor keystroke) does not stomp the in-progress value.
@@ -1380,6 +1627,79 @@ local function RefreshVitals(self)
     self.manaMax:SetText("/ " .. tostring(d.mana.max or "?"))
     setBox(self.tempBox, tostring(d.hp.temp or 0))
     self.tempMax:SetText("")
+
+    -- The header conditions on the right. Fatigue rides whenever the system
+    -- declares it; death saves surface while the character is down (current
+    -- HP at 0). Both render read-only on a viewed sheet.
+    local cfg = ns.DerivedConfig()
+    local viewing = self.viewChar and true or false
+    local charRec = self.viewChar or (self.charKey and ns.GetCharacter(self.charKey)) or nil
+
+    local ftg = d.fatigue
+    local showF = cfg.fatigue ~= nil and ftg ~= nil
+    ShowCondition(self.fatigueBtn, showF)
+    if showF then
+        self.fatigueBtn.viewing = viewing
+        if ftg.level > 0 then
+            self.fatigueBtn.val:SetText("|cffe67373" .. ftg.level
+                .. " (" .. Signed(-ftg.penalty) .. ")|r")
+        else
+            self.fatigueBtn.val:SetText("|cff9e998c0|r")
+        end
+        self.fatigueBtn.tip = function(tt)
+            tt:AddLine("Fatigue", C_GOLD[1], C_GOLD[2], C_GOLD[3])
+            tt:AddLine("Each level: " .. Signed(-cfg.fatigue.penalty) .. " to all checks,"
+                .. " saving throws and attack rolls - already folded into the sheet's"
+                .. " totals."
+                .. (cfg.fatigue.speed_half_at
+                    and (" Movement halves at level " .. cfg.fatigue.speed_half_at .. ".") or "")
+                .. " Caps at " .. cfg.fatigue.max .. ". A long rest clears fatigue.",
+                0.9, 0.9, 0.9, true)
+            if ftg.speed_halved then
+                tt:AddLine("Speed is currently halved.", 0.9, 0.45, 0.45)
+            end
+            if not viewing then
+                tt:AddLine("Click: add a level  -  right-click: remove one", 0.56, 0.78, 1)
+            end
+        end
+    end
+
+    local dsCfg = cfg.death_saves
+    local hpNow = tonumber(d.hp.current) or tonumber(d.hp.max) or 0
+    local showD = dsCfg ~= nil and hpNow <= 0 and charRec ~= nil
+    ShowCondition(self.deathBtn, showD)
+    if showD then
+        local st = type(charRec.death_saves) == "table" and charRec.death_saves or {}
+        local s = math.min(tonumber(st.successes) or 0, dsCfg.successes)
+        local fl = math.min(tonumber(st.failures) or 0, dsCfg.failures)
+        local dead, stable = fl >= dsCfg.failures, st.stable and fl < dsCfg.failures
+        self.deathBtn.viewing = viewing
+        if dead then
+            self.deathBtn.val:SetText("|cffe67373DEAD|r")
+        elseif stable then
+            self.deathBtn.val:SetText("|cff66d966STABLE|r")
+        else
+            self.deathBtn.val:SetText(string.format(
+                "|cff66d966%d/%d|r  |cffe67373%d/%d|r", s, dsCfg.successes, fl, dsCfg.failures))
+        end
+        self.deathBtn.tip = function(tt)
+            tt:AddLine("Death Saves", C_GOLD[1], C_GOLD[2], C_GOLD[3])
+            tt:AddLine("At 0 HP: roll a d20 - " .. dsCfg.threshold .. " or higher is a"
+                .. " success (green). " .. dsCfg.successes .. " successes = stable, "
+                .. dsCfg.failures .. " failures (red) = dead. A natural 20 puts you back"
+                .. " up at 1 HP; a natural 1 counts as two failures. Healing above 0"
+                .. " clears the pips.", 0.9, 0.9, 0.9, true)
+            if not viewing then
+                if not dead and not stable then
+                    tt:AddLine("Click: roll a death save", 0.56, 0.78, 1)
+                end
+                tt:AddLine("Shift-right-click: mark one failure (damage taken while"
+                    .. " down; a critical hit is two)", 0.56, 0.78, 1)
+                tt:AddLine("Misclicked? Right-click takes one failure back,"
+                    .. " shift-click one success.", 0.56, 0.78, 1)
+            end
+        end
+    end
 end
 
 -- Commits a focused, typed-but-not-entered vitals box to the character it was
@@ -1395,7 +1715,11 @@ local function CommitPendingVitals(self)
     local function commit(box, field)
         if not (box and box:HasFocus()) then return end
         local n = tonumber(box:GetText())
-        if n then char[field] = math.max(0, math.min(99999, math.floor(n))) end
+        if n then
+            char[field] = math.max(0, math.min(99999, math.floor(n)))
+            -- Healing above 0 ends the dying state: the pips reset.
+            if field == "current_hp" and char[field] > 0 then char.death_saves = nil end
+        end
         box:ClearFocus()
     end
     self.skipVitalsCommit = true
@@ -1477,7 +1801,11 @@ local function CommitResource(self, field, box)
     if not char then return end
     -- Bound the typed value: integral, non-negative, and not absurdly large.
     local n = tonumber(box:GetText())
-    if n then char[field] = math.max(0, math.min(99999, math.floor(n))) end
+    if n then
+        char[field] = math.max(0, math.min(99999, math.floor(n)))
+        -- Healing above 0 ends the dying state: the pips reset.
+        if field == "current_hp" and char[field] > 0 then char.death_saves = nil end
+    end
     -- Guarded: ClearFocus fires the box's focus-lost commit, which lands here
     -- again for a value already committed (and re-enters Refresh below).
     self.skipVitalsCommit = true
@@ -1530,6 +1858,60 @@ local function BuildFrame()
     f.hpBox, f.hpMax = MakeResource("Hit Points", 0)
     f.manaBox, f.manaMax = MakeResource("Mana", 150)
     f.tempBox, f.tempMax = MakeResource("Temp HP", 290)
+
+    -- Right side of the same header row: the condition clusters. Fatigue
+    -- shows whenever the loaded system declares the condition; death saves
+    -- surface while the character is down. RefreshVitals fills both.
+    local function MakeCondition(offsetX, width, labelText)
+        local lbl = f:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+        lbl:SetPoint("TOPRIGHT", -PAD - offsetX, -PAD - 44)
+        lbl:SetJustifyH("RIGHT")
+        lbl:SetText(labelText)
+        lbl:SetTextColor(C_HEAD[1], C_HEAD[2], C_HEAD[3])
+        -- The value matches the HP/Mana numbers' size (the labels above both
+        -- rows are the small font) so the header reads as one line.
+        local val = f:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+        val:SetPoint("TOPRIGHT", -PAD - offsetX, -PAD - 62)
+        val:SetJustifyH("RIGHT")
+        local btn = CreateFrame("Button", nil, f)
+        btn:SetPoint("TOPRIGHT", -PAD - offsetX + 4, -PAD - 42)
+        btn:SetSize(width, 38)
+        btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+        btn:SetScript("OnEnter", function(self)
+            if not self.tip then return end
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            self.tip(GameTooltip)
+            GameTooltip:Show()
+        end)
+        btn:SetScript("OnLeave", GameTooltip_Hide)
+        btn:SetScript("OnClick", function(self, button)
+            if self.viewing then return end
+            local shift = IsShiftKeyDown and IsShiftKeyDown()
+            local fn
+            if button == "RightButton" then
+                fn = (shift and self.shiftRightClick) or self.rightClick
+            else
+                fn = (shift and self.shiftClick) or self.click
+            end
+            if fn then fn() end
+        end)
+        btn.lbl, btn.val = lbl, val
+        btn:Hide()
+        lbl:Hide()
+        val:Hide()
+        return btn
+    end
+    f.fatigueBtn = MakeCondition(0, 64, "Fatigue")
+    f.fatigueBtn.click = function() BumpFatigue(1) end
+    f.fatigueBtn.rightClick = function() BumpFatigue(-1) end
+    -- Death gestures mirror fatigue's "right-click takes one back": the
+    -- damage-failure mark moved behind shift so a stray right-click can no
+    -- longer fill a pip it should erase.
+    f.deathBtn = MakeCondition(80, 104, "Death Saves")
+    f.deathBtn.click = RollDeathSave
+    f.deathBtn.rightClick = function() UndoDeathPip("failure") end
+    f.deathBtn.shiftClick = function() UndoDeathPip("success") end
+    f.deathBtn.shiftRightClick = AddDeathFail
 
     -- Commit on Enter and on focus loss - clicking away from a typed value must
     -- not silently revert it on the next refresh. Escape still reverts: it

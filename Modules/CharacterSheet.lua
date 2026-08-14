@@ -42,7 +42,11 @@
 -- proficiency rows, one per weapon skill, and stay the bare skill. Instead each
 -- inventory weapon carries its OWN attack total (the linked weapon's
 -- proficiency total + the item's bonus), so a character holding two blades
--- rolls the one actually swung. An item's +AC arrives as an "ac" effect (the
+-- rolls the one actually swung. Each also carries its damage: a die (the
+-- item's own, or inherited from the linked weapon), a wield state cycled on
+-- the sheet (main / off hand / two-handed, constrained by the item's
+-- category), and the governing attribute's modifier - dropped in the off hand,
+-- with the versatile die swapped in when held two-handed. An item's +AC arrives as an "ac" effect (the
 -- wizard authors it that way), folded with per-source provenance into
 -- derived.ac_effects; the legacy ac_bonus field (pre-effects items, wire
 -- snapshots) still sums into derived.ac through its own `ac_equipment` term,
@@ -346,6 +350,76 @@ local function SumAddModifiers(list, modifier)
     return total
 end
 
+-- Death saves. The rules are the system's (ns.DerivedConfig().death_saves
+-- declares them; no config = no death saves anywhere): at 0 HP a d20 at or
+-- above `threshold` marks a success, below marks a failure, a natural 1 marks
+-- two, and a natural 20 puts the character back up at 1 HP. `successes` full =
+-- stable (still down, no more rolls); `failures` full = dead. State lives in
+-- char.death_saves ({ successes, failures, stable }) so it survives a /reload
+-- mid-fight; healing clears it (the sheet's HP commit does).
+
+-- Ensures and returns a sane pip state on the character.
+local function DeathState(char)
+    local state = type(char.death_saves) == "table" and char.death_saves or {}
+    char.death_saves = state
+    state.successes = tonumber(state.successes) or 0
+    state.failures = tonumber(state.failures) or 0
+    return state
+end
+
+-- Applies one rolled death save (the raw d20). Mutates char; returns the
+-- outcome: "success", "failure", "stable", "dead" or "revive".
+function CharacterSheet.ApplyDeathSave(char, raw, cfg)
+    local state = DeathState(char)
+    if raw == 20 then
+        char.current_hp = 1
+        char.death_saves = nil
+        return "revive"
+    end
+    if raw == 1 then
+        state.failures = state.failures + 2
+    elseif raw >= (cfg.threshold or 10) then
+        state.successes = state.successes + 1
+    else
+        state.failures = state.failures + 1
+    end
+    if state.failures >= (cfg.failures or 3) then
+        state.failures = cfg.failures or 3
+        return "dead"
+    end
+    if state.successes >= (cfg.successes or 3) then
+        state.successes = cfg.successes or 3
+        state.stable = true
+        return "stable"
+    end
+    return raw >= (cfg.threshold or 10) and "success" or "failure"
+end
+
+-- One manual failure pip - taking damage while at 0 HP (a critical hit is two
+-- clicks, per the rule). Damage also breaks stabilization. Returns "dead" when
+-- the pips fill, else "failure".
+function CharacterSheet.AddDeathFailure(char, cfg)
+    local state = DeathState(char)
+    state.stable = nil
+    state.failures = math.min((cfg.failures or 3), state.failures + 1)
+    return state.failures >= (cfg.failures or 3) and "dead" or "failure"
+end
+
+-- Removes one pip - the misclick eraser. `which` is "success" or "failure".
+-- Removing a success un-stabilizes (the full row no longer stands), and the
+-- block drops entirely once nothing is marked, so a corrected character
+-- carries no empty scaffolding.
+function CharacterSheet.UndoDeathPip(char, which)
+    if type(char.death_saves) ~= "table" then return end
+    local state = DeathState(char)
+    local field = which == "success" and "successes" or "failures"
+    state[field] = math.max(0, state[field] - 1)
+    if which == "success" then state.stable = nil end
+    if state.successes == 0 and state.failures == 0 and not state.stable then
+        char.death_saves = nil
+    end
+end
+
 -- Builds a set { id = true } from a list of ids.
 local function ListToSet(list)
     local set = {}
@@ -364,7 +438,9 @@ end
 local function WeaponAttack(weapon, modifier, accomplishment, attackFx)
     if not weapon.attribute then return nil end
     -- attribute may be a list (finesse-style "use either"): the best modifier
-    -- wins and is reported as the governing one.
+    -- wins and is reported as the governing one. Taking the best once and
+    -- using it for attack AND damage is the agile rule's "same modifier for
+    -- both rolls" satisfied by the optimal pick.
     local attrs = type(weapon.attribute) == "table" and weapon.attribute or { weapon.attribute }
     local bestId, bestMod
     for _, id in ipairs(attrs) do
@@ -372,14 +448,33 @@ local function WeaponAttack(weapon, modifier, accomplishment, attackFx)
         if m and (not bestMod or m > bestMod) then bestId, bestMod = id, m end
     end
     if not bestId then return nil end
-    return bestId, bestMod + accomplishment + attackFx
+    return bestId, bestMod + accomplishment + attackFx, bestMod
+end
+
+-- The wield category of a weapon item that declares none: versatile when a
+-- two-handed die exists (its own or the linked weapon's), else read from the
+-- linked weapon's property strings - display data, so matched loosely and
+-- worth nothing more than a default. nil means a plain one-hander to the
+-- wield logic (ns.Items.WieldStates).
+local function DeriveCategory(linked, versatileDie)
+    if versatileDie then return "versatile" end
+    local props = (linked and linked.properties) or {}
+    for _, p in ipairs(props) do
+        local s = tostring(p):lower()
+        if s:find("two", 1, true) and s:find("hand", 1, true) then return "two_hand" end
+    end
+    for _, p in ipairs(props) do
+        if tostring(p):lower() == "light" then return "light" end
+    end
+    return nil
 end
 
 -- Resolves a character's inventory into display entries plus the AC total
 -- equipped equipment contributes.
 --
--- `weaponAttack` is weapon id -> bare proficiency attack total (see
--- WeaponAttack), which each weapon entry adds its own bonus to.
+-- `weaponAttack` is weapon id -> { total, mod, attr } (see WeaponAttack):
+-- the bare proficiency attack total each weapon entry adds its own bonus to,
+-- plus the governing attribute's bare modifier, which is the damage modifier.
 --
 -- Returns two values:
 --   inventory   - { weapons = {...}, equipment = {...}, gear = {...} }, display
@@ -421,19 +516,51 @@ local function ResolveInventory(char, system, itemLib, weaponAttack)
             entry.equipped = state.equipped and true or false
             entry.bonus = BonusValue(item.bonus)
             entry.weapon_id = item.weapon_id
-            -- The linked weapon's display name, nil when the link dangles in
-            -- this system: the item still shows, it just has nothing to boost.
+            -- The linked weapon's record, nil when the link dangles in this
+            -- system: the item still shows, it just has nothing to boost or
+            -- inherit.
+            local linked
             if item.weapon_id then
-                local weapon = ns.FindById(system.weapons, item.weapon_id)
-                entry.weapon_name = weapon and weapon.name or nil
+                linked = ns.FindById(system.weapons, item.weapon_id)
+                entry.weapon_name = linked and linked.name or nil
             end
+
+            -- Die, versatile die and category: the item's own fields when
+            -- authored (created / freestanding weapons and overrides), else
+            -- inherited from the linked system weapon's damage / versatile /
+            -- properties.
+            entry.die = item.die or (linked and linked.damage) or nil
+            entry.versatile_die = item.versatile_die or (linked and linked.versatile) or nil
+            entry.category = item.category or DeriveCategory(linked, entry.versatile_die)
+
+            -- How the weapon is held right now (nil when stashed), validated
+            -- against the category - a stale stored wield falls back.
+            entry.wield = ns.Items.EffectiveWield(state, entry.category)
+
             -- This item's own attack total: the linked weapon's proficiency
             -- total plus this item's bonus. Every linked item gets one, stashed
             -- included - the UI decides that only a held weapon shows a number.
             local base = entry.weapon_id and weaponAttack[entry.weapon_id]
             if base then
-                entry.attack_total = base + entry.bonus
-                entry.attack_parts = { base = base, bonus = entry.bonus }
+                entry.attack_total = base.total + entry.bonus
+                entry.attack_parts = { base = base.total, bonus = entry.bonus }
+            end
+
+            -- The damage this weapon rolls in its current state: the
+            -- two-handed die when a versatile weapon is held in both hands, no
+            -- attribute modifier in the off hand (the light follow-up strike
+            -- rule), bare die when no link provides a governing attribute.
+            -- Only parseable notation becomes a roll - a foreign damage string
+            -- stays display text. Item `bonus` is attack-roll only; damage is
+            -- deliberately unaffected.
+            local die = (entry.wield == "two" and entry.versatile_die) or entry.die
+            if die and ns.Schema and ns.Schema.IsDieNotation and ns.Schema.IsDieNotation(die) then
+                local mod = 0
+                if entry.wield ~= "off" and base and base.mod then mod = base.mod end
+                entry.damage = {
+                    die = die, mod = mod, attr = base and base.attr or nil,
+                    notation = die:lower() .. (mod ~= 0 and string.format("%+d", mod) or ""),
+                }
             end
             inventory.weapons[#inventory.weapons + 1] = entry
         elseif kind == "equipment" then
@@ -584,6 +711,22 @@ function CharacterSheet.Compute(char, system, itemLib)
         }
     end
 
+    -- Fatigue: a system-declared leveled condition (derived_stats.fatigue; no
+    -- config = no fatigue anywhere). Each level subtracts the configured
+    -- penalty from every skill check, saving throw and attack roll - folded
+    -- into the totals right here, so the displayed numbers and click-to-roll
+    -- agree. Movement halves at the configured level (applied in `derived`
+    -- below). Attribute-check rolls apply the penalty at roll time instead:
+    -- the raw modifiers feed every other total, so dimming them here would
+    -- double-count.
+    local ftgCfg = ns.DerivedConfig().fatigue
+    local fatigueLevel = 0
+    if ftgCfg then
+        fatigueLevel = math.max(0, math.min(ftgCfg.max,
+            math.floor(FiniteNumber(char.fatigue) or 0)))
+    end
+    local fatiguePenalty = ftgCfg and fatigueLevel * ftgCfg.penalty or 0   -- subtracted
+
     -- Skills grouped under their governing attribute.
     local accomplishedSkills = ListToSet(char.accomplished_skills)
     for id in pairs(fx.accomplishSkill) do accomplishedSkills[id] = true end
@@ -593,6 +736,7 @@ function CharacterSheet.Compute(char, system, itemLib)
         local isAccomplished = accomplishedSkills[skill.id] or false
         local perkAdd = (fx.skill[skill.id] or 0) + SumAddModifiers(fx.skillAddMod[skill.id], modifier)
         local total = mod + (isAccomplished and accomplishment or 0) + perkAdd + fx.allSkill
+            - fatiguePenalty
         skills[#skills + 1] = {
             id = skill.id, name = skill.name, attribute = skill.attribute,
             total = total, accomplished = isAccomplished,
@@ -608,7 +752,8 @@ function CharacterSheet.Compute(char, system, itemLib)
         local perkAdd = (fx.save[attr.id] or 0) + SumAddModifiers(fx.saveAddMod[attr.id], modifier)
         saves[#saves + 1] = {
             id = attr.id, name = attr.name,
-            total = (modifier[attr.id] or 0) + (isAccomplished and accomplishment or 0) + perkAdd,
+            total = (modifier[attr.id] or 0) + (isAccomplished and accomplishment or 0) + perkAdd
+                - fatiguePenalty,
             accomplished = isAccomplished,
             sources = fx.saveSources[attr.id],
         }
@@ -628,11 +773,14 @@ function CharacterSheet.Compute(char, system, itemLib)
                 id = weapon.id, name = weapon.name, damage = weapon.damage,
                 versatile = weapon.versatile, properties = weapon.properties or {},
             }
-            local attrId, total = WeaponAttack(weapon, modifier, accomplishment, fx.attack)
+            -- Fatigue rides the attack-effects term: it dims the attack roll
+            -- but never the damage modifier (mod stays the bare attribute).
+            local attrId, total, mod = WeaponAttack(weapon, modifier, accomplishment,
+                fx.attack - fatiguePenalty)
             if attrId then
                 entry.attack_attribute = attrId
                 entry.attack_total = total
-                weaponAttack[weapon.id] = total
+                weaponAttack[weapon.id] = { total = total, mod = mod, attr = attrId }
             end
             weapons[#weapons + 1] = entry
         end
@@ -750,13 +898,26 @@ function CharacterSheet.Compute(char, system, itemLib)
         if lvl <= level and bonus.actions then derived.actions = derived.actions + bonus.actions end
     end
 
+    -- Fatigue's derived share: halved movement at the configured level, and
+    -- the state block the sheet's counter row renders from. The check/save/
+    -- attack penalty was folded into those totals above.
+    if ftgCfg then
+        local halved = ftgCfg.speed_half_at and fatigueLevel >= ftgCfg.speed_half_at or false
+        if halved then derived.movement = derived.movement / 2 end
+        derived.fatigue = {
+            level = fatigueLevel, penalty = fatiguePenalty, max = ftgCfg.max,
+            speed_halved = halved,
+        }
+    end
+
     -- Spellcasting (casters only): spell attack = casting-source modifier +
     -- accomplishment + spell_attack effects. When the system declares
     -- spell_schools (records or plain strings), one row per school folds in
     -- the school-targeted spell_attack / save_dc effects.
     if isCaster then
         local spell = {
-            attack = castingMod + accomplishment + fx.spellAttack,
+            -- Spell attacks are attack rolls: fatigue dims them too.
+            attack = castingMod + accomplishment + fx.spellAttack - fatiguePenalty,
             dc = derived.save_dc,
             schools = {},
         }

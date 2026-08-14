@@ -101,6 +101,31 @@ type = "save"
 id = "spirit"
 value = 1
 
+# A freestanding created weapon: no `weapon_id` at all, so nothing in the
+# system governs it - it swings its own dice. Three optional weapon fields:
+#   die           - the damage die the sheet's damage click rolls ("1d6",
+#                   "2d6+1"); a LINKED weapon inherits this from the system
+#                   weapon's `damage`, so itm_1 above needs none
+#   versatile_die - the die used instead while wielded two-handed
+#   category      - how it is held, constraining the sheet's wield toggle:
+#                   "light" (main or off hand - off-hand strikes add no damage
+#                   modifier), "one_hand", "versatile" (one hand or two), or
+#                   "two_hand"; omitted = inherited from the linked weapon's
+#                   properties, else a plain one-hander
+# Damage rolls add the governing attribute's modifier (from the weapon link;
+# a freestanding weapon like this one rolls its bare die), and the `bonus`
+# field stays attack-roll only.
+[items.itm_6]
+id = "itm_6"
+name = "Ironwood Cudgel"
+kind = "weapon"
+description = "Dense as stone and twice as stubborn. Takes two hands to swing properly."
+icon = "inv_mace_02"
+die = "1d6"
+versatile_die = "1d8"
+category = "versatile"
+version = 1
+
 # A gear item: no mechanics at all, just a name and the counter each character
 # keeps. `default_count` seeds that counter when the item is added to someone
 # (Wren already carries 12 of these, and her own count wins).

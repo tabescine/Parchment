@@ -9,7 +9,8 @@
 --
 -- Reads from: nothing (pure functions over the tables passed in).
 -- Exposes on ns.Schema: .ValidateSystem, .ValidateCharacter, .ValidateItem,
---   .ValidateItemLibrary, .ValidateFeatPack, .ValidateSpellPack
+--   .ValidateItemLibrary, .ValidateFeatPack, .ValidateSpellPack,
+--   .IsDieNotation
 
 local ADDON, ns = ...
 
@@ -158,6 +159,53 @@ local function CheckCap(value, ctx, issues)
     CheckNumeric(value, ctx, "ac_mod_cap", MAX_BONUS, issues)
     if type(value) == "number" and value < 0 and value >= -MAX_BONUS then
         Report(issues, ctx, "field 'ac_mod_cap' should not be negative")
+    end
+end
+
+-- True when `value` is single-roll dice notation: "XdY" with an optional flat
+-- "+K"/"-K" tail ("1d8", "d6", "2d6+1", "1d10-1"). Bounds mirror the dice
+-- roller's caps (Modules/Dice.lua), so anything that validates here parses
+-- there. Exported: CharacterSheet gates the damage click-target on it (a die
+-- that cannot roll must not render as rollable), and the item wizard uses it
+-- for live field feedback.
+function Schema.IsDieNotation(value)
+    if type(value) ~= "string" then return false end
+    local count, sides, flat = value:lower():match("^(%d*)d(%d+)([%+%-]?%d*)$")
+    if not sides then return false end
+    count = (count == "") and 1 or tonumber(count)
+    sides = tonumber(sides)
+    if count < 1 or count > 100 or sides < 2 or sides > 1000 then return false end
+    if flat ~= "" and (not flat:match("^[%+%-]%d+$") or tonumber(flat:sub(2)) > 999) then
+        return false
+    end
+    return true
+end
+
+-- Checks an optional damage-die field: a capped string in die notation. Both
+-- the library item and the wire `resolved` snapshot carry these, and the
+-- notation feeds the dice roller on click - garbage must be reported, not
+-- rolled.
+local function CheckDie(value, ctx, field, issues)
+    CheckText(value, ctx, field, MAX_ITEM_NAME, issues)
+    if type(value) == "string" and not Schema.IsDieNotation(value) then
+        Report(issues, ctx, "field '" .. field
+            .. "' is not dice notation (like '1d8' or '2d6+1')")
+    end
+end
+
+-- The wield categories a weapon item may declare (how many hands it takes,
+-- and so which wield states the sheet's toggle offers). Optional: an item
+-- without one inherits from its linked system weapon, or defaults to a plain
+-- one-hander.
+local WEAPON_CATEGORIES = { light = true, one_hand = true, versatile = true, two_hand = true }
+local WIELD_STATES = { main = true, off = true, two = true }
+
+-- Checks an optional weapon-category field against the enum.
+local function CheckCategory(value, ctx, issues)
+    if value == nil then return end
+    if not WEAPON_CATEGORIES[value] then
+        Report(issues, ctx, "field 'category' should be one of light / one_hand /"
+            .. " versatile / two_hand, got '" .. tostring(value) .. "'")
     end
 end
 
@@ -338,6 +386,9 @@ local function CheckItem(item, ctx, issues)
     CheckCap(item.ac_mod_cap, ctx, issues)
     CheckNumeric(item.default_count, ctx, "default_count", MAX_COUNT, issues)
     CheckNumeric(item.version, ctx, "version", nil, issues)
+    CheckDie(item.die, ctx, "die", issues)
+    CheckDie(item.versatile_die, ctx, "versatile_die", issues)
+    CheckCategory(item.category, ctx, issues)
     CheckItemEffects(item.effects, ctx, issues)
     -- Gear is counted, never equipped, so its effects would never apply -
     -- almost certainly an authoring slip (the wizard drops them on kind switch).
@@ -361,6 +412,9 @@ local function CheckResolved(r, ctx, issues)
     CheckNumeric(r.bonus, ctx, "bonus", MAX_BONUS, issues)
     CheckNumeric(r.ac_bonus, ctx, "ac_bonus", MAX_BONUS, issues)
     CheckCap(r.ac_mod_cap, ctx, issues)
+    CheckDie(r.die, ctx, "die", issues)
+    CheckDie(r.versatile_die, ctx, "versatile_die", issues)
+    CheckCategory(r.category, ctx, issues)
     CheckItemEffects(r.effects, ctx, issues)
 end
 
@@ -386,6 +440,13 @@ local function CheckInventory(char, weaponIds, issues)
             if entry.equipped ~= nil and type(entry.equipped) ~= "boolean" then
                 Report(issues, ctx,
                     "field 'equipped' should be boolean, got " .. type(entry.equipped))
+            end
+            -- How an equipped weapon is held. The enum is checked here; whether
+            -- the state suits the item's category is resolved leniently at
+            -- render time (an invalid pairing falls back, never errors).
+            if entry.wield ~= nil and not WIELD_STATES[entry.wield] then
+                Report(issues, ctx, "field 'wield' should be one of main / off / two, got '"
+                    .. tostring(entry.wield) .. "'")
             end
             if entry.resolved ~= nil then
                 if type(entry.resolved) ~= "table" then
@@ -530,6 +591,31 @@ function Schema.ValidateSystem(system)
                 end
             end
         end
+        -- Optional action declarations: the Aim bonus and the death-save
+        -- block. Wrong types would reach roll arithmetic and the pip tracker.
+        CheckNumeric(ds.aim_bonus, "derived_stats", "aim_bonus", MAX_BONUS, issues)
+        if ds.death_saves ~= nil then
+            if type(ds.death_saves) ~= "table" then
+                Report(issues, "derived_stats",
+                    "field 'death_saves' should be a table, got " .. type(ds.death_saves))
+            else
+                for _, field in ipairs({ "threshold", "successes", "failures" }) do
+                    CheckNumeric(ds.death_saves[field], "derived_stats.death_saves",
+                        field, MAX_BONUS, issues)
+                end
+            end
+        end
+        if ds.fatigue ~= nil then
+            if type(ds.fatigue) ~= "table" then
+                Report(issues, "derived_stats",
+                    "field 'fatigue' should be a table, got " .. type(ds.fatigue))
+            else
+                for _, field in ipairs({ "max", "penalty_per_level", "speed_half_at" }) do
+                    CheckNumeric(ds.fatigue[field], "derived_stats.fatigue",
+                        field, MAX_BONUS, issues)
+                end
+            end
+        end
     end
 
     -- Accomplishment targets: a target may be a number or a table that scales by
@@ -623,6 +709,29 @@ function Schema.ValidateCharacter(char, system, packs)
         CheckIdList(char[field], "character", field, issues)
     end
     CheckString(char.racial_trait, "character", "racial_trait", issues)
+
+    -- The fatigue counter (only meaningful when the system declares fatigue,
+    -- but shape-checked always - a shared sheet carries it over the wire).
+    CheckNumeric(char.fatigue, "character", "fatigue", MAX_BONUS, issues)
+
+    -- Death-save pips (only meaningful when the system declares death saves,
+    -- but shape-checked always - a shared sheet carries them over the wire).
+    if char.death_saves ~= nil then
+        if type(char.death_saves) ~= "table" then
+            Report(issues, "character",
+                "field 'death_saves' should be a table, got " .. type(char.death_saves))
+        else
+            CheckNumeric(char.death_saves.successes, "character.death_saves",
+                "successes", MAX_BONUS, issues)
+            CheckNumeric(char.death_saves.failures, "character.death_saves",
+                "failures", MAX_BONUS, issues)
+            if char.death_saves.stable ~= nil
+                and type(char.death_saves.stable) ~= "boolean" then
+                Report(issues, "character.death_saves",
+                    "field 'stable' should be boolean, got " .. type(char.death_saves.stable))
+            end
+        end
+    end
 
     -- The inventory is shape-checked with or without a system: it is the one
     -- character field whose contents can arrive from the wire (the `resolved`

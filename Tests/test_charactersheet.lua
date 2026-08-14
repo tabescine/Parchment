@@ -284,3 +284,132 @@ local char3 = { name = "O", level = 1, attributes = { a = 1, b = 3, c = 4 },
 local sheet3 = ns.CharacterSheet.Compute(char3, system)
 assert(sheet3.derived.ac_attribute == "b", "out-of-list AC pick must fall to the best candidate")
 assert(sheet3.derived.init_attribute == "c", "out-of-list init pick must fall to the best candidate")
+
+-- Death saves: the tracker's rules (ApplyDeathSave / AddDeathFailure) against
+-- the config shape ns.DerivedConfig().death_saves produces.
+local dsCfg = { threshold = 10, successes = 3, failures = 3 }
+local CS = ns.CharacterSheet
+
+local down = { name = "D", current_hp = 0 }
+assert(CS.ApplyDeathSave(down, 10, dsCfg) == "success", "threshold roll succeeds")
+assert(down.death_saves.successes == 1 and down.death_saves.failures == 0)
+assert(CS.ApplyDeathSave(down, 9, dsCfg) == "failure", "below threshold fails")
+assert(down.death_saves.failures == 1)
+assert(CS.ApplyDeathSave(down, 15, dsCfg) == "success")
+assert(CS.ApplyDeathSave(down, 19, dsCfg) == "stable", "third success stabilizes")
+assert(down.death_saves.stable == true and down.death_saves.successes == 3)
+
+-- A natural 1 is two failures; filling the pips is death (capped at the max).
+down = { name = "D", current_hp = 0 }
+assert(CS.ApplyDeathSave(down, 1, dsCfg) == "failure")
+assert(down.death_saves.failures == 2, "a natural 1 marks two failures")
+assert(CS.ApplyDeathSave(down, 1, dsCfg) == "dead")
+assert(down.death_saves.failures == 3, "pips cap at the configured maximum")
+
+-- A natural 20: back up at 1 HP, slate wiped.
+down = { name = "D", current_hp = 0, death_saves = { successes = 2, failures = 2 } }
+assert(CS.ApplyDeathSave(down, 20, dsCfg) == "revive")
+assert(down.current_hp == 1 and down.death_saves == nil)
+
+-- Manual failure (damage while down): one pip, breaks stabilization, and the
+-- third is death.
+down = { name = "D", current_hp = 0, death_saves = { successes = 3, failures = 0, stable = true } }
+assert(CS.AddDeathFailure(down, dsCfg) == "failure")
+assert(down.death_saves.stable == nil, "damage breaks stabilization")
+assert(CS.AddDeathFailure(down, dsCfg) == "failure")
+assert(CS.AddDeathFailure(down, dsCfg) == "dead")
+
+-- Garbage stored pips coerce instead of throwing (the field rides the wire).
+down = { name = "D", current_hp = 0, death_saves = { successes = "x", failures = {} } }
+assert(CS.ApplyDeathSave(down, 12, dsCfg) == "success")
+assert(down.death_saves.successes == 1 and down.death_saves.failures == 0)
+
+print("test_charactersheet: death saves OK")
+
+-- Fatigue: a system-declared leveled condition. Compared against a baseline
+-- sheet of the same character, every skill, save and attack-roll total drops
+-- by level x penalty; damage modifiers and displayed attribute modifiers do
+-- not; movement halves at the configured level.
+ParchmentSystemDB.derived_stats.fatigue = { max = 10, penalty_per_level = 1, speed_half_at = 5 }
+local ftgChar = { name = "Weary", level = 2,
+    attributes = { a = 1, b = 3, c = 4 }, racial_trait = "r1",
+    primary_attribute = "c",
+    accomplished_skills = { "s1" }, accomplished_saves = { "b" },
+    accomplished_weapons = { "w1" } }
+local fresh = ns.CharacterSheet.Compute(ftgChar, system)
+ftgChar.fatigue = 2
+local weary = ns.CharacterSheet.Compute(ftgChar, system)
+
+assert(weary.derived.fatigue and weary.derived.fatigue.level == 2
+    and weary.derived.fatigue.penalty == 2 and weary.derived.fatigue.speed_halved == false)
+for i, sk in ipairs(weary.skills) do
+    assert(sk.total == fresh.skills[i].total - 2,
+        sk.name .. " must drop by 2, got " .. sk.total .. " vs " .. fresh.skills[i].total)
+end
+for i, sv in ipairs(weary.saves) do
+    assert(sv.total == fresh.saves[i].total - 2, sv.name .. " save must drop by 2")
+end
+assert(weary.weapons[1].attack_total == fresh.weapons[1].attack_total - 2,
+    "weapon attack rolls must drop by 2")
+assert(weary.derived.spell.attack == fresh.derived.spell.attack - 2,
+    "spell attacks must drop by 2")
+assert(weary.derived.save_dc == fresh.derived.save_dc, "the save DC is not a roll")
+for i, a in ipairs(weary.attributes) do
+    assert(a.modifier == fresh.attributes[i].modifier,
+        "displayed attribute modifiers must stay pure")
+end
+assert(weary.derived.movement == fresh.derived.movement, "movement only halves at the threshold")
+
+-- At the halving threshold, movement halves; the counter caps at max; a
+-- garbage stored level coerces to 0.
+ftgChar.fatigue = 5
+local drained = ns.CharacterSheet.Compute(ftgChar, system)
+assert(drained.derived.fatigue.speed_halved == true
+    and drained.derived.movement == fresh.derived.movement / 2, "speed must halve at level 5")
+ftgChar.fatigue = 99
+assert(ns.CharacterSheet.Compute(ftgChar, system).derived.fatigue.level == 10, "cap at max")
+ftgChar.fatigue = "very"
+assert(ns.CharacterSheet.Compute(ftgChar, system).derived.fatigue.level == 0, "garbage coerces to 0")
+
+-- The damage modifier is NOT an attack roll: an equipped linked weapon keeps
+-- its full attribute share while fatigued.
+T.load(ns, "Schema.lua")
+ftgChar.fatigue = 2
+ftgChar.inventory = { { item_id = "i1", equipped = true, wield = "main" } }
+local ftgLib = { i1 = { id = "i1", name = "Club", kind = "weapon", weapon_id = "w1" } }
+local invSheet = ns.CharacterSheet.Compute(ftgChar, system, ftgLib)
+local invW = invSheet.inventory.weapons[1]
+assert(invW.damage and invW.damage.mod == 0,
+    "w1 governs by attribute a (modifier 0): damage mod stays the bare modifier")
+assert(invW.attack_total == fresh.weapons[1].attack_total - 2,
+    "the item's attack roll carries the fatigue penalty")
+
+-- No config = no fatigue anywhere, whatever the character claims.
+ParchmentSystemDB.derived_stats.fatigue = nil
+ftgChar.fatigue = 7
+local unruled = ns.CharacterSheet.Compute(ftgChar, system)
+assert(unruled.derived.fatigue == nil, "no config exposes no fatigue block")
+assert(unruled.skills[1].total == fresh.skills[1].total, "and no penalty applies")
+
+print("test_charactersheet: fatigue OK")
+
+-- The misclick eraser: UndoDeathPip takes single pips back, un-stabilizes
+-- when a success leaves, and drops the empty block entirely.
+down = { name = "D", current_hp = 0, death_saves = { successes = 3, failures = 2, stable = true } }
+CS.UndoDeathPip(down, "failure")
+assert(down.death_saves.failures == 1 and down.death_saves.stable == true,
+    "removing a failure leaves stabilization standing")
+CS.UndoDeathPip(down, "success")
+assert(down.death_saves.successes == 2 and down.death_saves.stable == nil,
+    "removing a success un-stabilizes")
+CS.UndoDeathPip(down, "failure")
+CS.UndoDeathPip(down, "success")
+CS.UndoDeathPip(down, "success")
+assert(down.death_saves == nil, "an emptied tracker drops off the character")
+CS.UndoDeathPip(down, "failure")   -- nothing there: a no-op, never a throw
+assert(down.death_saves == nil)
+down.death_saves = { successes = 0, failures = 1 }
+CS.UndoDeathPip(down, "success")   -- already 0: stays 0
+assert(down.death_saves.successes == 0 and down.death_saves.failures == 1)
+
+print("test_charactersheet: undo pips OK")

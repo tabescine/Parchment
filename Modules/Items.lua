@@ -18,7 +18,8 @@
 --
 -- Reads from: ns.MISSING_ITEM.
 -- Exposes on ns.Items: .Resolve, .Instantiate, .ToggleEquipped, .SetCount,
---   .Remove, .ClampCount, .MigrateAC, .MAX_COUNT.
+--   .Remove, .ClampCount, .MigrateAC, .WieldStates, .EffectiveWield,
+--   .CycleWield, .MAX_COUNT.
 
 local ADDON, ns = ...
 
@@ -128,6 +129,61 @@ function Items.ToggleEquipped(char, index)
     if not entry then return nil end
     entry.equipped = not entry.equipped
     return entry.equipped
+end
+
+-- The wield states a weapon category allows, in the order the sheet's toggle
+-- cycles them. Weapons follow the tabletop convention the categories encode:
+-- a light weapon can sit in either hand, a versatile one in one hand or two,
+-- a two-hander only in both. No category (older items, foreign data) means a
+-- plain one-hander - exactly the pre-wield behaviour.
+local WIELD_ORDER = {
+    light = { "main", "off" },
+    one_hand = { "main" },
+    versatile = { "main", "two" },
+    two_hand = { "two" },
+}
+function Items.WieldStates(category)
+    return WIELD_ORDER[category] or WIELD_ORDER.one_hand
+end
+
+-- The wield state an equipped weapon entry is effectively in: its stored state
+-- when the category allows it, else the category's first state. Stored wields
+-- can go stale sideways (a library edit changed the category, a shared sheet
+-- said so), so this never trusts the field alone. Returns nil when the entry
+-- is not equipped.
+function Items.EffectiveWield(entry, category)
+    if type(entry) ~= "table" or not entry.equipped then return nil end
+    local states = Items.WieldStates(category)
+    for _, s in ipairs(states) do
+        if entry.wield == s then return s end
+    end
+    return states[1]
+end
+
+-- Advances a weapon entry through stashed -> each wield state -> stashed.
+-- `category` decides the cycle (see WieldStates). Returns the new state as a
+-- string ("stashed", "main", "off", "two"), or nil when the index names no
+-- entry. The wield field is cleared when stashed so a stored character never
+-- carries a stale hand.
+function Items.CycleWield(char, index, category)
+    local entry = EntryAt(char, index)
+    if not entry then return nil end
+    local states = Items.WieldStates(category)
+    if not entry.equipped then
+        entry.equipped = true
+        entry.wield = states[1]
+        return entry.wield
+    end
+    local current = Items.EffectiveWield(entry, category)
+    for i, s in ipairs(states) do
+        if s == current and states[i + 1] then
+            entry.wield = states[i + 1]
+            return entry.wield
+        end
+    end
+    entry.equipped = false
+    entry.wield = nil
+    return "stashed"
 end
 
 -- Sets a gear entry's counter, clamped into [0, MAX_COUNT]. Returns the stored

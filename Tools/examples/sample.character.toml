@@ -70,6 +70,10 @@ spells = ["hearth_mend"]
 #   equipped - weapons and equipment; an equipped weapon item adds its bonus to
 #              the linked weapon's attack rolls, equipment applies its effects
 #              (an "ac" effect adds to AC) while worn
+#   wield    - equipped weapons only: "main", "off" or "two" - how it is held.
+#              Off-hand damage rolls drop the attribute modifier; a versatile
+#              weapon held in two hands swings its versatile die. The sheet's
+#              state icon cycles this, within what the item's category allows.
 #   count    - gear only (the editable counter on the sheet)
 # Editing the library item updates every character holding it. An item_id your
 # library does not know renders as a missing row (and /pmt validate lists it),
@@ -80,6 +84,10 @@ equipped = true
 [[inventory]]
 item_id = "itm_2"     # an equipment item worth +1 AC while worn
 equipped = true
+[[inventory]]
+item_id = "itm_6"     # a freestanding versatile weapon, held in both hands
+equipped = true
+wield = "two"
 [[inventory]]
 item_id = "itm_3"     # gear: no mechanics, just a counter
 count = 12

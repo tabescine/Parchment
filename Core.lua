@@ -430,6 +430,27 @@ function ns.DerivedConfig()
         ac_base            = d.ac_base or 10,
         save_dc_base       = d.save_dc_base or 10,
         actions_base       = d.actions_base or 2,
+        -- Declares an Aim action: the bonus the sheet's Aim toggle adds to the
+        -- next weapon/spell attack roll. Unset = the system has no such action
+        -- and the sheet shows no toggle. Coerced: it reaches roll arithmetic.
+        aim_bonus          = tonumber(d.aim_bonus),
+        -- Declares death saves: at 0 HP the sheet shows a success/failure pip
+        -- tracker with a click-to-roll d20 against `threshold`. Unset = the
+        -- system has no death saves and the sheet shows no tracker.
+        death_saves        = type(d.death_saves) == "table" and {
+            threshold = tonumber(d.death_saves.threshold) or 10,
+            successes = tonumber(d.death_saves.successes) or 3,
+            failures  = tonumber(d.death_saves.failures) or 3,
+        } or nil,
+        -- Declares fatigue, a leveled condition: each level subtracts
+        -- `penalty_per_level` from checks, saves and attack rolls; at
+        -- `speed_half_at` movement halves; `max` caps the counter. Unset = the
+        -- system has no fatigue and the sheet shows no counter.
+        fatigue            = type(d.fatigue) == "table" and {
+            max = tonumber(d.fatigue.max) or 10,
+            penalty = tonumber(d.fatigue.penalty_per_level) or 1,
+            speed_half_at = tonumber(d.fatigue.speed_half_at),
+        } or nil,
     }
 end
 

@@ -110,6 +110,30 @@ movement_per_step = 0.5         # default 0.5
 ac_base = 10                    # AC = ac_base + AC-attribute modifier + effects
 save_dc_base = 10               # save DC = base + primary modifier + accomplishment
 actions_base = 2                # actions per turn before level/effect bonuses
+aim_bonus = 2                   # declares an Aim action: the sheet gains a
+                                # toggle adding this to the NEXT weapon/spell
+                                # attack roll (spends itself on that roll).
+                                # Omit = no Aim toggle.
+
+# Optional: death saves. Declaring this block puts a success/failure pip
+# tracker on the sheet while a character sits at 0 HP: click rolls a d20
+# (>= threshold succeeds; a natural 20 stands the character back up at 1 HP, a
+# natural 1 marks two failures), right-click marks one failure by hand (damage
+# taken while down; a crit is two). Full successes = stable, full failures =
+# dead; healing above 0 clears the pips. Omit the block = no death saves.
+[derived_stats.death_saves]
+threshold = 10
+successes = 3
+failures = 3
+
+# Optional: fatigue, a leveled condition with a counter on the sheet. Each
+# level subtracts penalty_per_level from every skill check, saving throw and
+# attack roll (folded into the displayed totals); movement halves at
+# speed_half_at; the counter caps at max. Omit the block = no fatigue.
+[derived_stats.fatigue]
+max = 10
+penalty_per_level = 1
+speed_half_at = 5
 
 # -----------------------------------------------------------------------------
 # accomplishment_table: character level -> accomplishment bonus (the

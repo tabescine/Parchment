@@ -82,3 +82,44 @@ IsInGroup = function() return false end
 printed = {}
 assert(ns.Dice.RollToChat("garbage") == false)
 assert(printed[1] and printed[1]:find("usage", 1, true), "usage line expected")
+
+-- NotationCheck: a labelled free-notation roll (the sheet's weapon damage
+-- click). Local print always; the parenthesized OOC copy only in a group; the
+-- optional link token replaces the label and is rewritten locally.
+printed, sent = {}, {}
+ns.Print = function(msg) printed[#printed + 1] = msg end
+assert(ns.Dice.NotationCheck("Cudgel damage", "1d8+3") == true)
+local line = printed[#printed]
+assert(line and line:find("^Cudgel damage: 1d8%+3 = %d+$"), "got '" .. tostring(line) .. "'")
+assert(#sent == 0, "solo rolls stay local")
+
+IsInGroup = function() return true end
+assert(ns.Dice.NotationCheck("Cudgel damage", "1d8") == true)
+assert(#sent == 1 and sent[1].channel == "PARTY"
+    and sent[1].msg:find("^%(Cudgel damage: 1d8 = %d+%)$"),
+    "got '" .. tostring(sent[1] and sent[1].msg) .. "'")
+IsInGroup = function() return false end
+
+assert(ns.Dice.NotationCheck("X", "garbage") == false, "bad notation must refuse")
+
+printed = {}
+assert(ns.Dice.NotationCheck("Cudgel damage", "1d8", "[PMT:Cudgel:1]") == true)
+assert(printed[1]:find("^RW<Me>%[PMT:Cudgel:1%]: 1d8 = %d+$"),
+    "the link token must head the line, rewritten: got '" .. tostring(printed[1]) .. "'")
+
+print("test_dice: NotationCheck OK")
+
+-- An extra term (the sheet's armed Aim): named separately in the breakdown
+-- and added to the total; absent = the classic line, byte for byte.
+printed, sent = {}, {}
+ns.Print = function(msg) printed[#printed + 1] = msg end
+ns.Dice.Check("Club attack", 5, nil, { label = "Aim", value = 2 })
+assert(printed[1] == "Club attack: 7 (d20) + 5 + 2 (Aim) = 14", tostring(printed[1]))
+ns.Dice.Check("Club attack", 5, nil, { label = "Aim", value = -1 })
+assert(printed[2] == "Club attack: 7 (d20) + 5 - 1 (Aim) = 11", tostring(printed[2]))
+ns.Dice.Check("Club attack", 5, nil, { label = "Aim", value = 0 })
+assert(printed[3] == "Club attack: 7 (d20) + 5 = 12", "a zero extra must not clutter the line")
+ns.Dice.Check("Club attack", 5)
+assert(printed[4] == "Club attack: 7 (d20) + 5 = 12", "no extra = the classic line")
+
+print("test_dice: extra term OK")
