@@ -1279,7 +1279,8 @@ local function SpellAttackRoll(sheet, ctx, rec, payloadFn)
     for _, row in ipairs(spell.schools or {}) do
         if row.id == rec.school then mod = row.attack end
     end
-    return { label = (rec.name or "?") .. " attack", modifier = mod, linkPayload = payloadFn }
+    return { label = (rec.name or "?") .. " attack", modifier = mod, linkPayload = payloadFn,
+        attack = true }
 end
 
 -- A click-to-roll spec for a record carrying a machine-readable check
