@@ -1035,7 +1035,7 @@ local function WeaponAttackValue(content, entry, kind, ctx, y)
         end
         b.click = function()
             ns.Dice.NotationCheck((name or "Weapon") .. " damage", d.notation,
-                ns.ChatLinks and ns.ChatLinks.Item(entry) or nil)
+                ns.ChatLinks and ns.ChatLinks.MakeToken(ns.ChatLinks.Item(entry)) or nil)
         end
     elseif entry.damage then
         -- Viewed sheet: the number is information, not a button.
@@ -1279,7 +1279,8 @@ local function SpellAttackRoll(sheet, ctx, rec, payloadFn)
     for _, row in ipairs(spell.schools or {}) do
         if row.id == rec.school then mod = row.attack end
     end
-    return { label = (rec.name or "?") .. " attack", modifier = mod, linkPayload = payloadFn }
+    return { label = (rec.name or "?") .. " attack", modifier = mod, linkPayload = payloadFn,
+        attack = true }
 end
 
 -- A click-to-roll spec for a record carrying a machine-readable check
