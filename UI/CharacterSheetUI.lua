@@ -1035,7 +1035,7 @@ local function WeaponAttackValue(content, entry, kind, ctx, y)
         end
         b.click = function()
             ns.Dice.NotationCheck((name or "Weapon") .. " damage", d.notation,
-                ns.ChatLinks and ns.ChatLinks.Item(entry) or nil)
+                ns.ChatLinks and ns.ChatLinks.MakeToken(ns.ChatLinks.Item(entry)) or nil)
         end
     elseif entry.damage then
         -- Viewed sheet: the number is information, not a button.
